@@ -43,6 +43,12 @@ final class MirrorView: NSView {
     /// Watches. The agent flags them and the display is genuinely circular.
     var isRoundDisplay = false { didSet { if isRoundDisplay != oldValue { needsLayout = true } } }
 
+    /// The physical screen outline, asked of the device. Nil until known, and nil forever on a
+    /// device that reports no cutout or rounding.
+    var displayShape: DisplayShape? {
+        didSet { if displayShape != oldValue { needsLayout = true } }
+    }
+
     /// Where control messages go. Nil until the session is up, which is also what gates input.
     var control: ControlSender?
 
@@ -59,6 +65,7 @@ final class MirrorView: NSView {
 
     let displayLayer = VideoLayer()
     private let clipLayer = CALayer()
+    private let cutoutLayer = CAShapeLayer()
     private let placeholderLayer = CAGradientLayer()
     private let nameLabel = NSTextField(labelWithString: "No device selected")
     private let osLabel = NSTextField(labelWithString: "")
@@ -103,6 +110,11 @@ final class MirrorView: NSView {
         displayLayer.videoGravity = .resize
         displayLayer.backgroundColor = NSColor.black.cgColor
         clipLayer.addSublayer(displayLayer)
+
+        // Over the picture: the camera hole, which is real screen area the panel cannot light.
+        cutoutLayer.fillColor = NSColor.black.cgColor
+        cutoutLayer.isHidden = true
+        clipLayer.addSublayer(cutoutLayer)
 
         layer?.addSublayer(clipLayer)
 
@@ -157,6 +169,7 @@ final class MirrorView: NSView {
         displayOrientation = 0
         orientationCorrection = 0
         control = nil
+        displayShape = nil
         displayLayer.flushAndRemoveImage()
         needsLayout = true
     }
@@ -208,7 +221,7 @@ final class MirrorView: NSView {
         let display = rotatedDisplaySize
         guard frameW > 0, frameH > 0, display.width > 0 else { return (frameH, 0) }
         let imageHeight = min((frameW * display.height / display.width).rounded(), frameH)
-        return (imageHeight, ((frameH - imageHeight) / 2).rounded())
+        return (imageHeight, ((frameH - imageHeight) / 2).rounded(.down))
     }
 
     override func layout() {
@@ -219,7 +232,7 @@ final class MirrorView: NSView {
         CATransaction.setDisableActions(true)     // no interpolation: this resizes with the pane
 
         clipLayer.frame = rect
-        clipLayer.cornerRadius = isRoundDisplay ? rect.width / 2 : min(12, rect.width * 0.04)
+        clipLayer.cornerRadius = cornerRadius(for: rect)
         clipLayer.borderWidth = isGated ? max(1, rect.width * 0.05) : 1
         placeholderLayer.frame = clipLayer.bounds
         placeholderLayer.isHidden = !isGated
@@ -244,6 +257,8 @@ final class MirrorView: NSView {
             ? CATransform3DIdentity
             : CATransform3DMakeRotation(CGFloat(orientationCorrection) * .pi / 2, 0, 0, 1)
 
+        layOutCutout(in: rect)
+
         guard !isGated, videoSize.width > 0, videoSize.height > 0 else {
             displayLayer.frame = clipLayer.bounds
             CATransaction.commit()
@@ -258,6 +273,66 @@ final class MirrorView: NSView {
                                     width: videoSize.width * scale,
                                     height: videoSize.height * scale)
         CATransaction.commit()
+    }
+
+    // MARK: - device silhouette
+
+    private func cornerRadius(for rect: CGRect) -> CGFloat {
+        if isRoundDisplay { return rect.width / 2 }
+        // The device's own radius, in its pixels, scaled to however big we are drawing it.
+        if let shape = displayShape, shape.cornerRadius > 0, shape.displaySize.width > 0 {
+            let presented = rotatedDisplaySize
+            let scale = rect.width / max(presented.width, 1)
+            return shape.cornerRadius * scale
+        }
+        return min(12, rect.width * 0.04)
+    }
+
+    /// Place the camera hole. Its coordinates are in the display's canonical orientation, and we
+    /// are drawing the display as currently rotated, so they have to be turned to match — the
+    /// inverse of the mapping `devicePoint` applies to clicks.
+    private func layOutCutout(in rect: CGRect) {
+        guard !isGated, let shape = displayShape, let cutout = shape.cutout,
+              shape.displaySize.width > 0, shape.displaySize.height > 0 else {
+            cutoutLayer.isHidden = true
+            return
+        }
+        let natural = shape.displaySize
+        let quadrants = ((displayOrientation + orientationCorrection) % 4 + 4) % 4
+
+        /// Natural pixels → a fraction of the picture as presented.
+        func present(_ p: CGPoint) -> CGPoint {
+            let nx = p.x / natural.width
+            let ny = p.y / natural.height
+            switch quadrants {
+            case 1:  return CGPoint(x: ny, y: 1 - nx)
+            case 2:  return CGPoint(x: 1 - nx, y: 1 - ny)
+            case 3:  return CGPoint(x: 1 - ny, y: nx)
+            default: return CGPoint(x: nx, y: ny)
+            }
+        }
+
+        cutoutLayer.frame = clipLayer.bounds
+        let w = rect.width, h = rect.height
+        switch cutout {
+        case .circle(let center, let radius):
+            let c = present(center)
+            // A circle stays a circle under a quarter turn, and the radius is in the display's
+            // shorter dimension either way, so one scale factor is right for both axes.
+            let scale = w / max(rotatedDisplaySize.width, 1)
+            let r = radius * scale
+            let box = CGRect(x: c.x * w - r, y: c.y * h - r, width: r * 2, height: r * 2)
+            cutoutLayer.path = CGPath(ellipseIn: box, transform: nil)
+        case .capsule(let box):
+            let a = present(CGPoint(x: box.minX, y: box.minY))
+            let b = present(CGPoint(x: box.maxX, y: box.maxY))
+            let r = CGRect(x: min(a.x, b.x) * w, y: min(a.y, b.y) * h,
+                           width: abs(b.x - a.x) * w, height: abs(b.y - a.y) * h)
+            let radius = min(r.width, r.height) / 2
+            cutoutLayer.path = CGPath(roundedRect: r, cornerWidth: radius, cornerHeight: radius,
+                                      transform: nil)
+        }
+        cutoutLayer.isHidden = false
     }
 
     // MARK: - input

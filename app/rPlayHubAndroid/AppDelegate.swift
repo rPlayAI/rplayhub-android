@@ -52,8 +52,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func buildWindow() {
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1080, height: 720),
-                          styleMask: [.titled, .closable, .miniaturizable, .resizable,
-                                      .fullSizeContentView],
+                          // No .fullSizeContentView: it extends the content view under the
+                          // title bar, which hid the top of the mirrored screen behind it.
+                          styleMask: [.titled, .closable, .miniaturizable, .resizable],
                           backing: .buffered, defer: false)
         window.title = "rPlayHub — Android"
         window.setFrameAutosaveName("MainWindow")
@@ -270,6 +271,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func attachStream() {
         guard let session, let video = session.video else { return }
         mirror.control = session.control
+        loadDisplayShape(session.serial)
         video.onFormat = { [weak self] size in self?.mirror.videoSize = size }
         video.onGeometry = { [weak self] header in
             self?.mirror.apply(header: header)
@@ -277,6 +279,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         video.onDisconnect = { [weak self] reason in
             self?.logPanel.append("! video: \(reason)")
             self?.strip.setSessionActive(false)
+        }
+    }
+
+    /// The screen's physical outline — rounded corners and the camera hole. One dumpsys call,
+    /// off the main queue, once per session; it cannot change while the device is plugged in.
+    private func loadDisplayShape(_ serial: String) {
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let shape = DisplayShape.query(serial: serial)
+            DispatchQueue.main.async { [weak self] in
+                guard self?.session?.serial == serial else { return }
+                self?.mirror.displayShape = shape
+                if let shape {
+                    AppBuild.log("display shape: corner r=\(Int(shape.cornerRadius)) "
+                                 + "cutout=\(shape.cutout.map { "\($0)" } ?? "none")")
+                }
+            }
         }
     }
 

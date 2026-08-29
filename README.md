@@ -28,11 +28,12 @@ Folder conventions follow `~/rplay-hub`: adopted sources recorded in `refs/`, to
   Kotlin host for reference. See `refs/studio/PROVENANCE.md` for commit and refetch.
 - **`doc/STUDIO-MIRRORING-PROTOCOL.md`** — the wire protocol, read out of that source.
 - **`tools/build-agent.sh`** — builds the agent and lays it out where the app looks for it.
+- **`tools/gen-xcodeproj.py`** — regenerates the Xcode project from the source files present.
 
 ## Quick start
 
 ```
-tools/build-agent.sh          # needs a JDK 17+, the Android SDK and an NDK
+tools/build-agent.sh          # needs a JDK 17+, the Android SDK and an NDK (see below)
 xcodebuild -project app/rPlayHubAndroid.xcodeproj -scheme rPlayHubAndroid build
 open ~/Library/Developer/Xcode/DerivedData/rPlayHubAndroid-*/Build/Products/Debug/rPlayHubAndroid.app
 ```
@@ -55,26 +56,35 @@ Everything up to the device is done and proven. Nothing has touched a real devic
 USB and the network Pixel sit at `unauthorized`, which needs the "Allow USB debugging" dialog
 accepted on the device itself. That one tap is the only thing between here and a first frame.
 
-## Toolchain on this machine
+## If your JDK crashes on startup
 
-`java` from Homebrew or Temurin **cannot run here**. `boot-args` carries
-`amfi_get_out_of_my_way=1`, and disabling AMFI breaks the Apple-Silicon JIT write-protect path,
-so every arm64 JVM dies with `SIGBUS/BUS_ADRALN` inside `CodeHeap::allocate` before executing a
-line of Java. Presumably AMFI is off for the iOS work in `~/rplay-hub`.
+On Apple Silicon, a machine with AMFI disabled (`boot-args amfi_get_out_of_my_way=1`) cannot run
+any arm64 JVM: AMFI mediates the JIT write-protect path, so every JDK — Homebrew, Temurin, 21 or
+25 — dies with `SIGBUS`/`BUS_ADRALN` inside `CodeHeap::allocate` before executing a line of Java.
+It is not a JDK bug and no version of one fixes it.
 
-The workaround is an **x86_64 JDK under Rosetta**, which handles W^X itself and is unaffected:
+People usually turn AMFI off for unrelated reasons (kernel work, unsigned code, iOS research), and
+turning it back on means a trip through Recovery. The cheaper way out is an **x86_64 JDK under
+Rosetta**, which handles W^X itself and is unaffected:
 
 ```
+curl -Lo jdk.tar.gz "https://api.adoptium.net/v3/binary/latest/21/ga/mac/x64/jdk/hotspot/normal/eclipse"
+mkdir -p ~/Library/Java/JavaVirtualMachines/temurin-21-x64
+tar xzf jdk.tar.gz -C ~/Library/Java/JavaVirtualMachines/temurin-21-x64 --strip-components=1
 export JAVA_HOME=~/Library/Java/JavaVirtualMachines/temurin-21-x64/Contents/Home
-export ANDROID_HOME=/opt/homebrew/share/android-commandlinetools
-export PATH="$JAVA_HOME/bin:$PATH"
 ```
 
-Installed: Temurin 21 (x86_64), Android cmdline-tools, platform-tools, platform 36,
-build-tools 36.1.0, NDK 29.0.14206865. The NDK's own clang is x86_64 and runs under Rosetta too,
-which is why the C++ half builds.
+`tools/build-agent.sh` picks that JDK up on its own if it is there. The NDK's own clang is x86_64
+too, so the C++ half builds under Rosetta without any extra help.
 
 ## Not built yet
 
 Audio, clipboard sync, multi-display, XR, foldable device-state, screen recording. The agent
 supports all of them; the host never asks.
+
+## License
+
+Our code is MIT — see `LICENSE`.
+
+`refs/studio/` is Google's, Apache 2.0, kept with its own headers and its origin recorded in
+`refs/studio/PROVENANCE.md`. Nothing in it is relicensed.
