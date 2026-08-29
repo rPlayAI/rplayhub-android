@@ -8,8 +8,6 @@
 //  (Studio relies on the same guarantee — it sets ffmpeg's PARSER_FLAG_COMPLETE_FRAMES.)
 //
 
-import AVFoundation
-import CoreMedia
 import Foundation
 
 enum VideoCodec: String {

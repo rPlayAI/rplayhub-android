@@ -27,6 +27,7 @@ Folder conventions follow `~/rplay-hub`: adopted sources recorded in `refs/`, to
 - **`refs/studio/`** — the adopted Apache-2.0 source: the device agent complete, and Studio's
   Kotlin host for reference. See `refs/studio/PROVENANCE.md` for commit and refetch.
 - **`doc/STUDIO-MIRRORING-PROTOCOL.md`** — the wire protocol, read out of that source.
+- **`doc/PORTING.md`** — the three OS seams, and why the web port is a different shape.
 - **`tools/build-agent.sh`** — builds the agent and lays it out where the app looks for it.
 - **`tools/gen-xcodeproj.py`** — regenerates the Xcode project from the source files present.
 
@@ -77,10 +78,29 @@ export JAVA_HOME=~/Library/Java/JavaVirtualMachines/temurin-21-x64/Contents/Home
 `tools/build-agent.sh` picks that JDK up on its own if it is there. The NDK's own clang is x86_64
 too, so the C++ half builds under Rosetta without any extra help.
 
-## Not built yet
+## Upcoming
 
-Audio, clipboard sync, multi-display, XR, foldable device-state, screen recording. The agent
-supports all of them; the host never asks.
+**Today this is macOS only.** Linux, Windows and a browser client are all planned.
+
+| | |
+|---|---|
+| **Linux** | `Glibc` sockets, ffmpeg decode, SDL2 or Wayland/EGL |
+| **Windows** | Winsock, ffmpeg or Media Foundation / D3D11VA |
+| **Web** | headless host + WebSocket, browser decode via WebCodecs |
+
+The protocol layer is already portable — the adb client, the agent launch, the packet header, the
+Annex-B splitting and the base128 control codec are Foundation-only and import nothing
+platform-specific. What is macOS-bound is sockets (one file), decode and display (VideoToolbox),
+and the AppKit shell. `doc/PORTING.md` has the seam-by-seam detail.
+
+The web is not simply a fourth platform. This app deliberately has no engine process, because adb
+needs no privilege and collapsing that split was the right call for a desktop app; a browser client
+puts it back, with the host headless and the browser decoding H.264 through WebCodecs. That is also
+the version that makes several devices and several viewers possible, which the desktop app cannot
+express.
+
+Also not built, on any platform: audio, clipboard sync, multi-display, XR, foldable device-state,
+screen recording, and bit-rate adaptation. The agent supports all of them; the host never asks.
 
 ## License
 
