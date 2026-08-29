@@ -1,0 +1,450 @@
+/*
+ * Copyright (C) 2022 The Android Open Source Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package com.android.tools.idea.streaming.device
+
+import com.android.SdkConstants.PRIMARY_DISPLAY_ID
+import com.android.annotations.concurrency.AnyThread
+import com.android.annotations.concurrency.UiThread
+import com.android.sdklib.deviceprovisioner.DeviceHandle
+import com.android.sdklib.deviceprovisioner.DeviceType
+import com.android.sdklib.deviceprovisioner.LocalEmulatorProperties
+import com.android.tools.idea.concurrency.createCoroutineScope
+import com.android.tools.idea.deviceprovisioner.DEVICE_HANDLE_KEY
+import com.android.tools.idea.streaming.core.AbstractDevicePanel
+import com.android.tools.idea.streaming.core.DisplayDescriptor
+import com.android.tools.idea.streaming.core.DisplayType
+import com.android.tools.idea.streaming.core.LayoutNode
+import com.android.tools.idea.streaming.core.LeafNode
+import com.android.tools.idea.streaming.core.PanelState
+import com.android.tools.idea.streaming.core.SplitNode
+import com.android.tools.idea.streaming.core.SplitPanel
+import com.android.tools.idea.streaming.core.ZoomablePanel
+import com.android.tools.idea.streaming.core.computeBestLayout
+import com.android.tools.idea.streaming.core.htmlColored
+import com.android.tools.idea.streaming.core.installFileDropHandler
+import com.android.tools.idea.streaming.core.sizeWithoutInsets
+import com.android.tools.idea.streaming.device.DeviceView.ConnectionState
+import com.android.tools.idea.streaming.device.DeviceView.ConnectionStateListener
+import com.android.tools.idea.ui.screenrecording.ScreenRecordingParameters
+import com.android.tools.idea.ui.screenshot.ScreenshotParameters
+import com.android.utils.HashCodes
+import com.intellij.execution.runners.ExecutionUtil
+import com.intellij.ide.ActivityTracker
+import com.intellij.openapi.Disposable
+import com.intellij.openapi.actionSystem.DataSink
+import com.intellij.openapi.application.EDT
+import com.intellij.openapi.diagnostic.thisLogger
+import com.intellij.openapi.project.Project
+import com.intellij.openapi.util.Disposer
+import com.intellij.ui.JBColor
+import it.unimi.dsi.fastutil.ints.Int2ObjectRBTreeMap
+import java.awt.Dimension
+import java.awt.EventQueue
+import java.util.concurrent.TimeoutException
+import javax.swing.Icon
+import javax.swing.JComponent
+import javax.swing.JPanel
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+
+/** Provides view of one physical device in the Running Devices tool window. */
+internal class DeviceToolWindowPanel(
+  disposableParent: Disposable,
+  private val project: Project,
+  val deviceHandle: DeviceHandle,
+  val deviceClient: DeviceClient,
+) : AbstractDevicePanel<DeviceDisplayPanel>(deviceClient.deviceId, DEVICE_MAIN_TOOLBAR_ID) {
+
+  override val deviceSerialNumber: String
+    get() = deviceClient.deviceSerialNumber
+
+  override val title: String
+    get() = deviceClient.deviceName
+
+  override val description: String
+    get() {
+      val properties = deviceConfig.deviceProperties
+      val api = properties.androidVersion?.apiStringWithoutExtension ?: "${deviceConfig.apiLevel}"
+      return "${properties.title} API $api ${"($deviceSerialNumber)".htmlColored(JBColor.GRAY)}"
+    }
+
+  override val icon: Icon
+    get() = ExecutionUtil.getLiveIndicator(deviceConfig.deviceProperties.icon)
+
+  override val deviceType: DeviceType
+    get() = deviceConfig.deviceType
+
+  private val deviceConfig: DeviceConfiguration
+    get() = deviceClient.deviceConfig
+
+  private val deviceController
+    get() = deviceClient.deviceController
+
+  override val preferredFocusableComponent: JComponent
+    get() = primaryDisplayView ?: this
+
+  override var zoomToolbarVisible = false
+    set(value) {
+      field = value
+      for (displayPanel in displayPanels) {
+        displayPanel.zoomToolbarVisible = value
+      }
+    }
+
+  private var contentDisposable: Disposable? = null
+  private var contentScope: CoroutineScope? = null
+  override var primaryDisplayView: DeviceView? = null
+    private set
+
+  private val deviceStateListener =
+    object : DeviceController.DeviceStateListener {
+      override fun onSupportedDeviceStatesChanged(deviceStates: List<FoldingState>) {
+        ActivityTracker.getInstance().inc()
+      }
+
+      override fun onDeviceStateChanged(deviceState: Int) {
+        ActivityTracker.getInstance().inc()
+      }
+    }
+  private val displayConfigurator = DisplayConfigurator()
+
+  init {
+    Disposer.register(disposableParent, this)
+  }
+
+  override fun setDeviceFrameVisible(visible: Boolean) {
+    // Showing device frame is not supported for physical devices.
+  }
+
+  /** Populates the device panel with content. */
+  override fun createContent(deviceFrameVisible: Boolean, savedUiState: UiState?) {
+    if (contentDisposable != null) {
+      thisLogger().error(IllegalStateException("${title}: content already exists"))
+      return
+    }
+
+    val disposable = Disposer.newDisposable()
+    Disposer.register(this, disposable)
+    contentDisposable = disposable
+    contentScope = disposable.createCoroutineScope()
+
+    val uiState = savedUiState as DeviceUiState? ?: DeviceUiState()
+    val initialOrientation = uiState.orientation
+    val primaryDisplayPanel =
+      createDisplayPanelIfAbsent(PRIMARY_DISPLAY_ID) {
+        DeviceDisplayPanel(disposable, deviceClient, PRIMARY_DISPLAY_ID, initialOrientation, project, zoomToolbarVisible)
+      }
+    val zoomScrollState = uiState.zoomScrollState
+    for (displayPanel in displayPanels) {
+      zoomScrollState[displayPanel.displayId]?.let { displayPanel.displayView.zoomScrollState = it }
+    }
+
+    val deviceView = primaryDisplayPanel.displayView
+    primaryDisplayView = deviceView
+    mainToolbar.targetComponent = deviceView
+    secondaryToolbar.targetComponent = deviceView
+    centerPanel.addToCenter(primaryDisplayPanel)
+
+    deviceView.addConnectionStateListener(
+      object : ConnectionStateListener {
+        @UiThread
+        override fun connectionStateChanged(deviceSerialNumber: String, connectionState: ConnectionState) {
+          when (connectionState) {
+            ConnectionState.CONNECTED -> {
+              deviceController?.apply {
+                Disposer.register(disposable) {
+                  removeDisplayListener(displayConfigurator)
+                  removeDeviceStateListener(deviceStateListener)
+                }
+                addDisplayListener(displayConfigurator)
+                contentScope?.launch { displayConfigurator.refreshDisplayConfiguration() }
+                addDeviceStateListener(deviceStateListener)
+              }
+
+              showContextMenuAdvertisementIfNecessary(disposable)
+            }
+            ConnectionState.DISCONNECTED -> {
+              deviceController?.apply {
+                displayConfigurator.reconfigureDisplayPanels(emptyList())
+                removeDisplayListener(displayConfigurator)
+                removeDeviceStateListener(deviceStateListener)
+              }
+            }
+            else -> {}
+          }
+
+          ActivityTracker.getInstance().inc()
+        }
+      }
+    )
+
+    contentScope?.launch { displayConfigurator.refreshDisplayConfiguration() }
+
+    installFileDropHandler(this, id.serialNumber, deviceView, project)
+  }
+
+  /** Destroys content of the device panel and returns its state for later recreation. */
+  override fun destroyContent(): DeviceUiState {
+    val uiState = DeviceUiState()
+    val disposable = contentDisposable ?: return uiState
+    contentDisposable = null
+    contentScope = null
+    uiState.orientation = primaryDisplayView?.displayOrientationQuadrants ?: 0
+    for (displayPanel in displayPanels) {
+      uiState.zoomScrollState[displayPanel.displayId] = displayPanel.displayView.zoomScrollState
+    }
+
+    Disposer.dispose(disposable)
+
+    centerPanel.removeAll()
+    removeDisplayPanels { true }
+    primaryDisplayView = null
+    mainToolbar.targetComponent = this
+    secondaryToolbar.targetComponent = this
+    return uiState
+  }
+
+  override fun uiDataSnapshot(sink: DataSink) {
+    super.uiDataSnapshot(sink)
+    sink[DEVICE_VIEW_KEY] = primaryDisplayView
+    sink[DEVICE_CLIENT_KEY] = deviceClient
+    sink[DEVICE_CONTROLLER_KEY] = deviceController
+    sink[DEVICE_HANDLE_KEY] = deviceHandle
+    sink[ScreenshotParameters.DATA_KEY] = deviceController?.let { createScreenshotParameters() }
+    sink[ScreenRecordingParameters.DATA_KEY] = deviceController?.let { createScreenRecorderParameters(it) }
+  }
+
+  private fun createScreenshotParameters(): ScreenshotParameters {
+    return when (val properties = deviceConfig.deviceProperties) {
+      is LocalEmulatorProperties -> ScreenshotParameters(deviceSerialNumber, deviceConfig.deviceType, properties.avdPath)
+      else -> ScreenshotParameters(deviceSerialNumber, deviceConfig.deviceType, deviceConfig.deviceModel)
+    }
+  }
+
+  private fun createScreenRecorderParameters(deviceController: DeviceController): ScreenRecordingParameters =
+    ScreenRecordingParameters(deviceSerialNumber, deviceClient.deviceName, deviceConfig.featureLevel, deviceController, null)
+
+  override fun setBounds(x: Int, y: Int, width: Int, height: Int) {
+    val wasZeroSize = this.width == 0 || this.height == 0
+    super.setBounds(x, y, width, height)
+    if (wasZeroSize && width > 0 && height > 0 && primaryDisplayView?.isConnected == true) {
+      contentScope?.launch { displayConfigurator.refreshDisplayConfiguration() }
+    }
+  }
+
+  private inner class DisplayConfigurator : DeviceController.DisplayListener {
+
+    /** Display descriptors sorted by display ID. */
+    private var displayDescriptors: List<DisplayDescriptor> = emptyList()
+    /** Display descriptors received from the mirrored device but not yet propagated to [displayDescriptors]. */
+    private var pendingDisplayDescriptors: List<DisplayDescriptor>? = null
+
+    suspend fun refreshDisplayConfiguration() {
+      val displays =
+        pendingDisplayDescriptors
+          ?: try {
+            deviceController?.getDisplayConfigurations() ?: return
+          } catch (_: TimeoutException) {
+            thisLogger().warn("Timed out waiting for display configurations from ${deviceClient.deviceName}")
+            return
+          }
+      if (displays.isEmpty()) {
+        return // All displays are turned off.
+      }
+      EventQueue.invokeLater { // This is safe because this code doesn't touch PSI or VFS.
+        if (contentDisposable != null) {
+          reconfigureDisplayPanels(displays)
+        }
+      }
+    }
+
+    @AnyThread
+    override fun onDisplayAddedOrChanged(
+      displayId: Int,
+      displaySize: Dimension,
+      rotation: Int,
+      displayType: DisplayType,
+      environmentSize: Dimension?,
+    ) {
+      EventQueue.invokeLater { // This is safe because this code doesn't touch PSI or VFS.
+        if (contentDisposable != null) {
+          val displayDescriptors = pendingDisplayDescriptors ?: displayDescriptors
+          if (displayDescriptors.isEmpty()) {
+            contentScope?.launch { refreshDisplayConfiguration() }
+            return@invokeLater // Display descriptors haven't been received yet.
+          }
+          val newDisplays = displayDescriptors.toMutableList()
+          val pos = newDisplays.binarySearch { it.displayId.compareTo(displayId) }
+          if (pos >= 0) {
+            newDisplays[pos].size = displaySize
+            newDisplays[pos].orientation = rotation
+            newDisplays[pos].type = displayType
+          } else {
+            newDisplays.add(pos.inv(), DisplayDescriptor(displayId, displaySize, rotation, displayType))
+          }
+          reconfigureDisplayPanels(newDisplays)
+        }
+      }
+    }
+
+    @AnyThread
+    override fun onDisplayRemoved(displayId: Int) {
+      EventQueue.invokeLater { // This is safe because this code doesn't touch PSI or VFS.
+        if (contentDisposable != null) {
+          val displayDescriptors = pendingDisplayDescriptors ?: displayDescriptors
+          if (displayDescriptors.isEmpty()) {
+            contentScope?.launch { refreshDisplayConfiguration() }
+            return@invokeLater // Display descriptors haven't been received yet.
+          }
+          if (displayDescriptors.find { it.displayId == displayId } != null) {
+            val newDisplays = displayDescriptors.filterTo(mutableListOf()) { it.displayId != displayId }
+            reconfigureDisplayPanels(newDisplays)
+          }
+        }
+      }
+    }
+
+    fun reconfigureDisplayPanels(newDisplays: List<DisplayDescriptor>) {
+      thisLogger().info("Device displays: ${newDisplays.joinToString(", ")}")
+      pendingDisplayDescriptors = newDisplays
+      val availableSpace = centerPanel.sizeWithoutInsets
+      if (availableSpace.width <= 0 || availableSpace.height <= 0) {
+        return
+      }
+
+      adjustDisplayDescriptors(newDisplays)
+      if (newDisplays.size == 1 && displayDescriptors.size <= 1 || newDisplays == displayDescriptors) {
+        return
+      }
+
+      removeDisplayPanels { displayPanel ->
+        displayPanel.displayId != PRIMARY_DISPLAY_ID && !newDisplays.any { it.displayId == displayPanel.displayId }
+      }
+
+      contentScope?.launch {
+        val layoutRoot = computeBestLayout(availableSpace, newDisplays.map { it.size })
+        withContext(Dispatchers.EDT) {
+          val rootPanel = buildLayout(layoutRoot, newDisplays)
+          displayDescriptors = newDisplays
+          pendingDisplayDescriptors = null
+          setRootPanel(rootPanel)
+          ActivityTracker.getInstance().inc()
+        }
+      }
+    }
+
+    fun buildLayout(multiDisplayState: MultiDisplayState) {
+      val newDisplays = multiDisplayState.displayDescriptors
+      val rootPanel = buildLayout(multiDisplayState.panelState, newDisplays)
+      displayDescriptors = newDisplays
+      setRootPanel(rootPanel)
+    }
+
+    private fun buildLayout(layoutNode: LayoutNode, displayDescriptors: List<DisplayDescriptor>): JPanel {
+      return when (layoutNode) {
+        is LeafNode -> {
+          val display = displayDescriptors[layoutNode.rectangleIndex]
+          val displayId = display.displayId
+          createDisplayPanelIfAbsent(displayId) {
+            assert(it != PRIMARY_DISPLAY_ID)
+            DeviceDisplayPanel(contentDisposable!!, deviceClient, displayId, display.orientation, project, zoomToolbarVisible)
+          }
+        }
+        is SplitNode -> {
+          SplitPanel(layoutNode).apply {
+            firstComponent = buildLayout(layoutNode.firstChild, displayDescriptors)
+            secondComponent = buildLayout(layoutNode.secondChild, displayDescriptors)
+          }
+        }
+      }
+    }
+
+    private fun buildLayout(state: PanelState, displayDescriptors: List<DisplayDescriptor>): JPanel {
+      val splitPanelState = state.splitPanel
+      return if (splitPanelState != null) {
+        SplitPanel(splitPanelState.splitType, splitPanelState.proportion).apply {
+          firstComponent = buildLayout(splitPanelState.firstComponent, displayDescriptors)
+          secondComponent = buildLayout(splitPanelState.secondComponent, displayDescriptors)
+        }
+      } else {
+        val displayId = state.displayId ?: throw IllegalArgumentException()
+        val display = displayDescriptors.find { it.displayId == displayId } ?: throw IllegalArgumentException()
+        createDisplayPanelIfAbsent(displayId) {
+          assert(it != PRIMARY_DISPLAY_ID)
+          DeviceDisplayPanel(contentDisposable!!, deviceClient, displayId, display.orientation, project, zoomToolbarVisible)
+        }
+      }
+    }
+
+    private fun setRootPanel(rootPanel: JPanel) {
+      centerPanel.removeAll()
+      centerPanel.addToCenter(rootPanel)
+      centerPanel.validate()
+      ActivityTracker.getInstance().inc()
+    }
+
+    private fun adjustDisplayDescriptors(displays: List<DisplayDescriptor>) {
+      for (display in displays) {
+        val displayView = findDisplayPanel(display.displayId)?.displayView ?: continue
+        if (displayView.deviceDisplaySize.width != 0 && displayView.deviceDisplaySize.height != 0) {
+          display.size = displayView.deviceDisplaySize
+          display.orientation = displayView.displayOrientationQuadrants
+        }
+      }
+    }
+
+    fun getMultiDisplayState(): MultiDisplayState? {
+      if (centerPanel.componentCount > 0) {
+        val panel = centerPanel.getComponent(0)
+        if (panel is SplitPanel) {
+          return MultiDisplayState(displayDescriptors, panel.getState())
+        }
+      }
+      return null
+    }
+  }
+
+  /** Persistent multi-display state corresponding to a single device. The no-argument constructor is used by the XML deserializer. */
+  class MultiDisplayState() {
+
+    constructor(displayDescriptors: Collection<DisplayDescriptor>, panelState: PanelState) : this() {
+      this.displayDescriptors = displayDescriptors.toMutableList()
+      this.panelState = panelState
+    }
+
+    lateinit var displayDescriptors: MutableList<DisplayDescriptor>
+    lateinit var panelState: PanelState
+
+    override fun equals(other: Any?): Boolean {
+      if (this === other) return true
+      if (javaClass != other?.javaClass) return false
+
+      other as MultiDisplayState
+      return displayDescriptors == other.displayDescriptors && panelState == other.panelState
+    }
+
+    override fun hashCode(): Int {
+      return HashCodes.mix(displayDescriptors.hashCode(), panelState.hashCode())
+    }
+  }
+
+  class DeviceUiState : UiState {
+    var orientation = UNKNOWN_ORIENTATION
+    val zoomScrollState = Int2ObjectRBTreeMap<ZoomablePanel.ZoomScrollState>()
+  }
+}

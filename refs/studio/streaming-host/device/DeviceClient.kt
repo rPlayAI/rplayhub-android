@@ -1,0 +1,833 @@
+/*
+ * Copyright (C) 2022 The Android Open Source Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package com.android.tools.idea.streaming.device
+
+import com.android.SdkConstants.PRIMARY_DISPLAY_ID
+import com.android.adblib.AdbSession
+import com.android.adblib.DeviceSelector
+import com.android.adblib.RemoteFileMode
+import com.android.adblib.ShellCommandOutputElement
+import com.android.adblib.SocketSpec
+import com.android.adblib.isKnownDevice
+import com.android.adblib.shellAsLines
+import com.android.adblib.syncSend
+import com.android.annotations.concurrency.GuardedBy
+import com.android.sdklib.deviceprovisioner.DeviceId
+import com.android.sdklib.deviceprovisioner.DeviceType
+import com.android.tools.analytics.UsageTracker
+import com.android.tools.idea.adblib.AdbLibApplicationService
+import com.android.tools.idea.concurrency.createCoroutineScope
+import com.android.tools.idea.diagnostics.crash.StudioCrashReporter
+import com.android.tools.idea.diagnostics.report.GenericReport
+import com.android.tools.idea.flags.StudioFlags
+import com.android.tools.idea.streaming.DeviceMirroringSettings
+import com.android.tools.idea.streaming.DeviceMirroringSettingsListener
+import com.android.tools.idea.streaming.core.RUNNING_DEVICES_NOTIFICATION_GROUP
+import com.android.tools.idea.streaming.core.StreamingDeviceId
+import com.android.tools.idea.streaming.core.htmlEscaped
+import com.android.tools.idea.util.StudioPathManager
+import com.android.utils.TraceUtils.simpleId
+import com.google.wireless.android.sdk.stats.AndroidStudioEvent
+import com.google.wireless.android.sdk.stats.DeviceMirroringAbnormalAgentTermination
+import com.intellij.notification.NotificationType
+import com.intellij.openapi.Disposable
+import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.application.PluginPathManager
+import com.intellij.openapi.diagnostic.Logger
+import com.intellij.openapi.project.Project
+import com.intellij.openapi.project.guessProjectDir
+import com.intellij.openapi.project.modules
+import com.intellij.openapi.util.Disposer
+import com.intellij.openapi.util.text.Strings.capitalize
+import com.intellij.util.containers.ContainerUtil.createLockFreeCopyOnWriteList
+import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap
+import java.awt.Dimension
+import java.io.EOFException
+import java.io.IOException
+import java.net.InetAddress
+import java.net.InetSocketAddress
+import java.net.StandardSocketOptions
+import java.nio.ByteBuffer
+import java.nio.channels.AsynchronousServerSocketChannel
+import java.nio.file.Path
+import java.nio.file.Paths
+import java.nio.file.attribute.PosixFilePermission
+import java.util.concurrent.CancellationException
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
+import java.util.concurrent.atomic.AtomicReference
+import java.util.function.IntFunction
+import kotlin.math.min
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.withTimeout
+import org.jetbrains.android.facet.AndroidFacet
+
+internal const val SCREEN_SHARING_AGENT_JAR_NAME = "screen-sharing-agent.jar"
+internal const val SCREEN_SHARING_AGENT_SO_NAME = "libscreen-sharing-agent.so"
+internal const val SCREEN_SHARING_AGENT_SOURCE_PATH = "tools/adt/idea/streaming/screen-sharing-agent"
+internal const val DEVICE_PATH_BASE = "/data/local/tmp/.studio"
+private const val MAX_BIT_RATE_EMULATOR = 2000000
+private const val VIDEO_CHANNEL_MARKER = 'V'.code.toByte()
+private const val AUDIO_CHANNEL_MARKER = 'A'.code.toByte()
+private const val CONTROL_CHANNEL_MARKER = 'C'.code.toByte()
+// Flag definitions. Keep in sync with flags.h
+internal const val START_VIDEO_STREAM = 0x01
+internal const val TURN_OFF_DISPLAY_WHILE_MIRRORING = 0x02
+internal const val STREAM_AUDIO = 0x04
+internal const val USE_UINPUT = 0x08
+internal const val DEVICE_IS_XR = 0x10
+internal const val TRACE_CLIPBOARD_SYNCHRONIZATION = 0x40
+
+/** Maximum cumulative length of agent messages to remember. */
+private const val MAX_TOTAL_AGENT_MESSAGE_LENGTH = 10_000
+private const val MAX_ERROR_MESSAGE_AGE_MILLIS = 1000L
+private const val CRASH_REPORT_TYPE = "Screen Sharing Agent termination"
+private const val REPORT_FIELD_EXIT_CODE = "exitCode"
+private const val REPORT_FIELD_RUN_DURATION_MILLIS = "runDurationMillis"
+private const val REPORT_FIELD_AGENT_MESSAGES = "agentMessages"
+private const val REPORT_FIELD_DEVICE = "device"
+
+private const val NOTIFICATION_PREFIX = "NOTIFICATION "
+
+private val logger = Logger.getInstance(DeviceClient::class.java)
+
+private val pushSerializer = ExecutionSerializer()
+
+class DeviceClient(
+  deviceId: DeviceId,
+  val deviceSerialNumber: String,
+  val deviceConfig: DeviceConfiguration,
+  private val deviceAbi: String,
+) : Disposable {
+
+  val deviceName: String = deviceConfig.deviceName
+  val deviceId: StreamingDeviceId = StreamingDeviceId.ofPhysicalDevice(deviceSerialNumber, deviceId)
+
+  internal val streamingSessionTracker: DeviceStreamingSessionTracker = DeviceStreamingSessionTracker(deviceConfig)
+  private val clientScope = createCoroutineScope()
+  private val connectionHolder = AtomicReference<Connection>()
+  internal val deviceController: DeviceController?
+    get() = connectionHolder.get()?.deviceController
+
+  val videoDecoder: VideoDecoder?
+    get() = connectionHolder.get()?.videoDecoder
+
+  private val audioDecoder: AudioDecoder?
+    get() = connectionHolder.get()?.audioDecoder
+
+  private var disposed = false
+  private val agentTerminationListeners = createLockFreeCopyOnWriteList<AgentTerminationListener>()
+  /**
+   * Contains entries for all active video streams. Keyed by display IDs. The values represent maximum video resolutions requested by
+   * different video stream consumers
+   */
+  @GuardedBy("itself") private val videoStreams = Int2ObjectOpenHashMap<VideoStreamArbiter>()
+
+  /** Asynchronously establishes connection to the screen sharing agent without activating the video stream. */
+  fun establishAgentConnectionWithoutVideoStreamAsync(project: Project) {
+    clientScope.launch { establishAgentConnection(Dimension(), UNKNOWN_ORIENTATION, false, project) }
+  }
+
+  /**
+   * Establishes connection to the screen sharing agent. If the process of establishing connection has already been started, waits for it to
+   * complete.
+   */
+  suspend fun establishAgentConnection(
+    maxVideoSize: Dimension,
+    initialDisplayOrientation: Int,
+    startVideoStream: Boolean,
+    project: Project,
+  ) {
+    try {
+      streamingSessionTracker.streamingStarted()
+      val newConnection = Connection(this)
+      val connection = connectionHolder.compareAndExchange(null, newConnection) ?: newConnection
+      if (connection === newConnection) {
+        try {
+          startAgentAndConnect(connection, maxVideoSize, initialDisplayOrientation, startVideoStream, project)
+          connection.established.complete(Unit)
+        } catch (e: Throwable) {
+          connectionHolder.compareAndSet(connection, null)
+          AdbLibApplicationService.instance.session.throwIfCancellationOrDeviceDisconnected(e)
+          connection.established.completeExceptionally(e)
+        }
+      } else {
+        Disposer.dispose(newConnection)
+      }
+      connection.established.await()
+
+      if (connection !== newConnection && startVideoStream) {
+        startVideoStream(project, PRIMARY_DISPLAY_ID, maxVideoSize)
+      }
+    } catch (e: Throwable) {
+      if (disposed) {
+        logger.info("$simpleId.establishAgentConnection: already disposed, throwing CancellationException")
+        throw CancellationException()
+      }
+      throw e
+    }
+  }
+
+  /**
+   * Waits for the connection to the screen sharing agent to be established. Returns immediately if the connection hasn't been attempted yet
+   * or the connection attempt failed.
+   */
+  suspend fun waitUntilConnected() {
+    connectionHolder.get()?.established?.await()
+  }
+
+  /** Starts the screen sharing agent and connects to it. */
+  private suspend fun startAgentAndConnect(
+    connection: Connection,
+    maxVideoSize: Dimension,
+    initialDisplayOrientation: Int,
+    startVideoStream: Boolean,
+    project: Project,
+  ) {
+    val adbSession = AdbLibApplicationService.instance.session
+    val deviceSelector = DeviceSelector.fromSerialNumber(deviceSerialNumber)
+    val agentPushed = coroutineScope {
+      async {
+        pushSerializer.executeSeriallyFor(deviceSerialNumber) { // Don't allow concurrent pushes to the same device.
+          pushAgent(deviceSelector, adbSession, project)
+        }
+      }
+    }
+
+    @Suppress("BlockingMethodInNonBlockingContext")
+    val asyncChannel = AsynchronousServerSocketChannel.open().bind(InetSocketAddress(InetAddress.getLoopbackAddress(), 0))
+    val port = (asyncChannel.localAddress as InetSocketAddress).port
+    logger.debug("Using port $port")
+    var channels: Channels? = null
+    SuspendingServerSocketChannel(asyncChannel).use { serverSocketChannel ->
+      val socketName = "screen-sharing-agent-$port"
+      ClosableReverseForwarding(deviceSelector, adbSession, SocketSpec.LocalAbstract(socketName), SocketSpec.Tcp(port)).use {
+        it.startForwarding()
+        agentPushed.await()
+        startAgent(connection, deviceSelector, adbSession, socketName, maxVideoSize, initialDisplayOrientation, startVideoStream)
+        channels = connectChannels(connection, serverSocketChannel)
+        // Port forwarding can be removed since the already established connections will continue to work without it.
+      }
+    }
+
+    if (channels != null) {
+      connection.deviceController = DeviceController(connection, channels.controlChannel)
+      connection.videoDecoder =
+        VideoDecoder(channels.videoChannel, clientScope, deviceConfig.deviceProperties, streamingSessionTracker).apply {
+          start(startVideoStream)
+        }
+      connection.audioDecoder = channels.audioChannel?.let { AudioDecoder(it, clientScope).apply { start(isAudioStreamingEnabled()) } }
+
+      if (isAudioStreamingSupported() && !isRemoteDevice()) {
+        val messageBusConnection = ApplicationManager.getApplication().messageBus.connect(this)
+        messageBusConnection.subscribe(DeviceMirroringSettingsListener.TOPIC, DeviceMirroringSettingsListener { updateAudioStreaming() })
+      }
+    }
+
+    if (startVideoStream) {
+      synchronized(videoStreams) { videoStreams[PRIMARY_DISPLAY_ID] = VideoStreamArbiter(project, PRIMARY_DISPLAY_ID, maxVideoSize) }
+    }
+  }
+
+  fun addAgentTerminationListener(listener: AgentTerminationListener) {
+    agentTerminationListeners.add(listener)
+  }
+
+  fun removeAgentTerminationListener(listener: AgentTerminationListener) {
+    agentTerminationListeners.remove(listener)
+  }
+
+  fun startVideoStream(requester: Any, displayId: Int, maxOutputSize: Dimension) {
+    synchronized(videoStreams) {
+      val arbiter = videoStreams.computeIfAbsent(displayId, IntFunction { d -> VideoStreamArbiter(d) })
+      arbiter.startVideoStream(requester, maxOutputSize)
+    }
+  }
+
+  fun stopVideoStream(requester: Any, displayId: Int) {
+    synchronized(videoStreams) {
+      videoStreams[displayId]?.let { arbiter ->
+        arbiter.stopVideoStream(requester)
+        if (arbiter.isEmpty()) {
+          videoStreams.remove(displayId)
+        }
+      }
+    }
+  }
+
+  fun setMaxVideoResolution(requester: Any, displayId: Int, maxOutputSize: Dimension) {
+    clientScope.launch(Dispatchers.IO.limitedParallelism(1)) {
+      synchronized(videoStreams) { videoStreams[displayId]?.setMaxVideoResolution(requester, maxOutputSize) }
+    }
+  }
+
+  private suspend fun connectChannels(connection: Disposable, serverSocketChannel: SuspendingServerSocketChannel): Channels {
+    return withVerboseTimeout(getConnectionTimeout(), "Device agent is not responding") {
+      var videoChannel: SuspendingSocketChannel? = null
+      var controlChannel: SuspendingSocketChannel? = null
+      var audioChannel: SuspendingSocketChannel? = null
+      // The channels are distinguished by single-byte markers, 'V' for video and 'C' for control.
+      // Read the markers after establishing connection to assign the channels appropriately.
+      val numChannels = if (isAudioStreamingSupported()) 3 else 2
+      val deferredChannels = Array(numChannels) { _ -> serverSocketChannel.acceptAndReadMarker(connection) }
+      for (deferred in deferredChannels) {
+        val (channel, marker) = deferred.await()
+        when (marker) {
+          VIDEO_CHANNEL_MARKER -> videoChannel = channel
+          AUDIO_CHANNEL_MARKER -> audioChannel = channel
+          CONTROL_CHANNEL_MARKER -> controlChannel = channel
+          else -> throw RuntimeException("Unexpected channel marker: $marker")
+        }
+      }
+      if (videoChannel == null) {
+        throw RuntimeException("Unable to establish the video channel")
+      }
+      if (audioChannel == null && numChannels == 3) {
+        throw RuntimeException("Unable to establish the audio channel")
+      }
+      if (controlChannel == null) {
+        throw RuntimeException("Unable to establish the control channel")
+      }
+      controlChannel.setOption(StandardSocketOptions.TCP_NODELAY, true)
+      return@withVerboseTimeout Channels(videoChannel, audioChannel, controlChannel)
+    }
+  }
+
+  private suspend fun SuspendingServerSocketChannel.acceptAndReadMarker(
+    connection: Disposable
+  ): Deferred<Pair<SuspendingSocketChannel, Byte>> {
+    val channel = acceptAndEnsureClosing(connection)
+    return coroutineScope { async { Pair(channel, readChannelMarker(channel)) } }
+  }
+
+  private fun getConnectionTimeout(): Long {
+    val timeout = StudioFlags.DEVICE_MIRRORING_CONNECTION_TIMEOUT_MILLIS.get().toLong()
+    return if (timeout > 0) timeout else Long.MAX_VALUE
+  }
+
+  /** Similar to [withTimeout] but throws [TimeoutException] with the given message. */
+  private suspend fun <T> withVerboseTimeout(timeMillis: Long, timeoutMessage: String, block: suspend CoroutineScope.() -> T): T {
+    return try {
+      withTimeout(timeMillis, block)
+    } catch (_: TimeoutCancellationException) {
+      throw TimeoutException(timeoutMessage)
+    }
+  }
+
+  private suspend fun readChannelMarker(channel: SuspendingSocketChannel): Byte {
+    val buf = ByteBuffer.allocate(1)
+    channel.read(buf, getConnectionTimeout() + 2000, TimeUnit.MILLISECONDS)
+    buf.flip()
+    return buf.get()
+  }
+
+  override fun dispose() {
+    disposed = true
+    streamingSessionTracker.streamingEnded()
+  }
+
+  private suspend fun pushAgent(deviceSelector: DeviceSelector, adbSession: AdbSession, project: Project) {
+    streamingSessionTracker.agentPushStarted()
+
+    var soFile: Path? = null
+    var jarFile: Path? = null
+    if (ApplicationManager.getApplication().isInternal) {
+      val projectDir = project.guessProjectDir()?.toNioPath()
+      if (projectDir != null && projectDir.endsWith(SCREEN_SHARING_AGENT_SOURCE_PATH)) {
+        // Development environment for the screen sharing agent.
+        // Use the agent built by running "Build > Make Project" in Studio.
+        val facet = project.modules.firstNotNullOfOrNull { AndroidFacet.getInstance(it) }
+        val buildVariant = facet?.properties?.SELECTED_BUILD_VARIANT ?: "debug"
+        val prefix = "app/build/intermediates/stripped_native_libs/$buildVariant/strip${capitalize(buildVariant)}DebugSymbols/out/lib"
+        soFile = projectDir.resolve("$prefix/$deviceAbi/$SCREEN_SHARING_AGENT_SO_NAME")
+        val apkName = if (buildVariant == "debug") "app-debug.apk" else "app-release-unsigned.apk"
+        jarFile = projectDir.resolve("app/build/outputs/apk/$buildVariant/$apkName")
+      }
+    }
+    if (soFile == null || jarFile == null) {
+      if (StudioPathManager.isRunningFromSources()) {
+        // Studio running from IntelliJ.
+        // Use the agent built by running "bazel build //tools/adt/idea/streaming/screen-sharing-agent:bundle"
+        val binDir = Paths.get(StudioPathManager.getBinariesRoot())
+        soFile = binDir.resolve("$SCREEN_SHARING_AGENT_SOURCE_PATH/native/$deviceAbi/$SCREEN_SHARING_AGENT_SO_NAME")
+        jarFile = binDir.resolve("$SCREEN_SHARING_AGENT_SOURCE_PATH/$SCREEN_SHARING_AGENT_JAR_NAME")
+      } else {
+        // Installed Studio.
+        val agentDir = PluginPathManager.getPluginHome("android/resources/screen-sharing-agent").toPath()
+        soFile = agentDir.resolve("$deviceAbi/$SCREEN_SHARING_AGENT_SO_NAME")
+        jarFile = agentDir.resolve(SCREEN_SHARING_AGENT_JAR_NAME)
+      }
+    }
+
+    coroutineScope {
+      try {
+        val adb = adbSession.deviceServices
+        // "chown shell:shell" ensures proper ownership of /data/local/tmp/.studio if adb is rooted.
+        val command = "mkdir -p $DEVICE_PATH_BASE; chmod 755 $DEVICE_PATH_BASE; chown shell:shell $DEVICE_PATH_BASE"
+        adb.shellAsLines(deviceSelector, command).collect {
+          if (it is ShellCommandOutputElement.ExitCode && it.exitCode != 0) {
+            logger.warn("Unable to create $DEVICE_PATH_BASE directory: ${it.exitCode}")
+          }
+        }
+        val permissions = RemoteFileMode.fromPosixPermissions(PosixFilePermission.OWNER_READ)
+        val nativeLibraryPushed = async {
+          logger.info("Copying $SCREEN_SHARING_AGENT_SO_NAME to $deviceName")
+          adbSession.pushFile(deviceSelector, soFile, "$DEVICE_PATH_BASE/$SCREEN_SHARING_AGENT_SO_NAME", permissions)
+          logger.info("Finished copying $SCREEN_SHARING_AGENT_SO_NAME to $deviceName")
+        }
+        logger.info("Copying $SCREEN_SHARING_AGENT_JAR_NAME to $deviceName")
+        adbSession.pushFile(deviceSelector, jarFile, "$DEVICE_PATH_BASE/$SCREEN_SHARING_AGENT_JAR_NAME", permissions)
+        logger.info("Finished copying $SCREEN_SHARING_AGENT_JAR_NAME to $deviceName")
+        nativeLibraryPushed.await()
+      } catch (e: Throwable) {
+        if (adbSession.isDeviceConnected() == false) {
+          throw RuntimeException("$deviceName disconnected while copying the screen sharing agent")
+        }
+        throw RuntimeException("Unable to copy the screen sharing agent to $deviceName", e)
+      }
+    }
+    streamingSessionTracker.agentPushEnded()
+  }
+
+  private val isEmulator = deviceSerialNumber.startsWith("emulator-") || deviceConfig.deviceProperties.isVirtual == true
+
+  private fun startAgent(
+    connection: Connection,
+    deviceSelector: DeviceSelector,
+    adbSession: AdbSession,
+    socketName: String,
+    maxVideoSize: Dimension,
+    initialDisplayOrientation: Int,
+    startVideoStream: Boolean,
+  ) {
+    val maxSizeArg =
+      if (maxVideoSize.width > 0 && maxVideoSize.height > 0) " --max_size=${maxVideoSize.width},${maxVideoSize.height}" else ""
+    val orientationArg = if (initialDisplayOrientation == UNKNOWN_ORIENTATION) "" else " --orientation=$initialDisplayOrientation"
+    val flags =
+      (if (startVideoStream) START_VIDEO_STREAM else 0) or
+        (if (isAudioStreamingEnabled()) STREAM_AUDIO else 0) or
+        (if (shouldTurnOffDisplay()) TURN_OFF_DISPLAY_WHILE_MIRRORING else 0) or
+        (if (StudioFlags.DEVICE_MIRRORING_USE_UINPUT.get()) USE_UINPUT else 0) or
+        (if (deviceConfig.deviceType == DeviceType.XR_HEADSET) DEVICE_IS_XR else 0) or // Workaround for b/406870742 and b/408280128.
+        (if (StudioFlags.DEVICE_MIRRORING_TRACE_CLIPBOARD_SYNCHRONIZATION.get()) TRACE_CLIPBOARD_SYNCHRONIZATION else 0)
+    val flagsArg = if (flags != 0) " --flags=$flags" else ""
+    val maxBitRate = calculateMaxBitRate()
+    val maxBitRateArg = if (maxBitRate > 0) " --max_bit_rate=$maxBitRate" else ""
+    val logLevel = StudioFlags.DEVICE_MIRRORING_AGENT_LOG_LEVEL.get()
+    val logLevelArg = if (logLevel.isNotBlank()) " --log=$logLevel" else ""
+    val codecName = StudioFlags.DEVICE_MIRRORING_VIDEO_CODEC.get()
+    val codecArg = if (codecName.isNotBlank()) " --codec=$codecName" else ""
+    val preloadClause =
+      when {
+        DeviceMirroringSettings.getInstance().turnOffDisplayWhileMirroring && deviceConfig.featureLevel == 34 ->
+          // Turning off display on API 34 requires loading of libandroid_servers.so.
+          // Other preloaded libraries are its dependencies.
+          "LD_PRELOAD=\"/apex/com.android.adbd/lib64/libadb_pairing_server.so " +
+            "/apex/com.android.adbd/lib64/libadb_pairing_connection.so " +
+            "/apex/com.android.os.statsd/lib64/libstatspull.so " +
+            "/apex/com.android.os.statsd/lib64/libstatssocket.so " +
+            "/apex/com.android.runtime/lib64/bionic/libdl_android.so " +
+            "/apex/com.android.i18n/lib64/libandroidicu.so " +
+            "/system/lib64/libandroid_servers.so\" "
+        else -> ""
+      }
+    val command =
+      "${preloadClause}CLASSPATH=$DEVICE_PATH_BASE/$SCREEN_SHARING_AGENT_JAR_NAME app_process $DEVICE_PATH_BASE" +
+        " com.android.tools.screensharing.Main --socket=$socketName" +
+        "$maxSizeArg$orientationArg$flagsArg$maxBitRateArg$logLevelArg$codecArg"
+    AgentHandler().startAgent(command, connection, deviceSelector, adbSession)
+  }
+
+  private fun updateAudioStreaming() {
+    if (DeviceMirroringSettings.getInstance().redirectAudio) {
+      if (audioDecoder?.unmute() == true) {
+        deviceController?.sendControlMessage(StartAudioStreamMessage())
+      }
+    } else {
+      if (audioDecoder?.mute() == true) {
+        deviceController?.sendControlMessage(StopAudioStreamMessage())
+      }
+    }
+  }
+
+  private fun isAudioStreamingSupported(): Boolean = deviceConfig.featureLevel >= 31
+
+  private fun isAudioStreamingEnabled(): Boolean =
+    isAudioStreamingSupported() && (DeviceMirroringSettings.getInstance().redirectAudio || isRemoteDevice())
+
+  private fun shouldTurnOffDisplay(): Boolean {
+    return !isRemoteDevice() &&
+      DeviceMirroringSettings.getInstance().turnOffDisplayWhileMirroring &&
+      (deviceConfig.featureLevel < 35 || StudioFlags.DEVICE_MIRRORING_B386236480_TESTING.get())
+  }
+
+  private fun isRemoteDevice(): Boolean = deviceConfig.deviceProperties.isRemote == true
+
+  private fun calculateMaxBitRate(): Int {
+    if (isEmulator) {
+      return MAX_BIT_RATE_EMULATOR
+    }
+    val bitRate1 = BitRateManager.getInstance().getBitRate(deviceConfig.deviceProperties)
+    val bitRate2 = StudioFlags.DEVICE_MIRRORING_MAX_BIT_RATE.get()
+    return when {
+      bitRate1 == 0 -> bitRate2
+      bitRate2 == 0 -> bitRate1
+      else -> min(bitRate1, bitRate2)
+    }
+  }
+
+  private fun recordAbnormalAgentTermination(exitCode: Int, runDurationMillis: Long, errors: OutputAccumulator) {
+    // Log a metrics event.
+    val studioEvent =
+      AndroidStudioEvent.newBuilder()
+        .setKind(AndroidStudioEvent.EventKind.DEVICE_MIRRORING_ABNORMAL_AGENT_TERMINATION)
+        .setDeviceMirroringAbnormalAgentTermination(
+          DeviceMirroringAbnormalAgentTermination.newBuilder().setExitCode(exitCode).setRunDurationMillis(runDurationMillis)
+        )
+        .setDeviceInfo(deviceConfig.deviceProperties.deviceInfoProto)
+
+    UsageTracker.log(studioEvent)
+
+    // Create and submit a Crash report.
+    val fields =
+      mapOf(
+        REPORT_FIELD_EXIT_CODE to exitCode.toString(),
+        REPORT_FIELD_RUN_DURATION_MILLIS to runDurationMillis.toString(),
+        REPORT_FIELD_AGENT_MESSAGES to errors.getMessages(),
+        REPORT_FIELD_DEVICE to deviceConfig.deviceName,
+      )
+    val report = GenericReport(CRASH_REPORT_TYPE, fields)
+    try {
+      StudioCrashReporter.getInstance().submit(report.asCrashReport())
+    } catch (_: RuntimeException) {
+      // May happen due to exceeded quota.
+    }
+  }
+
+  private fun onDisconnection(connection: Connection) {
+    if (connectionHolder.compareAndSet(connection, null)) {
+      Disposer.dispose(connection)
+    }
+  }
+
+  override fun toString(): String {
+    return "Mirroring client for $deviceName ($deviceSerialNumber)"
+  }
+
+  private suspend fun AdbSession.pushFile(device: DeviceSelector, file: Path, remoteFilePath: String, permissions: RemoteFileMode) {
+    try {
+      deviceServices.syncSend(device, file, remoteFilePath, permissions)
+    } catch (e: Throwable) {
+      throwIfCancellationOrDeviceDisconnected(e)
+      throw RuntimeException("Failed to push ${file.fileName} to $device", e)
+    }
+  }
+
+  /** Throws [CancellationException] if [throwable] is [CancellationException] or the device is disconnected. */
+  private suspend fun AdbSession.throwIfCancellationOrDeviceDisconnected(throwable: Throwable) {
+    when {
+      throwable is CancellationException -> throw throwable
+      isDeviceConnected() == false -> throw CancellationException()
+    }
+  }
+
+  /** Checks if the device is connected. Returns null if it cannot be determined. */
+  private suspend fun AdbSession.isDeviceConnected(): Boolean? {
+    return try {
+      return hostServices.isKnownDevice(deviceSerialNumber)
+    } catch (e: CancellationException) {
+      throw e
+    } catch (_: Throwable) {
+      null
+    }
+  }
+
+  private suspend fun SuspendingServerSocketChannel.acceptAndEnsureClosing(disposable: Disposable): SuspendingSocketChannel =
+    accept().also { Disposer.register(disposable, DisposableCloser(it)) }
+
+  private data class Channels(
+    var videoChannel: SuspendingSocketChannel,
+    var audioChannel: SuspendingSocketChannel?,
+    var controlChannel: SuspendingSocketChannel,
+  )
+
+  interface AgentTerminationListener {
+    fun agentTerminated(exitCode: Int)
+
+    fun deviceDisconnected()
+  }
+
+  private inner class AgentHandler {
+    private val log = Logger.getInstance("ScreenSharingAgent $deviceName")
+    private val errors = OutputAccumulator(MAX_TOTAL_AGENT_MESSAGE_LENGTH, MAX_ERROR_MESSAGE_AGE_MILLIS)
+
+    fun startAgent(command: String, connection: Connection, deviceSelector: DeviceSelector, adbSession: AdbSession) {
+      clientScope.launch {
+        try {
+          logger.info("Executing adb shell $command")
+          val agentStartTime = System.currentTimeMillis()
+          adbSession.deviceServices.shellAsLines(deviceSelector, command).collect {
+            when (it) {
+              is ShellCommandOutputElement.StdoutLine -> processAgentOutput(OutputType.STDOUT, it.contents.trimEnd())
+              is ShellCommandOutputElement.StderrLine -> processAgentOutput(OutputType.STDERR, it.contents.trimEnd())
+              is ShellCommandOutputElement.ExitCode -> {
+                onDisconnection(connection)
+                if (it.exitCode == 0) {
+                  log.info("terminated")
+                } else {
+                  log.warn("terminated with code ${it.exitCode}")
+                  recordAbnormalAgentTermination(it.exitCode, System.currentTimeMillis() - agentStartTime, errors)
+                  AgentLogSaver.saveLog(adbSession, deviceSelector)
+                }
+                for (listener in agentTerminationListeners) {
+                  listener.agentTerminated(it.exitCode)
+                }
+                cancel()
+              }
+            }
+          }
+        } catch (_: EOFException) {
+          // Device disconnected. This is not an error.
+          log.info("device disconnected")
+          onDisconnection(connection)
+          for (listener in agentTerminationListeners) {
+            listener.deviceDisconnected()
+          }
+        } catch (e: Throwable) {
+          onDisconnection(connection)
+          adbSession.throwIfCancellationOrDeviceDisconnected(e)
+          throw RuntimeException("Command \"$command\" failed", e)
+        }
+      }
+    }
+
+    private fun processAgentOutput(outputType: OutputType, text: String) {
+      if (text.isNotBlank()) {
+        val notification = text.startsWith(NOTIFICATION_PREFIX)
+        val message = (if (notification) text.substring(NOTIFICATION_PREFIX.length) else text).trimEnd()
+        var notificationType: NotificationType
+        when (outputType) {
+          OutputType.STDOUT -> {
+            log.info(message)
+            notificationType = NotificationType.INFORMATION
+          }
+          OutputType.STDERR -> {
+            log.warn(message)
+            if (!notification) {
+              errors.addMessage(message)
+            }
+            notificationType = NotificationType.WARNING
+          }
+        }
+        if (notification) {
+          RUNNING_DEVICES_NOTIFICATION_GROUP.createNotification(deviceName.htmlEscaped(), message.htmlEscaped(), notificationType)
+            .notify(null)
+        }
+      }
+    }
+  }
+
+  enum class OutputType {
+    STDOUT,
+    STDERR,
+  }
+
+  private class DisposableCloser(private val channel: SuspendingSocketChannel) : Disposable {
+
+    override fun dispose() {
+      // Disconnect the socket channel asynchronously.
+      CoroutineScope(Dispatchers.IO).launch {
+        try {
+          channel.close()
+        } catch (e: IOException) {
+          logger.warn(e)
+        }
+      }
+    }
+  }
+
+  private class ClosableReverseForwarding(
+    val deviceSelector: DeviceSelector,
+    val adbSession: AdbSession,
+    val deviceSocket: SocketSpec,
+    val localSocket: SocketSpec,
+  ) : SuspendingCloseable {
+
+    var opened = false
+
+    suspend fun startForwarding() {
+      adbSession.deviceServices.reverseForward(deviceSelector, deviceSocket, localSocket, rebind = true)
+      opened = true
+    }
+
+    override suspend fun close() {
+      if (opened) {
+        opened = false
+        adbSession.deviceServices.reverseKillForward(deviceSelector, deviceSocket)
+      }
+    }
+  }
+
+  private class OutputAccumulator(private val maxSize: Int, private val maxAgeMillis: Long) {
+
+    private val messages = ArrayDeque<Message>()
+    private var totalSize = 0
+
+    fun addMessage(text: String) {
+      val time = System.currentTimeMillis()
+      prune(maxSize - text.length, time)
+      messages.add(Message(time, text))
+      totalSize += text.length
+    }
+
+    fun getMessages(): String {
+      prune(maxSize, System.currentTimeMillis())
+      return messages.joinToString("\n", transform = Message::text)
+    }
+
+    private fun prune(size: Int, time: Long) {
+      val cutoff = time - maxAgeMillis
+      while (totalSize > size || messages.isNotEmpty() && messages.first().timestamp < cutoff) {
+        totalSize -= messages.removeFirst().text.length
+      }
+    }
+
+    private data class Message(val timestamp: Long, val text: String)
+  }
+
+  /**
+   * Arbitrates between video resolution and video stream start/stop between multiple video stream consumers. No concurrent access is
+   * allowed.
+   */
+  private inner class VideoStreamArbiter(private val displayId: Int) {
+    /** Keyed by the requesters of video resolutions. */
+    private val requestedVideoResolutions = mutableMapOf<Any, Dimension>()
+    private val currentSize = Dimension()
+
+    constructor(requester: Any, displayId: Int, maxOutputSize: Dimension) : this(displayId) {
+      requestedVideoResolutions[requester] = maxOutputSize
+    }
+
+    fun startVideoStream(requester: Any, maxOutputSize: Dimension) {
+      if (requestedVideoResolutions.isEmpty()) {
+        requestedVideoResolutions[requester] = maxOutputSize
+        currentSize.size = maxOutputSize
+        if (videoDecoder?.enableDecodingForDisplay(displayId) == true) {
+          deviceController?.sendControlMessage(StartVideoStreamMessage(displayId, maxOutputSize))
+        }
+      } else {
+        requestedVideoResolutions[requester] = maxOutputSize
+        sendUpdatedVideoSize()
+      }
+    }
+
+    fun stopVideoStream(requester: Any) {
+      requestedVideoResolutions.remove(requester)
+      if (requestedVideoResolutions.isEmpty()) {
+        currentSize.setSize(0, 0)
+        if (videoDecoder?.disableDecodingForDisplay(displayId) == true) {
+          deviceController?.sendControlMessage(StopVideoStreamMessage(displayId))
+          if (displayId == PRIMARY_DISPLAY_ID) {
+            streamingSessionTracker.streamingEnded()
+          }
+        }
+      } else {
+        sendUpdatedVideoSize()
+      }
+    }
+
+    fun setMaxVideoResolution(requester: Any, maxOutputSize: Dimension) {
+      if (requestedVideoResolutions.replace(requester, maxOutputSize) != null) {
+        sendUpdatedVideoSize()
+      }
+    }
+
+    /**
+     * Updates [currentSize], which is a max of all requested sizes in both dimensions. Returns true if [currentSize] changed as a result,
+     * otherwise false.
+     */
+    private fun sendUpdatedVideoSize() {
+      var width = 0
+      var height = 0
+      for (size in requestedVideoResolutions.values) {
+        if (width < size.width) {
+          width = size.width
+        }
+        if (height < size.height) {
+          height = size.height
+        }
+      }
+      if (width == currentSize.width && height == currentSize.height) {
+        return
+      }
+      currentSize.setSize(width, height)
+      deviceController?.sendControlMessage(SetMaxVideoResolutionMessage(displayId, currentSize))
+    }
+
+    fun isEmpty(): Boolean = requestedVideoResolutions.isEmpty()
+  }
+
+  private class Connection(disposableParent: Disposable) : Disposable {
+
+    val established = CompletableDeferred<Unit>()
+    @Volatile var deviceController: DeviceController? = null
+    @Volatile var videoDecoder: VideoDecoder? = null
+    @Volatile var audioDecoder: AudioDecoder? = null
+
+    init {
+      Disposer.register(disposableParent, this)
+    }
+
+    override fun dispose() {}
+  }
+}
+
+private class ExecutionSerializer {
+
+  private val semaphores = mutableListOf<Entry>()
+
+  suspend fun executeSeriallyFor(key: Any, block: suspend () -> Unit) {
+    val entry =
+      synchronized(semaphores) { semaphores.find { it.key == key }?.also { it.refCount++ } ?: Entry(key).also { semaphores.add(it) } }
+    entry.semaphore.acquire()
+    try {
+      block()
+    } finally {
+      synchronized(semaphores) {
+        if (--entry.refCount == 0) {
+          semaphores.removeIf { it.key == key }
+        }
+      }
+      entry.semaphore.release()
+    }
+  }
+
+  class Entry(val key: Any) {
+    val semaphore = Semaphore(1)
+    var refCount = 1
+  }
+}
+
+internal class AgentTerminatedException(val exitCode: Int) : RuntimeException("Exit code $exitCode")

@@ -1,0 +1,18 @@
+.DS_Store
+
+# Build output
+build/
+app/build/
+
+# Xcode
+*.xcuserdatad/
+xcuserdata/
+*.xcworkspace/xcuserdata/
+
+# Gradle, inside the vendored agent tree. The source is ours to keep; what it builds is not.
+refs/studio/screen-sharing-agent/local.properties
+refs/studio/screen-sharing-agent/.gradle/
+refs/studio/screen-sharing-agent/.kotlin/
+refs/studio/screen-sharing-agent/build/
+refs/studio/screen-sharing-agent/app/build/
+refs/studio/screen-sharing-agent/app/.cxx/

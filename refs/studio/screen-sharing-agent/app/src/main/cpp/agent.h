@@ -1,0 +1,121 @@
+/*
+ * Copyright (C) 2021 The Android Open Source Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+#pragma once
+
+#include <atomic>
+#include <map>
+#include <string>
+#include <vector>
+
+#include "audio_streamer.h"
+#include "codec_info.h"
+#include "controller.h"
+#include "display_streamer.h"
+#include "session_environment.h"
+#include "socket_writer.h"
+
+namespace screensharing {
+
+extern const char ATTRIBUTION_TAG[];  // The tag used in system logs.
+constexpr int32_t PRIMARY_DISPLAY_ID = 0;
+
+// Device manufacturers.
+constexpr char GOOGLE[] = "Google";
+constexpr char HONOR[] = "HONOR";
+constexpr char MOTOROLA[] = "motorola";
+constexpr char ONE_PLUS[] = "OnePlus";
+constexpr char OPPO[] = "OPPO";
+constexpr char SAMSUNG[] = "samsung";
+constexpr char VIVO[] = "vivo";
+constexpr char XIAOMI[] = "Xiaomi";
+
+enum class DeviceType {
+  GENERIC,
+  GLASSES,
+  WATCH,
+  XR
+};
+
+// The main class of the screen sharing agent.
+class Agent {
+public:
+  static void Run(const std::vector<std::string>& args);
+
+  static void StartVideoStream(int32_t display_id, Size max_video_resolution);
+  static void StopVideoStream(int32_t display_id);
+  static void StartAudioStream();
+  static void StopAudioStream();
+
+  static void Shutdown();
+  [[noreturn]] static void ErrorShutdown(int32_t exit_code);
+
+  // Calls DisplayStreamer::SetVideoOrientation.
+  static void SetVideoOrientation(int32_t display_id, int32_t orientation);
+  // Calls DisplayStreamer::SetMaxVideoResolution.
+  static void SetMaxVideoResolution(int32_t display_id, Size max_video_resolution);
+  // Calls DisplayStreamer::GetDisplayInfo.
+  [[nodiscard]] static DisplayInfo GetDisplayInfo(int32_t display_id);
+
+  // Returns an object that stores original values of changed system settings that are restored to
+  // the original values when the agent terminates. Creates SessionEnvironment if necessary.
+  // May be called on any thread. Safe to be called multiple times.
+  [[nodiscard]] static SessionEnvironment& GetSessionEnvironment();
+
+  [[nodiscard]] static bool IsShuttingDown() { return shutting_down_; }
+
+  [[nodiscard]] static DeviceType device_type() { return device_type_; }
+
+  [[nodiscard]] static const std::string& device_manufacturer();
+
+  [[nodiscard]] static int32_t flags() { return flags_; }
+
+  [[nodiscard]] inline static int32_t feature_level() { return feature_level_; }
+
+  Agent() = delete;
+
+private:
+  static void Initialize(const std::vector<std::string>& args);
+  static void SighupHandler(int signal_number);
+  // Restores the original environment that existed before GetSessionEnvironment was first called.
+  // May be called on any thread. Safe to be called multiple times.
+  static void RestoreEnvironment();
+
+  static std::thread::id main_thread_id_;
+  static std::atomic_bool shutting_down_;
+  static std::atomic_int32_t exit_code_;
+  static int32_t feature_level_;
+  static DeviceType device_type_;
+  static std::string device_manufacturer_;
+  static std::string socket_name_;
+  static Size max_video_resolution_;
+  static int32_t max_bit_rate_;  // Zero means no limit.
+  static int32_t initial_video_orientation_;  // In quadrants counterclockwise.
+  static std::string codec_name_;
+  static CodecInfo* codec_info_;
+  static int32_t flags_;
+  static SocketWriter* video_socket_writer_;
+  static SocketWriter* audio_socket_writer_;
+  static int control_socket_fd_;
+  static std::map<int32_t, DisplayStreamer> display_streamers_;
+  static DisplayStreamer* primary_display_streamer_;
+  static AudioStreamer* audio_streamer_;
+  static Controller* controller_;
+  static std::mutex environment_mutex_;
+  static SessionEnvironment* session_environment_;  // GUARDED_BY(environment_mutex_)
+};
+
+}  // namespace screensharing

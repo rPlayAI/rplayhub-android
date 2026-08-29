@@ -1,0 +1,275 @@
+/*
+ * Copyright (C) 2021 The Android Open Source Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+#include "display_manager.h"
+
+#include <mutex>
+#include <vector>
+
+#include "agent.h"
+#include "jvm.h"
+#include "log.h"
+#include "looper.h"
+#include "service_manager.h"
+#include "surface.h"
+
+namespace screensharing {
+
+using namespace std;
+
+namespace {
+
+// Constants copied from the android.hardware.display.DisplayManager class.
+constexpr int64_t EVENT_FLAG_DISPLAY_ADDED = 1L << 0;
+constexpr int64_t EVENT_FLAG_DISPLAY_REMOVED = 1L << 1;
+constexpr int64_t EVENT_FLAG_DISPLAY_CHANGED = 1L << 2;
+
+// Constants copied from the android.hardware.display.DisplayManagerGlobal class.
+constexpr int64_t INTERNAL_EVENT_FLAG_DISPLAY_ADDED = 1L << 2;
+constexpr int64_t INTERNAL_EVENT_FLAG_DISPLAY_BASIC_CHANGED = 1L << 3;
+constexpr int64_t INTERNAL_EVENT_FLAG_DISPLAY_REMOVED = 1L << 9;
+
+mutex static_initialization_mutex;  // Protects initialization of static fields.
+
+}
+
+void DisplayManager::InitializeStatics(Jni jni) {
+  unique_lock lock(static_initialization_mutex);
+
+  if (display_manager_global_class_.IsNull()) {
+    display_manager_global_class_ = jni.GetClass("android/hardware/display/DisplayManagerGlobal");
+    jmethodID get_instance_method =
+        display_manager_global_class_.GetStaticMethod("getInstance", "()Landroid/hardware/display/DisplayManagerGlobal;");
+    display_manager_global_ = display_manager_global_class_.CallStaticObjectMethod(jni, get_instance_method);
+
+    get_display_info_method_ = display_manager_global_class_.GetMethod("getDisplayInfo", "(I)Landroid/view/DisplayInfo;");
+    get_display_ids_method_ = display_manager_global_class_.GetMethod("getDisplayIds", "()[I");
+    if (Agent::feature_level() >= 35) {
+      request_display_power_method_ = display_manager_global_class_.FindMethod("requestDisplayPower", "(II)Z");
+    }
+
+    JClass display_info_class = jni.GetClass("android/view/DisplayInfo");
+    logical_width_field_ = display_info_class.GetFieldId("logicalWidth", "I");
+    logical_height_field_ = display_info_class.GetFieldId("logicalHeight", "I");
+    logical_density_dpi_field_ = display_info_class.GetFieldId("logicalDensityDpi", "I");
+    rotation_field_ = display_info_class.GetFieldId("rotation", "I");
+    layer_stack_field_ = display_info_class.GetFieldId("layerStack", "I");
+    flags_field_ = display_info_class.GetFieldId("flags", "I");
+    type_field_ = display_info_class.GetFieldId("type", "I");
+    state_field_ = display_info_class.GetFieldId("state", "I");
+
+    if (Agent::feature_level() >= 29) {
+      JClass display_listener_class = jni.GetClass("com/android/tools/screensharing/DisplayListener");
+      JObject listener = display_listener_class.NewObject(jni, display_listener_class.GetConstructor("()V"));
+      Handler handler(jni, Looper::GetMainLooper(jni));
+
+      if (Agent::feature_level() >= 35) {
+        jmethodID register_display_listener_method = display_manager_global_class_.GetMethod(
+            jni, "registerDisplayListener",
+            "(Landroid/hardware/display/DisplayManager$DisplayListener;Landroid/os/Handler;JLjava/lang/String;)V");
+        int64_t flag_mask =
+            Agent::feature_level() >= 36 ?
+                INTERNAL_EVENT_FLAG_DISPLAY_ADDED | INTERNAL_EVENT_FLAG_DISPLAY_BASIC_CHANGED | INTERNAL_EVENT_FLAG_DISPLAY_REMOVED :
+                EVENT_FLAG_DISPLAY_ADDED | EVENT_FLAG_DISPLAY_REMOVED | EVENT_FLAG_DISPLAY_CHANGED;
+        display_manager_global_.CallVoidMethod(
+            jni, register_display_listener_method, listener.ref(), handler.ref(), flag_mask,
+            JString(jni, ATTRIBUTION_TAG).ref());
+      } else if (Agent::feature_level() == 34) {
+        jmethodID register_display_listener_method = display_manager_global_class_.FindMethod(
+            jni, "registerDisplayListener",
+            "(Landroid/hardware/display/DisplayManager$DisplayListener;Landroid/os/Handler;JLjava/lang/String;)V");
+        if (register_display_listener_method == nullptr) {
+          register_display_listener_method = display_manager_global_class_.GetMethod(
+              jni, "registerDisplayListener",
+              "(Landroid/hardware/display/DisplayManager$DisplayListener;Landroid/os/Handler;J)V");
+          display_manager_global_.CallVoidMethod(
+              jni, register_display_listener_method, listener.ref(), handler.ref(),
+              EVENT_FLAG_DISPLAY_ADDED | EVENT_FLAG_DISPLAY_REMOVED | EVENT_FLAG_DISPLAY_CHANGED);
+        } else {
+          display_manager_global_.CallVoidMethod(
+              jni, register_display_listener_method, listener.ref(), handler.ref(),
+              EVENT_FLAG_DISPLAY_ADDED | EVENT_FLAG_DISPLAY_REMOVED | EVENT_FLAG_DISPLAY_CHANGED, JString(jni, ATTRIBUTION_TAG).ref());
+        }
+      } else if (Agent::feature_level() >= 31) {
+        jmethodID register_display_listener_method = display_manager_global_class_.GetMethod(
+            jni, "registerDisplayListener",
+            "(Landroid/hardware/display/DisplayManager$DisplayListener;Landroid/os/Handler;J)V");
+        display_manager_global_.CallVoidMethod(
+            jni, register_display_listener_method, listener.ref(), handler.ref(),
+            EVENT_FLAG_DISPLAY_ADDED | EVENT_FLAG_DISPLAY_REMOVED | EVENT_FLAG_DISPLAY_CHANGED);
+      } else {
+        jmethodID register_display_listener_method = display_manager_global_class_.GetMethod(
+            jni, "registerDisplayListener",
+            "(Landroid/hardware/display/DisplayManager$DisplayListener;Landroid/os/Handler;)V");
+        display_manager_global_.CallVoidMethod(jni, register_display_listener_method, listener.ref(), handler.ref());
+      }
+    }
+
+    if (Agent::feature_level() >= 34) {
+      display_manager_class_ = jni.GetClass("android/hardware/display/DisplayManager");
+      create_virtual_display_method_ = display_manager_class_.GetStaticMethod(
+          "createVirtualDisplay", "(Ljava/lang/String;IIILandroid/view/Surface;)Landroid/hardware/display/VirtualDisplay;");
+    }
+
+    display_manager_global_class_.MakeGlobal();
+    display_manager_global_.MakeGlobal();
+    display_manager_class_.MakeGlobal();
+  }
+}
+
+DisplayInfo DisplayManager::GetDisplayInfo(Jni jni, int32_t display_id) {
+  InitializeStatics(jni);
+  JObject display_info = display_manager_global_.CallObjectMethod(jni, get_display_info_method_, display_id);
+  if (display_info.IsNull()) {
+    // Null result means that the display no longer exists.
+    return DisplayInfo();
+  }
+  if (Log::IsEnabled(Log::Level::VERBOSE)) {
+    Log::V("display_info=%s", display_info.ToString().c_str());
+  }
+  int logical_width = display_info.GetIntField(jni, logical_width_field_);
+  int logical_height = display_info.GetIntField(logical_height_field_);
+  if (Agent::device_type() == DeviceType::XR && logical_width >= logical_height * 7 / 4) {
+    logical_width /= 2; // Hack. Compensate for incorrectly reported display size.
+  }
+  int logical_density_dpi = display_info.GetIntField(logical_density_dpi_field_);
+  int rotation = display_info.GetIntField(rotation_field_);
+  int layer_stack = display_info.GetIntField(layer_stack_field_);
+  int flags = display_info.GetIntField(flags_field_);
+  int type = display_info.GetIntField(type_field_);
+  int state = display_info.GetIntField(state_field_);
+  return DisplayInfo(logical_width, logical_height, logical_density_dpi, rotation, layer_stack, flags, type, state);
+}
+
+vector<int32_t> DisplayManager::GetDisplayIds(Jni jni) {
+  InitializeStatics(jni);
+  JObject display_ids = display_manager_global_.CallObjectMethod(jni, get_display_ids_method_);
+  if (display_ids.IsNull()) {
+    jni.CheckAndClearException();
+    return {};
+  }
+  auto id_array = down_cast<jintArray>(display_ids.ref());
+  jsize size = jni->GetArrayLength(id_array);
+  jboolean is_copy;
+  jint* ids = jni->GetIntArrayElements(id_array, &is_copy);
+  vector<int32_t> result(ids, ids + size);
+  jni->ReleaseIntArrayElements(id_array, ids, 0);
+  return result;
+}
+
+void DisplayManager::AddDisplayListener(Jni jni, DisplayListener* listener) {
+  InitializeStatics(jni);
+  display_listeners_.Add(listener);
+}
+
+void DisplayManager::RemoveDisplayListener(DisplayListener* listener) {
+  display_listeners_.Remove(listener);
+}
+
+void DisplayManager::RemoveAllDisplayListeners() {
+  display_listeners_.Clear();
+}
+
+void DisplayManager::OnDisplayAdded(Jni jni, int32_t display_id) {
+  InitializeStatics(jni);
+  Log::D("DisplayManager::OnDisplayAdded %d", display_id);
+  display_listeners_.ForEach([display_id](auto listener) {
+    listener->OnDisplayAdded(display_id);
+  });
+}
+
+void DisplayManager::OnDisplayRemoved(Jni jni, int32_t display_id) {
+  InitializeStatics(jni);
+  Log::D("DisplayManager::OnDisplayRemoved %d", display_id);
+  display_listeners_.ForEach([display_id](auto listener) {
+    listener->OnDisplayRemoved(display_id);
+  });
+}
+
+void DisplayManager::OnDisplayChanged(Jni jni, int32_t display_id) {
+  InitializeStatics(jni);
+  Log::D("DisplayManager::OnDisplayChanged %d", display_id);
+  display_listeners_.ForEach([display_id](auto listener) {
+    listener->OnDisplayChanged(display_id);
+  });
+}
+
+VirtualDisplay DisplayManager::CreateVirtualDisplay(
+    Jni jni, const char* name, int32_t width, int32_t height, int32_t display_id, ANativeWindow* surface) {
+  InitializeStatics(jni);
+  return VirtualDisplay(display_manager_class_.CallStaticObjectMethod(
+      jni, create_virtual_display_method_, JString(jni, name).ref(), width, height, display_id, SurfaceToJava(jni, surface).ref()));
+}
+
+bool DisplayManager::RequestDisplayPower(Jni jni, int32_t display_id, int state) {
+  InitializeStatics(jni);
+  if (request_display_power_method_ == nullptr) {
+    return false;
+  }
+  Log::D("%s display %d", state == DisplayInfo::STATE_OFF ? "Turning off" : "Restoring power of", display_id);
+  if (!display_manager_global_.CallBooleanMethod(jni, request_display_power_method_, display_id, state)) {
+    Log::W(jni.GetAndClearException(),
+           state == DisplayInfo::STATE_OFF ? "Unable to turn display %d off" : "Unable to restore power of display %d", display_id);
+    return false;
+  }
+  Log::I(state == DisplayInfo::STATE_OFF ? "Turned display %d off" : "Restored power of display %d", display_id);
+  return true;
+}
+
+bool DisplayManager::DisplayPowerControlSupported(Jni jni) {
+  InitializeStatics(jni);
+  return request_display_power_method_ != nullptr;
+}
+
+JClass DisplayManager::display_manager_global_class_;
+JObject DisplayManager::display_manager_global_;
+jmethodID DisplayManager::get_display_info_method_ = nullptr;
+jmethodID DisplayManager::get_display_ids_method_ = nullptr;
+jmethodID DisplayManager::request_display_power_method_ = nullptr;
+jfieldID DisplayManager::logical_width_field_ = nullptr;
+jfieldID DisplayManager::logical_height_field_ = nullptr;
+jfieldID DisplayManager::logical_density_dpi_field_ = nullptr;
+jfieldID DisplayManager::rotation_field_ = nullptr;
+jfieldID DisplayManager::layer_stack_field_ = nullptr;
+jfieldID DisplayManager::flags_field_ = nullptr;
+jfieldID DisplayManager::type_field_ = nullptr;
+jfieldID DisplayManager::state_field_ = nullptr;
+JClass DisplayManager::display_manager_class_;
+jmethodID DisplayManager::create_virtual_display_method_ = nullptr;
+ConcurrentList<DisplayManager::DisplayListener> DisplayManager::display_listeners_;
+
+extern "C"
+JNIEXPORT void JNICALL
+Java_com_android_tools_screensharing_DisplayListener_onDisplayAdded(JNIEnv* jni_env, jobject thiz, jint display_id) {  //nolint:unparam
+  Log::D("DisplayListener.onDisplayAdded %d", display_id);
+  DisplayManager::OnDisplayAdded(jni_env, display_id);
+}
+
+extern "C"
+JNIEXPORT void JNICALL
+Java_com_android_tools_screensharing_DisplayListener_onDisplayRemoved(JNIEnv* jni_env, jobject thiz, jint display_id) {  //nolint:unparam
+  Log::D("DisplayListener.onDisplayRemoved %d", display_id);
+  DisplayManager::OnDisplayRemoved(jni_env, display_id);
+}
+
+extern "C"
+JNIEXPORT void JNICALL
+Java_com_android_tools_screensharing_DisplayListener_onDisplayChanged(JNIEnv* jni_env, jobject thiz, jint display_id) {  //nolint:unparam
+  Log::D("DisplayListener.onDisplayChanged %d", display_id);
+  DisplayManager::OnDisplayChanged(jni_env, display_id);
+}
+
+}  // namespace screensharing
