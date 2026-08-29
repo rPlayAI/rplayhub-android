@@ -1,0 +1,39 @@
+//
+//  AppBuild.swift
+//  Build identity and a log that survives the app quitting.
+//
+
+import Foundation
+
+enum AppBuild {
+    static let version = "0.1.0"
+
+    static let stamp: String = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        return f.string(from: Date())
+    }()
+
+    private static let handle: FileHandle? = {
+        guard let dir = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask).first
+        else { return nil }
+        let logs = dir.appendingPathComponent("Logs/rPlayHubAndroid", isDirectory: true)
+        try? FileManager.default.createDirectory(at: logs, withIntermediateDirectories: true)
+        let url = logs.appendingPathComponent("rplayhub-android.log")
+        if !FileManager.default.fileExists(atPath: url.path) {
+            FileManager.default.createFile(atPath: url.path, contents: nil)
+        }
+        let h = try? FileHandle(forWritingTo: url)
+        _ = try? h?.seekToEnd()
+        return h
+    }()
+
+    /// Log to both Console and the on-disk log. Cheap enough for session lifecycle events;
+    /// do not call it per frame.
+    static func log(_ message: String) {
+        NSLog("rPlayHubAndroid: %@", message)
+        guard let handle else { return }
+        let line = "\(stamp) \(message)\n"
+        try? handle.write(contentsOf: Data(line.utf8))
+    }
+}

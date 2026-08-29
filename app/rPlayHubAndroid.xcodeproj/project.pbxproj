@@ -1,0 +1,310 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		1A0000000000000000001002 /* Adb.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001001 /* Adb.swift */; };
+		1A0000000000000000001004 /* AgentSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001003 /* AgentSession.swift */; };
+		1A0000000000000000001006 /* AnnexB.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001005 /* AnnexB.swift */; };
+		1A0000000000000000001008 /* AppBuild.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001007 /* AppBuild.swift */; };
+		1A000000000000000000100A /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001009 /* AppDelegate.swift */; };
+		1A000000000000000000100C /* Base128.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000000000000000000100B /* Base128.swift */; };
+		1A000000000000000000100E /* ControlMessages.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000000000000000000100D /* ControlMessages.swift */; };
+		1A0000000000000000001010 /* ControlStrip.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000000000000000000100F /* ControlStrip.swift */; };
+		1A0000000000000000001012 /* DeviceSidebar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001011 /* DeviceSidebar.swift */; };
+		1A0000000000000000001014 /* IconTabBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001013 /* IconTabBar.swift */; };
+		1A0000000000000000001016 /* InspectorPane.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001015 /* InspectorPane.swift */; };
+		1A0000000000000000001018 /* LogcatPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001017 /* LogcatPanel.swift */; };
+		1A000000000000000000101A /* MirrorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001019 /* MirrorView.swift */; };
+		1A000000000000000000101C /* ScreenWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000000000000000000101B /* ScreenWindow.swift */; };
+		1A000000000000000000101E /* TCPSocket.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000000000000000000101D /* TCPSocket.swift */; };
+		1A0000000000000000001020 /* VideoDecoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000000000000000000101F /* VideoDecoder.swift */; };
+		1A0000000000000000001022 /* VideoPacket.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001021 /* VideoPacket.swift */; };
+		1A0000000000000000001024 /* VideoStream.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001023 /* VideoStream.swift */; };
+		1A0000000000000000001026 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001025 /* main.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		1A0000000000000000001001 /* Adb.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Adb.swift; sourceTree = "<group>"; };
+		1A0000000000000000001003 /* AgentSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentSession.swift; sourceTree = "<group>"; };
+		1A0000000000000000001005 /* AnnexB.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnnexB.swift; sourceTree = "<group>"; };
+		1A0000000000000000001007 /* AppBuild.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppBuild.swift; sourceTree = "<group>"; };
+		1A0000000000000000001009 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+		1A000000000000000000100B /* Base128.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Base128.swift; sourceTree = "<group>"; };
+		1A000000000000000000100D /* ControlMessages.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ControlMessages.swift; sourceTree = "<group>"; };
+		1A000000000000000000100F /* ControlStrip.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ControlStrip.swift; sourceTree = "<group>"; };
+		1A0000000000000000001011 /* DeviceSidebar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceSidebar.swift; sourceTree = "<group>"; };
+		1A0000000000000000001013 /* IconTabBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IconTabBar.swift; sourceTree = "<group>"; };
+		1A0000000000000000001015 /* InspectorPane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InspectorPane.swift; sourceTree = "<group>"; };
+		1A0000000000000000001017 /* LogcatPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogcatPanel.swift; sourceTree = "<group>"; };
+		1A0000000000000000001019 /* MirrorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MirrorView.swift; sourceTree = "<group>"; };
+		1A000000000000000000101B /* ScreenWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenWindow.swift; sourceTree = "<group>"; };
+		1A000000000000000000101D /* TCPSocket.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TCPSocket.swift; sourceTree = "<group>"; };
+		1A000000000000000000101F /* VideoDecoder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoDecoder.swift; sourceTree = "<group>"; };
+		1A0000000000000000001021 /* VideoPacket.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoPacket.swift; sourceTree = "<group>"; };
+		1A0000000000000000001023 /* VideoStream.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoStream.swift; sourceTree = "<group>"; };
+		1A0000000000000000001025 /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
+		1A0000000000000000002001 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		1A0000000000000000002002 /* rPlayHubAndroid.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = rPlayHubAndroid.entitlements; sourceTree = "<group>"; };
+		1A0000000000000000003001 /* rPlayHubAndroid.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = rPlayHubAndroid.app; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		1A0000000000000000005002 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		1A0000000000000000004001 = {
+			isa = PBXGroup;
+			children = (
+				1A0000000000000000004002 /* rPlayHubAndroid */,
+				1A0000000000000000004003 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		1A0000000000000000004002 /* rPlayHubAndroid */ = {
+			isa = PBXGroup;
+			children = (
+				1A0000000000000000001001 /* Adb.swift */,
+				1A0000000000000000001003 /* AgentSession.swift */,
+				1A0000000000000000001005 /* AnnexB.swift */,
+				1A0000000000000000001007 /* AppBuild.swift */,
+				1A0000000000000000001009 /* AppDelegate.swift */,
+				1A000000000000000000100B /* Base128.swift */,
+				1A000000000000000000100D /* ControlMessages.swift */,
+				1A000000000000000000100F /* ControlStrip.swift */,
+				1A0000000000000000001011 /* DeviceSidebar.swift */,
+				1A0000000000000000001013 /* IconTabBar.swift */,
+				1A0000000000000000001015 /* InspectorPane.swift */,
+				1A0000000000000000001017 /* LogcatPanel.swift */,
+				1A0000000000000000001019 /* MirrorView.swift */,
+				1A000000000000000000101B /* ScreenWindow.swift */,
+				1A000000000000000000101D /* TCPSocket.swift */,
+				1A000000000000000000101F /* VideoDecoder.swift */,
+				1A0000000000000000001021 /* VideoPacket.swift */,
+				1A0000000000000000001023 /* VideoStream.swift */,
+				1A0000000000000000001025 /* main.swift */,
+				1A0000000000000000002001 /* Info.plist */,
+				1A0000000000000000002002 /* rPlayHubAndroid.entitlements */,
+			);
+			path = rPlayHubAndroid;
+			sourceTree = "<group>";
+		};
+		1A0000000000000000004003 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				1A0000000000000000003001 /* rPlayHubAndroid.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		1A0000000000000000003002 /* rPlayHubAndroid */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 1A0000000000000000006002 /* Build configuration list for PBXNativeTarget "rPlayHubAndroid" */;
+			buildPhases = (
+				1A0000000000000000005001 /* Sources */,
+				1A0000000000000000005002 /* Frameworks */,
+				1A0000000000000000005003 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = rPlayHubAndroid;
+			productName = rPlayHubAndroid;
+			productReference = 1A0000000000000000003001 /* rPlayHubAndroid.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		1A0000000000000000003003 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1500;
+				LastUpgradeCheck = 1500;
+				TargetAttributes = {
+					1A0000000000000000003002 = {
+						CreatedOnToolsVersion = 15.0;
+					};
+				};
+			};
+			buildConfigurationList = 1A0000000000000000006001 /* Build configuration list for PBXProject "rPlayHubAndroid" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 1A0000000000000000004001;
+			productRefGroup = 1A0000000000000000004003 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				1A0000000000000000003002 /* rPlayHubAndroid */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		1A0000000000000000005003 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		1A0000000000000000005001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				1A0000000000000000001002 /* Adb.swift in Sources */,
+				1A0000000000000000001004 /* AgentSession.swift in Sources */,
+				1A0000000000000000001006 /* AnnexB.swift in Sources */,
+				1A0000000000000000001008 /* AppBuild.swift in Sources */,
+				1A000000000000000000100A /* AppDelegate.swift in Sources */,
+				1A000000000000000000100C /* Base128.swift in Sources */,
+				1A000000000000000000100E /* ControlMessages.swift in Sources */,
+				1A0000000000000000001010 /* ControlStrip.swift in Sources */,
+				1A0000000000000000001012 /* DeviceSidebar.swift in Sources */,
+				1A0000000000000000001014 /* IconTabBar.swift in Sources */,
+				1A0000000000000000001016 /* InspectorPane.swift in Sources */,
+				1A0000000000000000001018 /* LogcatPanel.swift in Sources */,
+				1A000000000000000000101A /* MirrorView.swift in Sources */,
+				1A000000000000000000101C /* ScreenWindow.swift in Sources */,
+				1A000000000000000000101E /* TCPSocket.swift in Sources */,
+				1A0000000000000000001020 /* VideoDecoder.swift in Sources */,
+				1A0000000000000000001022 /* VideoPacket.swift in Sources */,
+				1A0000000000000000001024 /* VideoStream.swift in Sources */,
+				1A0000000000000000001026 /* main.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		1A0000000000000000006003 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_NO_COMMON_BLOCKS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				SDKROOT = macosx;
+				SWIFT_VERSION = 5.0;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_TESTABILITY = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				ONLY_ACTIVE_ARCH = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		1A0000000000000000006004 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_NO_COMMON_BLOCKS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				SDKROOT = macosx;
+				SWIFT_VERSION = 5.0;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+			};
+			name = Release;
+		};
+		1A0000000000000000006005 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = rPlayHubAndroid/rPlayHubAndroid.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_HARDENED_RUNTIME = YES;
+				INFOPLIST_FILE = rPlayHubAndroid/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.rplay.rplayhub.android;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+			};
+			name = Debug;
+		};
+		1A0000000000000000006006 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = rPlayHubAndroid/rPlayHubAndroid.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_HARDENED_RUNTIME = YES;
+				INFOPLIST_FILE = rPlayHubAndroid/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.rplay.rplayhub.android;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		1A0000000000000000006001 /* Build configuration list for PBXProject "rPlayHubAndroid" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				1A0000000000000000006003 /* Debug */,
+				1A0000000000000000006004 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		1A0000000000000000006002 /* Build configuration list for PBXNativeTarget "rPlayHubAndroid" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				1A0000000000000000006005 /* Debug */,
+				1A0000000000000000006006 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 1A0000000000000000003003 /* Project object */;
+}

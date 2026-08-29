@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	  Not sandboxed. The app connects to the adb server on 127.0.0.1:5037 and opens its own
+	  loopback listener for the agent to dial back into; a sandboxed app can do the first with
+	  the network-client entitlement but not the second, and there is no entitlement for it.
+	  Same conclusion as ~/rplay-hub reached for a different reason (see its DISTRIBUTION.md):
+	  Developer ID and notarization, not the App Store.
+	-->
+	<key>com.apple.security.app-sandbox</key>
+	<false/>
+	<key>com.apple.security.network.client</key>
+	<true/>
+	<key>com.apple.security.network.server</key>
+	<true/>
+</dict>
+</plist>
