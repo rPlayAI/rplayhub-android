@@ -75,6 +75,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             strip.leadingAnchor.constraint(equalTo: middle.leadingAnchor),
             strip.trailingAnchor.constraint(equalTo: middle.trailingAnchor),
             strip.bottomAnchor.constraint(equalTo: middle.bottomAnchor),
+            strip.heightAnchor.constraint(greaterThanOrEqualToConstant: 50),
         ])
         stage = middle
 

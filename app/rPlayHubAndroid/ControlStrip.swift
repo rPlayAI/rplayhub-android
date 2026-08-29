@@ -47,8 +47,13 @@ final class ControlStrip: NSView {
             b.bezelStyle = .texturedRounded
             b.isBordered = false
             b.image = NSImage(systemSymbolName: item.1, accessibilityDescription: item.2)?
-                .withSymbolConfiguration(.init(pointSize: 14, weight: .regular))
+                .withSymbolConfiguration(.init(pointSize: 16, weight: .regular))
             b.imagePosition = .imageOnly
+            // A square hit target rather than whatever the glyph happens to measure — the
+            // navigation buttons are the ones people aim at repeatedly.
+            b.translatesAutoresizingMaskIntoConstraints = false
+            b.widthAnchor.constraint(equalToConstant: 30).isActive = true
+            b.heightAnchor.constraint(equalToConstant: 26).isActive = true
             b.toolTip = item.2
             b.target = self
             b.tag = index
@@ -61,16 +66,32 @@ final class ControlStrip: NSView {
 
         let stack = NSStackView(views: views)
         stack.orientation = .horizontal
-        stack.spacing = 10
+        stack.spacing = 14
         stack.alignment = .centerY
         stack.translatesAutoresizingMaskIntoConstraints = false
         addSubview(stack)
         NSLayoutConstraint.activate([
             stack.centerXAnchor.constraint(equalTo: centerXAnchor),
-            stack.topAnchor.constraint(equalTo: topAnchor, constant: 6),
-            stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6),
+            stack.topAnchor.constraint(equalTo: topAnchor, constant: 11),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -13),
+        ])
+
+        // A hairline above, so the strip reads as a toolbar under the picture rather than as
+        // buttons floating in the same space as the screen.
+        wantsLayer = true
+        separator.wantsLayer = true
+        separator.layer?.backgroundColor = NSColor.separatorColor.cgColor
+        separator.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(separator)
+        NSLayoutConstraint.activate([
+            separator.topAnchor.constraint(equalTo: topAnchor),
+            separator.leadingAnchor.constraint(equalTo: leadingAnchor),
+            separator.trailingAnchor.constraint(equalTo: trailingAnchor),
+            separator.heightAnchor.constraint(equalToConstant: 1),
         ])
     }
+
+    private let separator = NSView()
 
     @objc private func hit(_ sender: NSButton) {
         guard sender.tag < Self.items.count else { return }
