@@ -68,9 +68,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         middle.addSubview(mirror)
         middle.addSubview(strip)
         NSLayoutConstraint.activate([
-            mirror.topAnchor.constraint(equalTo: middle.topAnchor),
-            mirror.leadingAnchor.constraint(equalTo: middle.leadingAnchor),
-            mirror.trailingAnchor.constraint(equalTo: middle.trailingAnchor),
+            mirror.topAnchor.constraint(equalTo: middle.topAnchor, constant: 16),
+            mirror.leadingAnchor.constraint(equalTo: middle.leadingAnchor, constant: 12),
+            mirror.trailingAnchor.constraint(equalTo: middle.trailingAnchor, constant: -12),
             strip.topAnchor.constraint(equalTo: mirror.bottomAnchor),
             strip.leadingAnchor.constraint(equalTo: middle.leadingAnchor),
             strip.trailingAnchor.constraint(equalTo: middle.trailingAnchor),
@@ -79,17 +79,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ])
         stage = middle
 
-        splitView = NSSplitView()
+        splitView = PaneSplitView()
         splitView.isVertical = true
         splitView.dividerStyle = .thin
         splitView.addArrangedSubview(sidebar)
         splitView.addArrangedSubview(middle)
         splitView.addArrangedSubview(inspector)
-        splitView.setHoldingPriority(.defaultHigh, forSubviewAt: 0)
-        splitView.setHoldingPriority(.defaultHigh, forSubviewAt: 2)
+
+        // The middle pane holds the LOWEST priority, so it is the one that gives when something
+        // else needs room. Both side panes hold harder than it does.
+        splitView.setHoldingPriority(NSLayoutConstraint.Priority(260), forSubviewAt: 0)
+        splitView.setHoldingPriority(NSLayoutConstraint.Priority(240), forSubviewAt: 1)
+        splitView.setHoldingPriority(NSLayoutConstraint.Priority(260), forSubviewAt: 2)
+
+        // Without explicit widths the split view squeezes the side panes to nothing — the sidebar
+        // collapsed to a ~20pt sliver showing "Av", and the inspector wrapped one character per
+        // line. setPosition() alone does not survive layout, because a pane with no intrinsic
+        // width has nothing to hold on to. Resting width at a middling priority, plus a hard
+        // minimum, is what ~/rplay-hub arrived at for the same failure.
+        for (pane, width) in [(sidebar as NSView, 250.0), (middle as NSView, 389.0),
+                              (inspector as NSView, 300.0), (logPanel as NSView, 300.0)] {
+            pane.translatesAutoresizingMaskIntoConstraints = false
+            let resting = pane.widthAnchor.constraint(equalToConstant: width)
+            resting.priority = NSLayoutConstraint.Priority(700)
+            resting.isActive = true
+            pane.widthAnchor.constraint(greaterThanOrEqualToConstant: width - 60).isActive = true
+        }
+
+        // A soft shadow cast outward from each side pane, in place of a divider line — the same
+        // separation Device Hub draws between its columns.
+        for (pane, dx) in [(sidebar as NSView, CGFloat(2)), (inspector as NSView, CGFloat(-2)),
+                           (logPanel as NSView, CGFloat(-2))] {
+            pane.wantsLayer = true
+            pane.layer?.masksToBounds = false
+            pane.shadow = NSShadow()
+            pane.layer?.shadowColor = NSColor.black.cgColor
+            pane.layer?.shadowOpacity = 0.07
+            pane.layer?.shadowRadius = 9
+            pane.layer?.shadowOffset = CGSize(width: dx, height: 0)
+        }
+
         window.contentView = splitView
-        splitView.setPosition(240, ofDividerAt: 0)
-        splitView.setPosition(800, ofDividerAt: 1)
+        window.setContentSize(NSSize(width: 1000, height: 760))
 
         tabBar = IconTabBar(icons: [("info.circle", "Info"), ("doc.plaintext", "Log")])
         tabBar.selected = 0
@@ -141,7 +172,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 splitView.removeArrangedSubview(current)
                 current.removeFromSuperview()
                 splitView.addArrangedSubview(wanted)
-                splitView.setPosition(splitView.frame.width - 260, ofDividerAt: 1)
+                splitView.setHoldingPriority(NSLayoutConstraint.Priority(260), forSubviewAt: 2)
             }
         }
         wanted.isHidden = false
@@ -464,4 +495,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         screenWindow.open(stage: stage, from: splitView,
                           title: window.title, tabbedWith: window)
     }
+}
+
+/// The columns are separated by the shadow each side pane casts, not by a drawn line — so the
+/// divider itself should not be visible. Adopted from ~/rplay-hub, which matched this against
+/// Device Hub's own window.
+final class PaneSplitView: NSSplitView {
+    override var dividerColor: NSColor { .clear }
 }

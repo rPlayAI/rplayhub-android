@@ -38,6 +38,9 @@ final class InspectorPane: NSView {
         }
         healthLabel.textColor = .secondaryLabelColor
 
+        for label in [propertiesLabel, healthLabel] {
+            label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        }
         stack.setViews([header("Device"), propertiesLabel,
                         header("Stream"), healthLabel], in: .top)
         stack.orientation = .vertical
@@ -51,6 +54,14 @@ final class InspectorPane: NSView {
             stack.leadingAnchor.constraint(equalTo: leadingAnchor),
             stack.trailingAnchor.constraint(equalTo: trailingAnchor),
         ])
+
+        // Wrap rather than run off the pane: the build fingerprint is long, and a monospaced
+        // label in a leading-aligned stack sizes to its text unless it is told otherwise.
+        // Activated only now — until the stack is installed these labels and `self` share no
+        // common ancestor, and a constraint across that gap throws at launch.
+        for label in [propertiesLabel, healthLabel] {
+            label.widthAnchor.constraint(equalTo: widthAnchor, constant: -28).isActive = true
+        }
     }
 
     func setProperties(_ text: String) { propertiesLabel.stringValue = text }

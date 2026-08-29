@@ -66,6 +66,11 @@ final class DeviceSidebar: NSView {
 
         scroll.documentView = tableView
         scroll.hasVerticalScroller = true
+        // Overlay, not legacy. A permanently visible scroller drew a grey bar down the sidebar's
+        // right edge whatever the system-wide scrollbar setting is, which read as a broken
+        // divider rather than as a scroller.
+        scroll.scrollerStyle = .overlay
+        scroll.autohidesScrollers = true
         scroll.drawsBackground = false
         scroll.translatesAutoresizingMaskIntoConstraints = false
 
