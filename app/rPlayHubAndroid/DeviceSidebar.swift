@@ -19,6 +19,10 @@ final class DeviceSidebar: NSView {
     private(set) var devices: [AdbDevice] = []
     private var filtered: [AdbDevice] = []
     private var selectedSerial: String?
+    /// Set while we are rebuilding the table ourselves. `reloadData()` drops the selection and
+    /// AppKit reports that as a user selection change — which nils `selectedSerial` before the
+    /// restore below can read it, silently clearing the selection every poll.
+    private var isReloading = false
 
     private let search = NSSearchField()
     private let tableView = NSTableView()
@@ -105,14 +109,23 @@ final class DeviceSidebar: NSView {
     // MARK: - data
 
     func update(devices: [AdbDevice], note: String) {
-        self.devices = devices
         statusLabel.stringValue = note
+        // The poll fires every couple of seconds and the answer is nearly always identical.
+        // Reloading anyway costs a selection round trip and makes the rows flicker.
+        guard devices != self.devices else { return }
+        self.devices = devices
+
+        let keep = selectedSerial
+        isReloading = true
         applyFilter()
-        // Keep the selection across a refresh; the list is re-read every couple of seconds.
-        if let serial = selectedSerial,
-           let row = filtered.firstIndex(where: { $0.serial == serial }) {
+        if let serial = keep, let row = filtered.firstIndex(where: { $0.serial == serial }) {
             tableView.selectRowIndexes([row], byExtendingSelection: false)
+            selectedSerial = serial
+        } else if keep != nil {
+            selectedSerial = nil          // the device really did go away
+            onSelect?(nil)
         }
+        isReloading = false
     }
 
     var selected: AdbDevice? {
@@ -120,7 +133,16 @@ final class DeviceSidebar: NSView {
         return devices.first { $0.serial == serial }
     }
 
-    @objc private func searchChanged() { applyFilter() }
+    @objc private func searchChanged() {
+        let keep = selectedSerial
+        isReloading = true
+        applyFilter()
+        if let serial = keep, let row = filtered.firstIndex(where: { $0.serial == serial }) {
+            tableView.selectRowIndexes([row], byExtendingSelection: false)
+            selectedSerial = serial
+        }
+        isReloading = false
+    }
 
     private func applyFilter() {
         let query = search.stringValue.trimmingCharacters(in: .whitespaces).lowercased()
@@ -205,6 +227,7 @@ extension DeviceSidebar: NSTableViewDataSource, NSTableViewDelegate {
     }
 
     func tableViewSelectionDidChange(_ notification: Notification) {
+        guard !isReloading else { return }
         let row = tableView.selectedRow
         guard row >= 0, row < filtered.count else {
             selectedSerial = nil

@@ -107,9 +107,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         sidebar.onMirror = { [weak self] device in self?.startSession(for: device) }
         mirror.onViewScreen = { [weak self] in
             guard let self else { return }
-            guard let device = self.sidebar.selected else {
+            // Fall back to the only device there is. Requiring a selection when there is
+            // nothing to choose between is friction for its own sake.
+            let ready = self.sidebar.devices.filter { $0.isReady }
+            guard let device = self.sidebar.selected ?? (ready.count == 1 ? ready.first : nil) else {
                 self.present(message: "No device selected",
-                             detail: "Pick a device in the sidebar first.")
+                             detail: ready.isEmpty
+                                 ? "No device is ready for adb. Check the sidebar for why."
+                                 : "Pick one of the \(ready.count) devices in the sidebar first.")
                 return
             }
             self.startSession(for: device)
