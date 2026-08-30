@@ -543,17 +543,18 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
         let stroke = outer - inner
         NSColor(calibratedWhite: 0.26, alpha: 1).setFill()   // subtly darker than the body
 
-        // Ring with the gap in the upper-right: the arc runs from ~62° counter-clockwise, up over
-        // the top, down the left and bottom, round to 0° (3 o'clock), leaving 0°–62° open.
+        // Ring with only a small gap in the upper-right (~20°–62°): the right side runs down PAST
+        // the centre to the bar, so the bar joins a short vertical ring segment — that junction is
+        // what reads as a G. The arc spans 62° counter-clockwise round to 380° (= 20°).
         let ring = NSBezierPath()
-        ring.appendArc(withCenter: center, radius: outer, startAngle: 62, endAngle: 360, clockwise: false)
-        ring.appendArc(withCenter: center, radius: inner, startAngle: 360, endAngle: 62, clockwise: true)
+        ring.appendArc(withCenter: center, radius: outer, startAngle: 62, endAngle: 380, clockwise: false)
+        ring.appendArc(withCenter: center, radius: inner, startAngle: 380, endAngle: 62, clockwise: true)
         ring.close()
         ring.fill()
 
-        // The crossbar: its TOP edge on the centre line (so the sharp top-left corner sits at
-        // the exact centre, as the real mark does), from the centre out to the ring on the right.
-        NSBezierPath(rect: NSRect(x: c, y: c - stroke, width: outer, height: stroke)).fill()
+        // The crossbar: top edge on the centre line (sharp corner at the exact centre), from the
+        // centre out to the ring's inner edge, where it merges into the arc.
+        NSBezierPath(rect: NSRect(x: c, y: c - stroke, width: inner + stroke * 0.3, height: stroke)).fill()
 
         image.unlockFocus()
         return image
