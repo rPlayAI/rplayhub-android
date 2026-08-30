@@ -62,6 +62,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             ? true : UserDefaults.standard.bool(forKey: "ForwardAudio")
     }
 
+    /// scrcpy's pause (frozen frame, no bandwidth) and its --display-id, as menu items. Both
+    /// ride the same start/stopVideoStream messages; which display is current also routes every
+    /// touch, since MotionEvents carry a display id.
+    private var pauseItem: NSMenuItem?
+    private var displaysMenu: NSMenu?
+    private var displayPaused = false
+    private var currentDisplayId: Int32 = 0
+
     /// What we ask the agent to cap the encode at. Well above any display we will show it on, so
     /// the picture is never the limiting factor; the agent scales down to the device's own size
     /// anyway.
@@ -381,6 +389,65 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         startClipboardSyncIfEnabled()
         if audioForwardingEnabled { session.setAudioForwarding(true) }
+        displayPaused = false
+        pauseItem?.title = "Pause Display"
+        currentDisplayId = 0
+        mirror.displayId = 0
+        session.control?.onDisplays = { [weak self] displays in
+            self?.rebuildDisplaysMenu(displays)
+        }
+        session.control?.send(ControlMessage.displayConfigurationRequest())
+    }
+
+    // MARK: - pause, and picking a display
+
+    @objc private func togglePauseDisplay() {
+        guard let session, let control = session.control, sessionReachedRunning else { return }
+        displayPaused.toggle()
+        if displayPaused {
+            control.send(ControlMessage.stopVideoStream(displayId: currentDisplayId))
+            window.subtitle = "paused"
+        } else {
+            control.send(ControlMessage.startVideoStream(displayId: currentDisplayId,
+                                                         width: Int32(maxVideoSize.width),
+                                                         height: Int32(maxVideoSize.height)))
+            window.subtitle = "mirroring"
+        }
+        pauseItem?.title = displayPaused ? "Resume Display" : "Pause Display"
+        AppBuild.log(displayPaused ? "display paused" : "display resumed")
+    }
+
+    private func rebuildDisplaysMenu(_ displays: [ControlSender.DisplayDescriptor]) {
+        guard let menu = displaysMenu else { return }
+        menu.removeAllItems()
+        for display in displays {
+            let name = display.id == 0 ? "Built-in Display" : "Display \(display.id)"
+            let item = menu.addItem(withTitle: "\(name)  \(display.width)×\(display.height)",
+                                    action: #selector(selectDisplay(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = NSNumber(value: display.id)
+            item.state = display.id == currentDisplayId ? .on : .off
+        }
+        AppBuild.log("device reports \(displays.count) display(s)")
+    }
+
+    @objc private func selectDisplay(_ sender: NSMenuItem) {
+        guard let id = (sender.representedObject as? NSNumber)?.int32Value,
+              let session, let control = session.control, id != currentDisplayId else { return }
+        control.send(ControlMessage.stopVideoStream(displayId: currentDisplayId))
+        currentDisplayId = id
+        mirror.displayId = id
+        displayPaused = false
+        pauseItem?.title = "Pause Display"
+        control.send(ControlMessage.startVideoStream(displayId: id,
+                                                     width: Int32(maxVideoSize.width),
+                                                     height: Int32(maxVideoSize.height)))
+        displaysMenu?.items.forEach {
+            $0.state = ($0.representedObject as? NSNumber)?.int32Value == id ? .on : .off
+        }
+        // The bezel outline describes the built-in panel; a secondary display has none.
+        if id == 0 { loadDisplayShape(session.serial) } else { mirror.displayShape = nil }
+        AppBuild.log("mirroring display \(id)")
     }
 
     @objc private func toggleAudio() {
@@ -620,8 +687,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func restartVideoStream() {
         guard let control = session?.control else { return }
-        control.send(ControlMessage.stopVideoStream())
-        control.send(ControlMessage.startVideoStream(width: Int32(maxVideoSize.width),
+        control.send(ControlMessage.stopVideoStream(displayId: currentDisplayId))
+        control.send(ControlMessage.startVideoStream(displayId: currentDisplayId,
+                                                     width: Int32(maxVideoSize.width),
                                                      height: Int32(maxVideoSize.height)))
     }
 
@@ -874,6 +942,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         audio.target = self
         audio.state = audioForwardingEnabled ? .on : .off
         audioItem = audio
+        deviceMenu.addItem(.separator())
+        let pause = deviceMenu.addItem(withTitle: "Pause Display",
+                                       action: #selector(togglePauseDisplay), keyEquivalent: "")
+        pause.target = self
+        pauseItem = pause
+        let displayPicker = deviceMenu.addItem(withTitle: "Mirror Display", action: nil,
+                                               keyEquivalent: "")
+        let displaySub = NSMenu(title: "Mirror Display")
+        displayPicker.submenu = displaySub
+        displaysMenu = displaySub
         deviceMenu.addItem(.separator())
         deviceMenu.addItem(withTitle: "Refresh Devices", action: #selector(refreshFromMenu),
                            keyEquivalent: "r").target = self

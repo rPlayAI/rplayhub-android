@@ -371,6 +371,18 @@ final class ControlSender {
     /// The device's clipboard changed (only sent while clipboard sync is started). Main queue.
     var onClipboardChanged: ((String) -> Void)?
 
+    /// One display the device reported: id, canonical size, rotation, and the agent's type code.
+    struct DisplayDescriptor {
+        let id: Int32
+        let width: Int32
+        let height: Int32
+        let rotation: Int32
+        let type: Int32
+    }
+
+    /// The answer to a DisplayConfigurationRequest. Main queue.
+    var onDisplays: (([DisplayDescriptor]) -> Void)?
+
     init(socket: TCPSocket) {
         self.socket = socket
     }
@@ -401,7 +413,17 @@ final class ControlSender {
                 case ControlMessage.typeDisplayConfigurationResponse:
                     _ = try readVarint()                     // request id
                     let count = try readVarint()
-                    for _ in 0..<(count * 5) { _ = try readVarint() }
+                    var displays: [DisplayDescriptor] = []
+                    for _ in 0..<min(count, 64) {
+                        displays.append(DisplayDescriptor(
+                            id: Int32(bitPattern: try readVarint()),
+                            width: Int32(bitPattern: try readVarint()),
+                            height: Int32(bitPattern: try readVarint()),
+                            rotation: Int32(bitPattern: try readVarint()),
+                            type: Int32(bitPattern: try readVarint())))
+                    }
+                    let found = displays
+                    DispatchQueue.main.async { [weak self] in self?.onDisplays?(found) }
                 case ControlMessage.typeClipboardChanged:
                     let text = try readBytesString()
                     notificationsReceived += 1

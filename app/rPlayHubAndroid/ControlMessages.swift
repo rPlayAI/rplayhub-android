@@ -26,6 +26,7 @@ enum ControlMessage {
     static let typeStopAudioStream = 9
     static let typeStartClipboardSync = 10
     static let typeStopClipboardSync = 11
+    static let typeDisplayConfigurationRequest = 20
 
     // Device → host. Parsed by ControlSender's reader; nothing is length-prefixed, so every
     // type the agent can send unprompted has to be decodable or the channel desynchronises.
@@ -161,6 +162,15 @@ enum ControlMessage {
     static func stopClipboardSync() -> Data {
         var w = Base128Writer()
         w.writeInt32(Int32(typeStopClipboardSync))
+        return w.data
+    }
+
+    /// Ask for the device's displays; the answer arrives as a DisplayConfigurationResponse on
+    /// the control channel, matched by the request id.
+    static func displayConfigurationRequest(requestId: Int32 = 1) -> Data {
+        var w = Base128Writer()
+        w.writeInt32(Int32(typeDisplayConfigurationRequest))
+        w.writeInt32(requestId)
         return w.data
     }
 }

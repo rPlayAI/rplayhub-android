@@ -57,6 +57,7 @@ final class VideoStream {
     private var framesSubmitted: Int64 = 0
     private var lastGeometry: (w: Int32, h: Int32, rot: UInt8)?
     private var lastFrameNumber: UInt32?
+    private var lastDisplayId: Int32?
 
     /// `RPLAYHUB_VIDEO_STALL="<packet>:<seconds>[:<count>]"` stops reading the socket for
     /// <seconds> before each of the <count> packets starting at <packet> (count defaults to 1).
@@ -179,6 +180,12 @@ final class VideoStream {
         guard header.displayOrientation < 4, header.displayOrientationCorrection < 4 else {
             return "protocol desync: implausible orientation \(header.displayOrientation)"
                 + "/\(header.displayOrientationCorrection)"
+        }
+        // Each display's streamer numbers its own frames, so switching displays legitimately
+        // resets the count; within one display the sequence stays nearly monotonic.
+        if header.displayId != lastDisplayId {
+            lastDisplayId = header.displayId
+            lastFrameNumber = nil
         }
         if let last = lastFrameNumber,
            !(header.frameNumber >= last && header.frameNumber <= last &+ 64) {
