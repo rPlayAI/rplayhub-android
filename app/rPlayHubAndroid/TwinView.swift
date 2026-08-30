@@ -49,6 +49,7 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
     private var reference: simd_quatf?
     private var smoothed: simd_quatf?
     private var recenterRequested = true
+    private var referenceSamples: [simd_quatf] = []
     /// The saved "facing me" calibration — the device pose that maps to the twin face-on. Set by
     /// the button (or R), persisted, and reused as the default on every later session so the twin
     /// starts in the right position instead of adopting whatever pose the phone happens to be in.
@@ -117,6 +118,7 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
         savedFacingMe = Self.loadFacingMe()
         reference = savedFacingMe
         recenterRequested = savedFacingMe == nil
+        referenceSamples = []
         smoothed = nil
         window?.makeFirstResponder(scnView)
         frameLock.lock()
@@ -155,6 +157,7 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
     }
 
     func recenter() {
+        referenceSamples = []
         recenterRequested = true
     }
 
@@ -339,11 +342,25 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
     private func updateOrientation() {
         guard let q = orientationSource?() else { return }
         if recenterRequested {
-            reference = q
-            Self.saveFacingMe(q)     // this pose is now the default "facing me" for every session
-            savedFacingMe = q
-            smoothed = nil
-            recenterRequested = false
+            // Average a short burst rather than trust one packet: a hand is never perfectly still
+            // at the instant of a button press, and a noisy reference tilts everything after it.
+            if referenceSamples.isEmpty || simd_dot(referenceSamples[0].vector, q.vector) >= 0 {
+                referenceSamples.append(q)
+            } else {
+                referenceSamples.append(simd_quatf(vector: -q.vector))   // q and -q are the same
+            }                                                             // rotation; align first
+            if referenceSamples.count >= 12 {
+                var acc = simd_float4(repeating: 0)
+                for s in referenceSamples { acc += s.vector }
+                let averaged = simd_quatf(vector: simd_normalize(acc))
+                reference = averaged
+                savedFacingMe = averaged
+                Self.saveFacingMe(averaged)     // the default "facing me" for every later session
+                referenceSamples = []
+                recenterRequested = false
+                smoothed = nil
+            }
+            return   // hold the current pose until the reference settles
         }
         // The reference is the device pose the user chose as "facing me" — held facing the Mac
         // and captured with the button (or R), then persisted so it is the default next time.
@@ -359,9 +376,21 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
         let delta = q * ref.inverse
         let worldFix = simd_quatf(angle: -.pi / 2, axis: simd_float3(1, 0, 0))
         let target = worldFix * delta * worldFix.inverse
-        let next = smoothed.map { simd_slerp($0, target, 0.35) } ?? target
-        smoothed = next
-        phoneNode?.simdOrientation = next
+
+        // Adaptive smoothing, so accuracy does not fight latency. A fixed slerp is a bad
+        // compromise: gentle enough to kill the small jitter of a still phone, it visibly lags a
+        // fast turn; snappy enough to track a fast turn, it shivers when still. Instead the blend
+        // scales with how far the pose moved this frame — near-still frames get heavy smoothing,
+        // fast frames get almost none — which reads as both steady and immediate.
+        if let s = smoothed {
+            let dot = min(1, abs(simd_dot(s.vector, target.vector)))
+            let stepDegrees = Float(2 * acos(dot) * 180 / .pi)   // angle between s and target
+            let alpha = simd_clamp(0.18 + stepDegrees * 0.28, 0.18, 0.9)
+            smoothed = simd_slerp(s, target, alpha)
+        } else {
+            smoothed = target
+        }
+        phoneNode?.simdOrientation = smoothed!
     }
 
     /// A white-on-black mask of the Pixel "G" — the ring with a gap on the right and a crossbar

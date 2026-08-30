@@ -26,7 +26,7 @@ namespace screensharing {
 
 namespace {
 
-constexpr int32_t SAMPLING_PERIOD_US = 20000;  // 50 Hz — plenty for a display twin, light on the wire.
+constexpr int32_t SAMPLING_PERIOD_US = 10000;  // 100 Hz — lower latency for the twin; ~2.4 KB/s.
 constexpr int LOOPER_IDENT = 1;
 constexpr int POLL_TIMEOUT_MILLIS = 250;  // How often the loop notices it was asked to stop.
 
