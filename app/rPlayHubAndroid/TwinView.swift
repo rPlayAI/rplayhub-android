@@ -237,15 +237,19 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
                                     -bodyDepth / 2 - bodyDepth * 0.56)
         phone.addChildNode(flash)
 
-        // The Google "G" on the lower back, as a real Pixel wears it. Rendered as an image on a
-        // small plane rather than SCNText so it is the actual multicolour logo. Facing -z (out of
-        // the back), so it reads correctly when the twin turns around.
-        let gSize = bodyWidth * 0.20
+        // The "G" on the lower back, as a real Pixel wears it: not the colour logo but a
+        // monochrome polished-metal G etched into the panel, the same tone as the body, catching
+        // the light as the phone turns. A metallic material (not constant) gives it that glint;
+        // the mask is a single-colour G facing -z out of the back.
+        let gSize = bodyWidth * 0.19
         let gPlane = SCNPlane(width: gSize, height: gSize)
         let gMaterial = SCNMaterial()
-        gMaterial.diffuse.contents = Self.googleGLogo(side: 256)
+        gMaterial.lightingModel = .physicallyBased
+        gMaterial.diffuse.contents = NSColor(calibratedWhite: 0.32, alpha: 1)
+        gMaterial.metalness.contents = 1.0
+        gMaterial.roughness.contents = 0.25       // fairly polished, so it flashes when it turns
+        gMaterial.transparent.contents = Self.pixelGMask(side: 256)   // the G shape, white on black
         gMaterial.isDoubleSided = true
-        gMaterial.lightingModel = .constant     // a printed logo, not a lit surface
         gPlane.materials = [gMaterial]
         let gNode = SCNNode(geometry: gPlane)
         gNode.position = SCNVector3(0, -bodyHeight * 0.12, -bodyDepth / 2 - 0.001)
@@ -360,43 +364,33 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
         phoneNode?.simdOrientation = next
     }
 
-    /// The Google "G" as an NSImage: a four-colour ring with a gap on the right and a blue
-    /// crossbar reaching in — the mark a real Pixel wears on its back.
-    private static func googleGLogo(side: Int) -> NSImage {
+    /// A white-on-black mask of the Pixel "G" — the ring with a gap on the right and a crossbar
+    /// reaching in. Used as a material's transparency mask so only the G shape carries the
+    /// metallic finish, the rest of the plane staying clear over the panel.
+    private static func pixelGMask(side: Int) -> NSImage {
         let size = NSSize(width: side, height: side)
         let image = NSImage(size: size)
         image.lockFocus()
+        NSColor.black.setFill()
+        NSRect(x: 0, y: 0, width: side, height: side).fill()
+
         let c = CGFloat(side) / 2
         let outer = CGFloat(side) * 0.46
-        let inner = CGFloat(side) * 0.27
+        let inner = CGFloat(side) * 0.29     // a slightly heavier stroke reads better when engraved
         let center = NSPoint(x: c, y: c)
-        let blue = NSColor(red: 0.26, green: 0.52, blue: 0.96, alpha: 1)
-        let red = NSColor(red: 0.92, green: 0.26, blue: 0.21, alpha: 1)
-        let yellow = NSColor(red: 0.98, green: 0.74, blue: 0.02, alpha: 1)
-        let green = NSColor(red: 0.20, green: 0.66, blue: 0.33, alpha: 1)
+        NSColor.white.setFill()
 
-        // Filled ring wedges. The ring spans 20°→340° (counter-clockwise through the top),
-        // leaving a 40° gap on the right for the opening; the crossbar sits in that gap.
-        func wedge(_ start: CGFloat, _ end: CGFloat, _ color: NSColor) {
-            let path = NSBezierPath()
-            path.appendArc(withCenter: center, radius: outer, startAngle: start, endAngle: end, clockwise: false)
-            path.appendArc(withCenter: center, radius: inner, startAngle: end, endAngle: start, clockwise: true)
-            path.close()
-            color.setFill()
-            path.fill()
-        }
-        wedge(20, 90, blue)     // right-top
-        wedge(90, 180, red)     // top-left
-        wedge(180, 270, yellow) // left-bottom
-        wedge(270, 340, green)  // bottom-right
+        // The ring spans 20°→340° (CCW through the top), leaving a gap on the right; the crossbar
+        // fills the lower part of that gap, which is what makes the O read as a G.
+        let ring = NSBezierPath()
+        ring.appendArc(withCenter: center, radius: outer, startAngle: 20, endAngle: 340, clockwise: false)
+        ring.appendArc(withCenter: center, radius: inner, startAngle: 340, endAngle: 20, clockwise: true)
+        ring.close()
+        ring.fill()
 
-        // The crossbar: a blue bar from the centre out to the right inner edge, at mid-height.
-        let barHeight = (outer - inner)
-        let bar = NSBezierPath(rect: NSRect(x: c, y: c - barHeight / 2,
-                                            width: outer - (c - c) - (CGFloat(side) * 0.04),
-                                            height: barHeight))
-        blue.setFill()
-        bar.fill()
+        let barHeight = outer - inner
+        NSBezierPath(rect: NSRect(x: c, y: c - barHeight / 2,
+                                  width: outer - CGFloat(side) * 0.04, height: barHeight)).fill()
 
         image.unlockFocus()
         return image
