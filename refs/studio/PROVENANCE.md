@@ -19,13 +19,30 @@ Omitted: `.idea/`, the emulator/XR/benchmarker siblings, tests.
 
 ## Local modifications
 
-One, recorded here so a resync can reapply it:
+Recorded here so a resync can reapply them:
 
 - `screen-sharing-agent/BUILD` → `BUILD.bazel`. macOS is case-insensitive by default, so bazel's
   `BUILD` file occupies the same name as the `build/` directory Gradle wants to create, and the
   build fails at the end with `Could not create ... build/reports/problems`. We build with Gradle
   and never bazel, and `BUILD.bazel` is an equally valid bazel filename, so renaming costs
-  nothing. Nothing else in the vendored tree is touched.
+  nothing.
+
+- `screen-sharing-agent/app/src/main/cpp/display_streamer.cc`: treat `SocketWriter::Result::TIMEOUT`
+  from a video packet write as end of stream, at both write sites (the frame loop and the
+  empty-frame-on-timeout path). Upstream ignores TIMEOUT and keeps streaming, but
+  `SocketWriter::Write()` can time out with a packet *half-written* (a partial `write()` followed
+  by EAGAIN past the 10s deadline) and does not track how much was sent — every byte written
+  afterwards is misframed, and the host's decoder eventually dies with
+  `kVTVideoDecoderBadDataErr (-12909)`. Ending the stream lets the host reconnect cleanly.
+  Candidate for upstreaming.
+
+- **Sensor channel (new capability, ours):** `sensor_streamer.{h,cc}` (new files), plus hooks in
+  `flags.h` (`STREAM_ORIENTATION = 0x100`, kept away from upstream's bits), `agent.{h,cc}`
+  (fourth socket, channel marker `'S'`, streamer lifecycle in `Run`/`Shutdown`), and
+  `CMakeLists.txt`. When the flag is set the agent opens a fourth socket and streams the
+  rotation vector quaternion (NDK ASensor API — no Context needed under app_process) at 50 Hz,
+  24 bytes per packet: four little-endian float32 (x, y, z, w) + int64 timestamp_ns. Drives the
+  host's 3D "device twin" view. Not upstreamable as-is; on a resync, re-add the files and hooks.
 
 ## Refetch
 

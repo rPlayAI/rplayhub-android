@@ -25,6 +25,7 @@
 #include "codec_info.h"
 #include "controller.h"
 #include "display_streamer.h"
+#include "sensor_streamer.h"
 #include "session_environment.h"
 #include "socket_writer.h"
 
@@ -109,10 +110,12 @@ private:
   static int32_t flags_;
   static SocketWriter* video_socket_writer_;
   static SocketWriter* audio_socket_writer_;
+  static SocketWriter* sensor_socket_writer_;  // rPlayHub addition, see PROVENANCE.md.
   static int control_socket_fd_;
   static std::map<int32_t, DisplayStreamer> display_streamers_;
   static DisplayStreamer* primary_display_streamer_;
   static AudioStreamer* audio_streamer_;
+  static SensorStreamer* sensor_streamer_;  // rPlayHub addition, see PROVENANCE.md.
   static Controller* controller_;
   static std::mutex environment_mutex_;
   static SessionEnvironment* session_environment_;  // GUARDED_BY(environment_mutex_)

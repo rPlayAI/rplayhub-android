@@ -49,6 +49,8 @@ final class AgentSession {
 
     private(set) var video: VideoStream?
     private(set) var control: ControlSender?
+    /// Device orientation, when the agent build has our sensor channel. Nil on older builds.
+    private(set) var sensor: SensorStream?
     let decoder = VideoDecoder()
 
     private var listener: TCPListener?
@@ -93,6 +95,8 @@ final class AgentSession {
     /// flags.h values.
     private static let flagStartVideoStream: Int = 0x01
     private static let flagUseUInput: Int = 0x08
+    /// Our addition (see PROVENANCE.md): stream rotation vector quaternions on a fourth channel.
+    private static let flagStreamOrientation: Int = 0x100
 
     /// START_VIDEO_STREAM is not optional: without it the agent comes up, connects its channels
     /// and streams nothing until asked, which reads exactly like a broken pipeline.
@@ -105,7 +109,10 @@ final class AgentSession {
     private func agentFlags(featureLevel: Int) -> Int {
         if let override = ProcessInfo.processInfo.environment["RPLAYHUB_AGENT_FLAGS"],
            let value = Int(override) { return value }
+        // The sensor channel rides the twin gate: with the feature off, the agent is asked for
+        // exactly what it always was.
         return Self.flagStartVideoStream
+            | (AppBuild.twinEnabled ? Self.flagStreamOrientation : 0)
     }
 
     // MARK: - lifecycle
@@ -183,7 +190,9 @@ final class AgentSession {
         startAgentLogReader()
 
         state = .deploying("waiting for the agent to connect")
-        let channels = try acceptChannels(on: listener, featureLevel: sdk)
+        let flags = agentFlags(featureLevel: sdk)
+        let channels = try acceptChannels(on: listener, featureLevel: sdk,
+                                          expectSensor: flags & Self.flagStreamOrientation != 0)
 
         // The reverse can go now: connections already established keep working without it, and
         // leaving it installed leaks an abstract socket name on the device per session.
@@ -200,6 +209,12 @@ final class AgentSession {
         video = stream
         stream.start()
 
+        if let sensorSocket = channels.sensor {
+            let s = SensorStream(socket: sensorSocket)
+            sensor = s
+            s.start()
+        }
+
         state = .running
         AppBuild.log("session up on \(serial)")
     }
@@ -210,19 +225,34 @@ final class AgentSession {
     /// How many to expect is not a choice we get to make: the agent opens an audio channel on
     /// API 31+ whether or not anyone wants audio. Accepting only two leaves the third connection
     /// queued and the control channel unfound.
-    private func acceptChannels(on listener: TCPListener,
-                                featureLevel: Int) throws -> (video: TCPSocket, control: TCPSocket) {
+    private func acceptChannels(on listener: TCPListener, featureLevel: Int,
+                                expectSensor: Bool) throws -> (video: TCPSocket, control: TCPSocket,
+                                                               sensor: TCPSocket?) {
         var video: TCPSocket?
         var control: TCPSocket?
-        let expected = featureLevel >= 31 ? 3 : 2
+        var sensor: TCPSocket?
+        let expected = (featureLevel >= 31 ? 3 : 2) + (expectSensor ? 1 : 0)
         for _ in 0..<expected {
-            let socket = try listener.accept(timeout: 20)
+            let socket: TCPSocket
+            do {
+                socket = try listener.accept(timeout: 20)
+            } catch {
+                // An agent built before the sensor channel connects one socket fewer than we
+                // asked for. If the essentials arrived, run without orientation rather than
+                // failing the whole session over a garnish.
+                if video != nil, control != nil, expectSensor, sensor == nil {
+                    AppBuild.log("agent opened no sensor channel — running without orientation")
+                    break
+                }
+                throw error
+            }
             socket.setReadTimeout(10)
             let marker = try socket.readFully(1)
             switch marker[marker.startIndex] {
             case UInt8(ascii: "V"): video = socket
             case UInt8(ascii: "C"): control = socket
             case UInt8(ascii: "A"): audioSocket = socket       // parked, see the property
+            case UInt8(ascii: "S"): sensor = socket
             case let other:
                 socket.shutdownAndClose()
                 throw AdbError.protocolError("unexpected channel marker 0x\(String(other, radix: 16))")
@@ -230,7 +260,7 @@ final class AgentSession {
         }
         guard let video else { throw AdbError.protocolError("no video channel") }
         guard let control else { throw AdbError.protocolError("no control channel") }
-        return (video, control)
+        return (video, control, sensor)
     }
 
     /// The agent writes its log to stdout, which is our shell socket. Worth surfacing: when
@@ -278,8 +308,10 @@ final class AgentSession {
     private func teardown() {
         control?.stop()
         video?.stop()
+        sensor?.stop()
         control = nil
         video = nil
+        sensor = nil
         listener?.close()
         listener = nil
         if !socketName.isEmpty {

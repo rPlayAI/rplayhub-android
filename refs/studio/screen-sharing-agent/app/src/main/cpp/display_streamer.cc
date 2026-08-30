@@ -320,6 +320,11 @@ void DisplayStreamer::Run() {
           auto res = writer_->Write(&packet_header, VideoPacketHeader::SIZE);
           if (res == SocketWriter::Result::DISCONNECTED) {
             stop_reason = FrameStreamStopReason::END_OF_STREAM;
+          } else if (res == SocketWriter::Result::TIMEOUT) {
+            // A timed-out write may have sent part of the packet. Anything written after it
+            // would be misframed by the receiver, so the stream has to end here.
+            Log::W("Display %d: timed out writing an empty video frame; ending the stream to preserve framing", display_id_);
+            stop_reason = FrameStreamStopReason::END_OF_STREAM;
           }
         }
       }
@@ -399,6 +404,12 @@ DisplayStreamer::FrameStreamStopReason DisplayStreamer::ProcessFramesUntilCodecS
     if (res == SocketWriter::Result::SUCCESS_AFTER_BLOCKING) {
       request_sync_frame = true;
     } else if (res == SocketWriter::Result::DISCONNECTED) {
+      continue_streaming = false;
+    } else if (res == SocketWriter::Result::TIMEOUT) {
+      // A timed-out write may have sent part of the packet — SocketWriter does not track how
+      // much. Writing the next packet would misframe every byte after the truncation and the
+      // receiver would feed garbage to its decoder, so the stream has to end here.
+      Log::W("Display %d: timed out writing a video packet; ending the stream to preserve framing", display_id_);
       continue_streaming = false;
     }
     if (!codec_buffer.IsConfig()) {

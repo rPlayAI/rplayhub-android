@@ -24,5 +24,8 @@ constexpr int32_t STREAM_AUDIO = 0x04;
 constexpr int32_t USE_UINPUT = 0x08;
 constexpr int32_t DEVICE_IS_XR = 0x10;
 constexpr int32_t TRACE_CLIPBOARD_SYNCHRONIZATION = 0x40;
+// rPlayHub addition (see refs/studio/PROVENANCE.md): open a fourth socket (marker 'S') and
+// stream rotation vector quaternions on it. Kept far from upstream's bits on purpose.
+constexpr int32_t STREAM_ORIENTATION = 0x100;
 
 }  // namespace screensharing

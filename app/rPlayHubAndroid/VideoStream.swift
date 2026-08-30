@@ -15,6 +15,7 @@
 import AVFoundation
 import CoreMedia
 import Foundation
+import VideoToolbox
 
 final class VideoStream {
     /// Codec name as the agent advertised it, before mapping.
@@ -41,6 +42,10 @@ final class VideoStream {
     var onGeometry: ((VideoPacketHeader) -> Void)?
     /// Connection ended. Main queue.
     var onDisconnect: ((String) -> Void)?
+    /// The byte stream stopped being a packet stream — see `desyncReason`. The session is dead
+    /// the same as a disconnect, but the caller may want to reconnect rather than report. Falls
+    /// back to `onDisconnect` when unset. Main queue.
+    var onDesync: ((String) -> Void)?
 
     private let socket: TCPSocket
     let decoder: VideoDecoder
@@ -51,6 +56,23 @@ final class VideoStream {
     private var format: CMVideoFormatDescription?
     private var framesSubmitted: Int64 = 0
     private var lastGeometry: (w: Int32, h: Int32, rot: UInt8)?
+    private var lastFrameNumber: UInt32?
+
+    /// `RPLAYHUB_VIDEO_STALL="<packet>:<seconds>[:<count>]"` stops reading the socket for
+    /// <seconds> before each of the <count> packets starting at <packet> (count defaults to 1).
+    /// With seconds > the agent's 10s write deadline this reproduces the desync bug in seconds
+    /// instead of whenever the network next chokes for real: the first stall fills every buffer
+    /// between the encoder and us, and each packet read after that frees just enough room for
+    /// the agent to write *part* of its next packet before the deadline passes — a truncated
+    /// packet on the wire. Debug only; unset means never.
+    private static let debugStall: (packet: Int, seconds: TimeInterval, count: Int)? = {
+        guard let raw = ProcessInfo.processInfo.environment["RPLAYHUB_VIDEO_STALL"] else { return nil }
+        let parts = raw.split(separator: ":")
+        guard parts.count >= 2, let packet = Int(parts[0]), let seconds = TimeInterval(parts[1]),
+              packet > 0, seconds > 0 else { return nil }
+        let count = parts.count >= 3 ? Int(parts[2]) ?? 1 : 1
+        return (packet, seconds, max(1, count))
+    }()
 
     init(socket: TCPSocket, decoder: VideoDecoder) {
         self.socket = socket
@@ -94,13 +116,19 @@ final class VideoStream {
             socket.setReadTimeout(0)
 
             while !stopping {
+                if let stall = Self.debugStall,
+                   packetsReceived >= stall.packet, packetsReceived < stall.packet + stall.count {
+                    AppBuild.log("debug: stalling video reads for \(stall.seconds)s"
+                                 + " (\(packetsReceived - stall.packet + 1)/\(stall.count))")
+                    Thread.sleep(forTimeInterval: stall.seconds)
+                }
                 let headerBytes = try socket.readFully(VideoPacketHeader.size)
                 guard let header = VideoPacketHeader(headerBytes) else {
                     fail("malformed packet header")
                     return
                 }
-                guard header.packetSize >= 0, header.packetSize < 32 << 20 else {
-                    fail("implausible packet size \(header.packetSize)")
+                if let reason = desyncReason(header) {
+                    fail(reason, desync: true)
                     return
                 }
                 let payload = header.packetSize > 0
@@ -118,9 +146,46 @@ final class VideoStream {
         }
     }
 
-    private func fail(_ reason: String) {
+    private func fail(_ reason: String, desync: Bool = false) {
         AppBuild.log("video stream ended: \(reason)")
-        DispatchQueue.main.async { [weak self] in self?.onDisconnect?(reason) }
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            if desync, let onDesync = self.onDesync {
+                onDesync(reason)
+            } else {
+                self.onDisconnect?(reason)
+            }
+        }
+    }
+
+    /// Is this header the next thing this stream could legitimately say? The agent's SocketWriter
+    /// can time out with a packet half-written, and an agent build without our fix keeps streaming
+    /// afterwards — from then on payload bytes get parsed as headers. A garbage header can pass a
+    /// size check by chance, and then everything downstream of it is garbage too: the visible
+    /// symptom is VideoToolbox dying with kVTVideoDecoderBadDataErr (-12909) on every frame.
+    ///
+    /// So check what garbage cannot plausibly satisfy. Geometry and orientation are bounded, and
+    /// the frame number is nearly sequential — not strictly `last + 1`, because config packets
+    /// repeat the current number and the agent's empty-frame-on-timeout path skips one, so allow
+    /// a small forward window instead of exact succession.
+    private func desyncReason(_ header: VideoPacketHeader) -> String? {
+        guard header.packetSize >= 0, header.packetSize < 32 << 20 else {
+            return "protocol desync: implausible packet size \(header.packetSize)"
+        }
+        guard (1...16384).contains(header.displayWidth),
+              (1...16384).contains(header.displayHeight) else {
+            return "protocol desync: implausible display \(header.displayWidth)x\(header.displayHeight)"
+        }
+        guard header.displayOrientation < 4, header.displayOrientationCorrection < 4 else {
+            return "protocol desync: implausible orientation \(header.displayOrientation)"
+                + "/\(header.displayOrientationCorrection)"
+        }
+        if let last = lastFrameNumber,
+           !(header.frameNumber >= last && header.frameNumber <= last &+ 64) {
+            return "protocol desync: frame number jumped \(last) → \(header.frameNumber)"
+        }
+        lastFrameNumber = header.frameNumber
+        return nil
     }
 
     /// Only on change — the header is identical on every frame of a still screen, and posting it
@@ -173,7 +238,13 @@ final class VideoStream {
         guard let sample = makeSampleBuffer(AnnexB.lengthPrefixed(picture), format: format) else {
             return
         }
-        decoder.decode(sample)
+        let status = decoder.decode(sample)
+        if status == kVTVideoDecoderBadDataErr {
+            // The data was bad, not the session — rebuilding it would not help. What does help
+            // is a clean restart of the reference chain: drop everything until the next IRAP
+            // instead of decoding damaged pictures against damaged pictures.
+            awaitingKeyframe = true
+        }
         framesEnqueued += 1
     }
 

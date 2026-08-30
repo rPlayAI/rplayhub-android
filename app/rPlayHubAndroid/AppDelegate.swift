@@ -9,6 +9,7 @@
 //
 
 import AppKit
+import simd
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var window: NSWindow!
@@ -24,6 +25,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var pollTimer: Timer?
     private var healthTimer: Timer?
     private var propertiesForSerial: String?
+
+    /// Auto-reconnect bookkeeping. A session that dies after reaching `.running` — a protocol
+    /// desync, or the agent exiting mid-stream — is restarted rather than reported: the agent is
+    /// stateless and the deploy takes seconds. Windowed so a persistent failure surfaces as an
+    /// error instead of looping silently.
+    private var sessionReachedRunning = false
+    private var reconnectAttempts = 0
+    private var reconnectWindowStart: Date?
+
+    /// Created on first use and kept: the decode thread's frame tee reads this property, and a
+    /// stable instance (gated inside by its own `isActive` lock) keeps that access race-free.
+    private var twin: TwinView?
+    private var twinActive = false
+    private var twinGateItem: NSMenuItem?
+    private var twinOpenItem: NSMenuItem?
 
     /// What we ask the agent to cap the encode at. Well above any display we will show it on, so
     /// the picture is never the limiting factor; the agent scales down to the device's own size
@@ -246,16 +262,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         : "The device is not ready for adb commands.")
             return
         }
+        if twinActive { exitTwin() }   // the new session's decoder starts back in native output
         session?.stop()
         mirror.reset()
         strip.setSessionActive(false)
+        sessionReachedRunning = false
 
         let s = AgentSession(serial: device.serial)
         session = s
         s.onState = { [weak self] state in self?.sessionStateChanged(state) }
         s.onAgentLog = { line in AppBuild.log("agent: \(line)") }
         s.decoder.onFrame = { [weak self] picture in
-            self?.mirror.displayLayer.present(picture)
+            guard let self else { return }
+            self.mirror.displayLayer.present(picture)
+            self.twin?.present(picture)   // one lock and out when the mode is off
         }
         s.start(maxVideoSize: maxVideoSize)
     }
@@ -270,14 +290,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .running:
             window.subtitle = "mirroring"
             strip.setSessionActive(true)
+            sessionReachedRunning = true
             attachStream()
             startHealthTimer()
         case .failed(let reason):
             window.subtitle = "failed"
             strip.setSessionActive(false)
             mirror.reset()
-            present(message: "Mirroring failed", detail: reason)
+            // Dying mid-stream is recoverable — the agent exiting is how it now reports an
+            // unrecoverable socket (a write timeout leaves a packet half-sent). Failing to
+            // come up at all is not; that stays an error.
+            if sessionReachedRunning {
+                sessionReachedRunning = false
+                autoReconnect(after: reason)
+            } else {
+                present(message: "Mirroring failed", detail: reason)
+            }
         }
+    }
+
+    /// Restart the session on the same device, at most three times a minute. Past that the
+    /// failure is not transient, and it surfaces the way it did before auto-reconnect existed.
+    private func autoReconnect(after reason: String) {
+        guard let serial = session?.serial else { return }
+        let now = Date()
+        if let start = reconnectWindowStart, now.timeIntervalSince(start) < 60 {
+            reconnectAttempts += 1
+        } else {
+            reconnectWindowStart = now
+            reconnectAttempts = 1
+        }
+        guard reconnectAttempts <= 3 else {
+            present(message: "Mirroring keeps failing", detail: reason)
+            return
+        }
+        guard let device = sidebar.devices.first(where: { $0.serial == serial }), device.isReady else {
+            present(message: "Mirroring ended", detail: reason)
+            return
+        }
+        AppBuild.log("reconnecting to \(serial) (attempt \(reconnectAttempts)): \(reason)")
+        window.subtitle = "reconnecting"
+        startSession(for: device)
     }
 
     private func attachStream() {
@@ -287,10 +340,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         video.onFormat = { [weak self] size in self?.mirror.videoSize = size }
         video.onGeometry = { [weak self] header in
             self?.mirror.apply(header: header)
+            self?.twin?.apply(header: header)
         }
-        video.onDisconnect = { [weak self] reason in
+        // Both closures check the stream is still the current one: after a reconnect, a stale
+        // stream's last gasp arrives on the main queue behind the new session's startup and
+        // must not tear it down.
+        video.onDisconnect = { [weak self, weak video] reason in
+            guard let self, video != nil, self.session?.video === video else { return }
             AppBuild.log("video: \(reason)")
-            self?.strip.setSessionActive(false)
+            self.strip.setSessionActive(false)
+        }
+        video.onDesync = { [weak self, weak video] reason in
+            guard let self, video != nil, self.session?.video === video else { return }
+            AppBuild.log("video: \(reason)")
+            self.autoReconnect(after: reason)
         }
     }
 
@@ -334,6 +397,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             lines.append("bitrate   \(header.bitRate / 1000) kbps"
                          + (header.isBitRateReduced ? " (reduced)" : ""))
         }
+        if let sensor = session?.sensor {
+            lines.append("gyro      \(sensor.packetsReceived) pkts")
+        }
         if video.awaitingKeyframe {
             lines.append("waiting for a keyframe (\(video.framesBeforeKeyframe) dropped)")
         }
@@ -347,8 +413,118 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let deviceTitleName = NSTextField(labelWithString: "No device")
     private let deviceTitleDetail = NSTextField(labelWithString: "")
 
+    /// Flip the twin gate. The menu entry follows immediately; the sensor channel is asked for
+    /// at session start, so a running session needs a Reconnect before orientation flows.
+    @objc private func openTwinFromMenu() {
+        toggleTwin()
+    }
+
+    @objc private func toggleTwinGate() {
+        AppBuild.twinEnabled.toggle()
+        let enabled = AppBuild.twinEnabled
+        twinGateItem?.state = enabled ? .on : .off
+        twinOpenItem?.isHidden = !enabled
+        mirror.setTwinVisible(enabled)
+        if !enabled, twinActive { exitTwin() }
+        AppBuild.log("3D device twin \(enabled ? "enabled" : "disabled")")
+        if enabled, session != nil, session?.sensor == nil {
+            window.subtitle = "reconnect to feed the 3D twin orientation"
+        }
+    }
+
+    /// Not a second viewer — a display mode. The 3D view takes the mirror's place in the middle
+    /// pane; exiting puts the flat view back. One stream, one picture on screen.
+    private func toggleTwin() {
+        if twinActive { exitTwin(); return }
+        guard AppBuild.twinEnabled else { return }
+        guard let session, let video = session.video else {
+            present(message: "No live session", detail: "Start mirroring first, then View in 3D.")
+            return
+        }
+        // The twin's texture path wants BGRA; restart the video stream so the switch happens on
+        // fresh parameter sets and a keyframe instead of mid-GOP.
+        session.decoder.outputBGRA = true
+        restartVideoStream()
+
+        let tv = twin ?? {
+            let created = TwinView()
+            created.translatesAutoresizingMaskIntoConstraints = false
+            twin = created
+            return created
+        }()
+        if ProcessInfo.processInfo.environment["RPLAYHUB_FAKE_GYRO"] == "1" {
+            // Scripted poses instead of the device, to verify the orientation math without a
+            // hand on the phone: face-on, yaw left, tilt top toward the viewer, roll
+            // counterclockwise, face-on again. 4 seconds each.
+            let start = Date()
+            tv.orientationSource = { Self.fakeGyro(Float(Date().timeIntervalSince(start))) }
+            AppBuild.log("twin: using the fake scripted gyro")
+        } else {
+            tv.orientationSource = { [weak self] in self?.session?.sensor?.latest }
+        }
+        if tv.superview == nil {
+            stage.addSubview(tv)
+            NSLayoutConstraint.activate([
+                tv.topAnchor.constraint(equalTo: mirror.topAnchor),
+                tv.leadingAnchor.constraint(equalTo: mirror.leadingAnchor),
+                tv.trailingAnchor.constraint(equalTo: mirror.trailingAnchor),
+                tv.bottomAnchor.constraint(equalTo: mirror.bottomAnchor),
+            ])
+        }
+        tv.isHidden = false
+        mirror.isHidden = true
+        tv.activate(displaySize: video.lastHeader?.displaySize ?? CGSize(width: 1080, height: 2400))
+        if let header = video.lastHeader { tv.apply(header: header) }
+        twinActive = true
+        mirror.setTwinActive(true)
+        twinOpenItem?.title = "Exit 3D View"
+        if session.sensor == nil {
+            AppBuild.log("twin: no sensor channel in this session — static pose until reconnect")
+        }
+    }
+
+    /// The scripted test poses, in Android's East-North-Up convention. Base pose: upright, screen
+    /// normal pointing South (at a viewer looking North). Each phase applies one world-frame
+    /// rotation whose expected on-screen effect is written beside it.
+    private static func fakeGyro(_ elapsed: Float) -> simd_quatf {
+        let upright = simd_quatf(angle: .pi / 2, axis: simd_float3(1, 0, 0))  // flat → facing South
+        let phase = Int(elapsed / 4) % 5
+        switch phase {
+        case 1:   // yaw +35° about Up — the twin should turn to the viewer's left
+            return simd_quatf(angle: 35 * .pi / 180, axis: simd_float3(0, 0, 1)) * upright
+        case 2:   // pitch +25° about East — the top should tilt toward the viewer
+            return simd_quatf(angle: 25 * .pi / 180, axis: simd_float3(1, 0, 0)) * upright
+        case 3:   // roll +30° about South (the facing axis) — counterclockwise on screen
+            return simd_quatf(angle: 30 * .pi / 180, axis: simd_float3(0, -1, 0)) * upright
+        default:  // face-on
+            return upright
+        }
+    }
+
+    private func exitTwin() {
+        guard twinActive, let tv = twin else { return }
+        tv.deactivate()
+        tv.isHidden = true
+        mirror.isHidden = false
+        twinActive = false
+        mirror.setTwinActive(false)
+        twinOpenItem?.title = "View Screen in 3D"
+        if let session {
+            session.decoder.outputBGRA = false
+            restartVideoStream()
+        }
+    }
+
+    private func restartVideoStream() {
+        guard let control = session?.control else { return }
+        control.send(ControlMessage.stopVideoStream())
+        control.send(ControlMessage.startVideoStream(width: Int32(maxVideoSize.width),
+                                                     height: Int32(maxVideoSize.height)))
+    }
+
     private func perform(_ command: MirrorView.Command) {
         switch command {
+        case .twin:       toggleTwin()
         case .screenshot: saveScreenshot()
         case .record:     toggleRecording()
         case .home:       perform(ControlStrip.Action.home)
@@ -556,6 +732,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         viewMenu.addItem(.separator())
         viewMenu.addItem(withTitle: "Pin Window on Top",
                          action: #selector(togglePin), keyEquivalent: "p").target = self
+        viewMenu.addItem(.separator())
+        let twinOpen = viewMenu.addItem(withTitle: "View Screen in 3D",
+                                        action: #selector(openTwinFromMenu), keyEquivalent: "3")
+        twinOpen.target = self
+        twinOpen.isHidden = !AppBuild.twinEnabled
+        twinOpenItem = twinOpen
+        let twinToggle = viewMenu.addItem(withTitle: "3D Device Twin (Experimental)",
+                                          action: #selector(toggleTwinGate), keyEquivalent: "")
+        twinToggle.target = self
+        twinToggle.state = AppBuild.twinEnabled ? .on : .off
+        twinGateItem = twinToggle
         viewItem.submenu = viewMenu
         main.addItem(viewItem)
 

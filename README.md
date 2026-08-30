@@ -54,13 +54,38 @@ Then plug in a device with USB debugging on, accept the prompt, and double-click
 | Control: base128 MotionEvent / KeyEvent | **verified** — keys and touch, against a Pixel 9a |
 | Right panel: Info, Apps, Files, Logcat, Crashes, Settings | **working** |
 | Right-click menu, open as window/tab, pin | **working** |
+| 3D device twin — gyro-tracked 3D mirror (experimental, gated) | **working** — see below |
 
 Verified end to end against a Pixel 9a (tegu, Android 17 / SDK 37) over network adb.
 
-**Known issue:** a long session eventually fails with `kVTVideoDecoderBadDataErr (-12909)`. On a
-run of ~9,300 frames the agent had also logged `Writing to video socket failed - Try again` and
-retried, which is the obvious suspect — a retried partial write would desynchronise the packet
-stream. Not yet investigated.
+**Fixed issue (2026-08-30):** long sessions used to die with `kVTVideoDecoderBadDataErr (-12909)`.
+Root cause: the agent's `SocketWriter::Write()` can time out with a video packet *half-written*
+(partial `write()`, then EAGAIN past the 10s deadline), and upstream's `display_streamer.cc`
+ignores the TIMEOUT and writes the next packet right after the truncation — desynchronising the
+byte stream, so payload bytes get parsed as headers and eventually reach VideoToolbox as garbage.
+Fixed in two layers: our agent build now ends the stream on a video write timeout (see
+`refs/studio/PROVENANCE.md`, local modifications), and the host validates every packet header
+(geometry bounds, near-sequential frame numbers) and auto-reconnects on desync or mid-stream agent
+exit — at most 3 times a minute before surfacing the error. Verified against the Pixel 9a with a
+fault-injecting agent build and a read-stall debug hook (`RPLAYHUB_VIDEO_STALL`, see
+`VideoStream.swift`).
+
+## The 3D device twin (experimental)
+
+A display mode, not a second viewer: "View in 3D" swaps the flat mirror for a 3D phone whose
+orientation tracks the real device's rotation vector sensor live — turn the phone in your hand
+and the model turns on screen, with the mirrored display texture-mapped onto its glass. Drag to
+orbit the camera. Re-centre (R, or the button) is a calibration: hold the phone parallel to your
+Mac's screen and press it — that pose becomes face-on, and every motion after is shown as the
+delta from it, heading-corrected so directions stay true (turn left, it turns left; tilt the top
+toward you, it comes toward you). `RPLAYHUB_FAKE_GYRO=1` replaces the sensor with scripted poses
+(face-on, yaw, pitch, roll) for verifying exactly that without a hand on the phone.
+
+Gated off by default: enable with **View ▸ 3D Device Twin (Experimental)** (persisted), or
+`RPLAYHUB_TWIN=1` for one launch. The gate also controls the extra agent channel — our agent
+build streams 50 Hz quaternions on a fourth socket only when asked (flag `0x100`; see
+`refs/studio/PROVENANCE.md`). While the mode is active the decoder outputs BGRA for the Metal
+texture path; the stream is restarted around the switch so it lands on a clean keyframe.
 
 ## If your JDK crashes on startup
 

@@ -236,6 +236,15 @@ void Agent::Run(const vector<string>& args) {
     char channel_marker = 'A';
     audio_socket_writer_->Write(&channel_marker, sizeof(channel_marker));  // Audio channel marker.
   }
+  // rPlayHub addition (see PROVENANCE.md): a fourth channel for device orientation.
+  if ((flags_ & STREAM_ORIENTATION) != 0) {
+    int sensor_socket_fd = CreateAndConnectSocket(socket_name_);
+    sensor_socket_writer_ = new SocketWriter(sensor_socket_fd, "sensor", duration_cast<milliseconds>(SOCKET_WRITE_TIMEOUT).count());
+    char channel_marker = 'S';
+    sensor_socket_writer_->Write(&channel_marker, sizeof(channel_marker));  // Sensor channel marker.
+    sensor_streamer_ = new SensorStreamer(sensor_socket_writer_);
+    sensor_streamer_->Start();
+  }
   control_socket_fd_ = CreateAndConnectSocket(socket_name_);
   controller_ = new Controller(control_socket_fd_);
 
@@ -391,6 +400,14 @@ void Agent::Shutdown() {
         Log::D("Shutting down audio socket");
         shutdown(audio_socket_writer_->socket_fd(), SHUT_RDWR);
       }
+      // Socket first so a blocked sensor write unblocks, then Stop, which joins the thread.
+      if (sensor_socket_writer_ != nullptr) {
+        Log::D("Shutting down sensor socket");
+        shutdown(sensor_socket_writer_->socket_fd(), SHUT_RDWR);
+      }
+      if (sensor_streamer_ != nullptr) {
+        sensor_streamer_->Stop();
+      }
     }
     Jvm::Exit(exit_code_);
   } else {
@@ -432,10 +449,12 @@ CodecInfo* Agent::codec_info_(nullptr);
 int32_t Agent::flags_(0);
 SocketWriter* Agent::video_socket_writer_(nullptr);
 SocketWriter* Agent::audio_socket_writer_(nullptr);
+SocketWriter* Agent::sensor_socket_writer_(nullptr);
 int Agent::control_socket_fd_(-1);
 map<int32_t, DisplayStreamer> Agent::display_streamers_;
 DisplayStreamer* Agent::primary_display_streamer_(nullptr);
 AudioStreamer* Agent::audio_streamer_(nullptr);
+SensorStreamer* Agent::sensor_streamer_(nullptr);
 Controller* Agent::controller_(nullptr);
 mutex Agent::environment_mutex_;
 SessionEnvironment* Agent::session_environment_(nullptr);  // GUARDED_BY(environment_mutex_)

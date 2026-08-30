@@ -19,3 +19,7 @@ refs/studio/screen-sharing-agent/app/.cxx/
 
 # Intermediate for the icon; AppIcon.icns is the built artefact and is tracked.
 app/rPlayHubAndroid/AppIcon.iconset/
+
+# Session working notes — carry device addresses and machine-local details; never publish.
+doc/HANDOFF.md
+doc/NEXT-PROMPT.txt

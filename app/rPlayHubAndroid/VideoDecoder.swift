@@ -32,8 +32,16 @@ final class VideoDecoder {
     private(set) var decodeFailures = 0
     private(set) var lastError: String?
 
+    /// When true the decoder asks VideoToolbox for BGRA output — single-plane, Metal-friendly,
+    /// what the 3D twin's texture path takes — at the cost of a colour conversion per frame.
+    /// The flat layer is happy with either. Read on the decode thread; the session is rebuilt
+    /// when the value differs from the one it was created with, so flip it and then restart the
+    /// video stream (fresh parameter sets + keyframe) for a clean switch.
+    var outputBGRA = false
+
     private var session: VTDecompressionSession?
     private var format: CMVideoFormatDescription?
+    private var sessionIsBGRA = false
 
     deinit { invalidate() }
 
@@ -49,10 +57,12 @@ final class VideoDecoder {
     /// Decode one access unit. Synchronous: VideoToolbox invokes the output callback before this
     /// returns, so pictures arrive in decode order with no reordering queue to manage. The agent
     /// configures MediaCodec for live streaming and emits no B-frames, so decode order is display
-    /// order.
-    func decode(_ sample: CMSampleBuffer) {
+    /// order. Returns the decode status so the caller can react to data-level failures — a
+    /// session-level failure is already handled here.
+    @discardableResult
+    func decode(_ sample: CMSampleBuffer) -> OSStatus {
         guard let desc = CMSampleBufferGetFormatDescription(sample),
-              let session = ensureSession(for: desc) else { return }
+              let session = ensureSession(for: desc) else { return noErr }
 
         var flags = VTDecodeInfoFlags()
         let status = VTDecompressionSessionDecodeFrame(
@@ -66,10 +76,12 @@ final class VideoDecoder {
                 invalidate()
             }
         }
+        return status
     }
 
     private func ensureSession(for desc: CMVideoFormatDescription) -> VTDecompressionSession? {
-        if let session, let format, CMFormatDescriptionEqual(format, otherFormatDescription: desc) {
+        if let session, let format, CMFormatDescriptionEqual(format, otherFormatDescription: desc),
+           sessionIsBGRA == outputBGRA {
             return session
         }
         invalidate()
@@ -98,12 +110,19 @@ final class VideoDecoder {
             },
             decompressionOutputRefCon: Unmanaged.passUnretained(self).toOpaque())
 
+        // See `outputBGRA` — nil attributes let the decoder emit its native YCbCr.
+        let wantBGRA = outputBGRA
+        let imageAttributes: [String: Any]? = wantBGRA ? [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+            kCVPixelBufferMetalCompatibilityKey as String: true,
+        ] : nil
+
         var created: VTDecompressionSession?
         let status = VTDecompressionSessionCreate(
             allocator: kCFAllocatorDefault,
             formatDescription: desc,
             decoderSpecification: spec as CFDictionary,
-            imageBufferAttributes: nil,
+            imageBufferAttributes: imageAttributes as CFDictionary?,
             outputCallback: &callback,
             decompressionSessionOut: &created)
         guard status == noErr, let created else {
@@ -114,6 +133,7 @@ final class VideoDecoder {
         }
         session = created
         format = desc
+        sessionIsBGRA = wantBGRA
         return created
     }
 }

@@ -53,6 +53,7 @@ add_library(
         log.cc
         main.cc
         scoped_setting.cc
+        sensor_streamer.cc
         shell_command.cc
         shell_command_executor.cc
         session_environment.cc

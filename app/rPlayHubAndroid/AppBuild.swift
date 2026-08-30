@@ -8,6 +8,21 @@ import Foundation
 enum AppBuild {
     static let version = "0.1.0"
 
+    /// Feature gate for the 3D device twin (experimental). Off by default. Toggled from the
+    /// View menu (persisted as the "TwinEnabled" default); `RPLAYHUB_TWIN=1`/`=0` overrides it
+    /// for a launch. Gates the menu entry and, at session start, the sensor channel we ask the
+    /// agent for — a session started with the gate off carries zero new code paths, and a
+    /// freshly flipped gate needs the next session (Reconnect) before orientation flows.
+    static var twinEnabled: Bool {
+        get {
+            if let env = ProcessInfo.processInfo.environment["RPLAYHUB_TWIN"] {
+                return env == "1" || env.lowercased() == "true"
+            }
+            return UserDefaults.standard.bool(forKey: "TwinEnabled")
+        }
+        set { UserDefaults.standard.set(newValue, forKey: "TwinEnabled") }
+    }
+
     static let stamp: String = {
         let f = DateFormatter()
         f.dateFormat = "yyyy-MM-dd HH:mm:ss"

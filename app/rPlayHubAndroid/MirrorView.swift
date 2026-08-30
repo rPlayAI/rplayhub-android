@@ -65,6 +65,7 @@ final class MirrorView: NSView, NSMenuItemValidation {
         case pin, openWindow, openTab
         case wake, power
         case stop, reconnect
+        case twin
     }
 
     /// Shown under the mockup while idle, the way Device Hub labels its pre-connect device.
@@ -134,6 +135,12 @@ final class MirrorView: NSView, NSMenuItemValidation {
         add("Wake", .wake, "sun.max")
         add("Power Button", .power, "power")
         menu.addItem(.separator())
+        add("View in 3D", .twin, "cube.transparent")
+        twinItem = menu.items.last
+        menu.addItem(.separator())
+        twinSeparator = menu.items.last
+        twinItem?.isHidden = !AppBuild.twinEnabled
+        twinSeparator?.isHidden = !AppBuild.twinEnabled
         add("Open in New Window", .openWindow, "macwindow")
         add("Open in New Tab", .openTab, "square.on.square")
         pinItem = menu.items.last
@@ -153,6 +160,21 @@ final class MirrorView: NSView, NSMenuItemValidation {
 
     private var pinItem: NSMenuItem?
     private var recordItem: NSMenuItem?
+    private var twinItem: NSMenuItem?
+    private var twinSeparator: NSMenuItem?
+
+    /// The twin gate flipped; show or hide its menu entry to match.
+    func setTwinVisible(_ visible: Bool) {
+        twinItem?.isHidden = !visible
+        twinSeparator?.isHidden = !visible
+    }
+
+    /// The 3D mode toggled; make the item say what it will do next.
+    func setTwinActive(_ active: Bool) {
+        twinItem?.title = active ? "Exit 3D View" : "View in 3D"
+        twinItem?.image = NSImage(systemSymbolName: active ? "cube.fill" : "cube.transparent",
+                                  accessibilityDescription: "3D")
+    }
 
     /// Keep the menu item in step with the strip button, so both say what they will do next.
     func setRecording(_ recording: Bool) {
