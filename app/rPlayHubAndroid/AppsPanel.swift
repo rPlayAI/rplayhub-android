@@ -76,6 +76,10 @@ final class AppsPanel: NSView, NSTableViewDataSource, NSTableViewDelegate {
         table.rowHeight = 22
         table.style = .inset
         table.backgroundColor = .clear
+        // A hairline under every row, as Device Hub rules its lists.
+        table.gridStyleMask = [.solidHorizontalGridLineMask]
+        table.gridColor = Palette.separator
+        table.intercellSpacing = NSSize(width: 0, height: 0)
         table.dataSource = self
         table.delegate = self
         table.menu = rowMenu()

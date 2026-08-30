@@ -21,4 +21,8 @@ enum Palette {
     static let pane = NSColor(srgbRed: 0xFA / 255, green: 0xFA / 255, blue: 0xFA / 255, alpha: 1)
     /// The middle column, behind the picture and its button strip.
     static let canvas = NSColor.white
+    /// Hairlines between list rows. Literal for the same reason as the rest: NSColor.separatorColor
+    /// is semantic and shifts with focus, which on a hairline reads as flicker.
+    static let separator = NSColor(srgbRed: 0xE3 / 255, green: 0xE3 / 255, blue: 0xE3 / 255,
+                                   alpha: 1)
 }

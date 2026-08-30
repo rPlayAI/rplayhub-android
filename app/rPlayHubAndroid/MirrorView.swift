@@ -230,12 +230,14 @@ final class MirrorView: NSView, NSMenuItemValidation {
         viewScreenButton.image = NSImage(systemSymbolName: "rectangle.inset.filled.and.person.filled",
                                          accessibilityDescription: "View Screen")
         viewScreenButton.imagePosition = .imageLeading
-        // Centre the image+title as one group. The button has an explicit 127pt frame, wider than
-        // its fitting size, and without this the cell pins the group to the leading edge — which
-        // puts the icon inside the capsule's rounded end rather than clear of it. The two leading
-        // spaces in the title are the gap between icon and text.
+        // The button is 127pt, wider than its content, so image and title have to travel
+        // together or the cell pins the image to the leading edge and centres only the text —
+        // which is what left the icon sitting in the capsule's rounded end with a gulf after it.
+        // imageHugsTitle is the switch that makes the image ride next to the title instead of
+        // against the edge; `alignment` then centres the pair as one group.
+        viewScreenButton.imageHugsTitle = true
         viewScreenButton.alignment = .center
-        viewScreenButton.title = "  View Screen"
+        viewScreenButton.title = " View Screen"
         viewScreenButton.target = self
         viewScreenButton.action = #selector(viewScreenPressed)
         addSubview(viewScreenButton)
@@ -531,7 +533,10 @@ final class MirrorView: NSView, NSMenuItemValidation {
 
     override func mouseDown(with event: NSEvent) {
         window?.makeFirstResponder(self)
-        guard control != nil else { onViewScreen?(); return }
+        // Only the View Screen button starts a session. Treating a click anywhere in the panel
+        // as "start mirroring" meant merely focusing the window, or clicking past the mockup to
+        // reach the pane, kicked off an agent deploy nobody asked for.
+        guard control != nil else { return }
         guard let p = devicePoint(convert(event.locationInWindow, from: nil)) else { return }
         lastDevicePoint = p
         sendMotion(p, action: MotionAction.down)
