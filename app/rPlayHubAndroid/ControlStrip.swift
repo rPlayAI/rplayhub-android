@@ -80,6 +80,7 @@ final class ControlStrip: NSView {
         // A hairline above, so the strip reads as a toolbar under the picture rather than as
         // buttons floating in the same space as the screen.
         wantsLayer = true
+        layer?.backgroundColor = Palette.canvas.cgColor   // continuous with the picture above
         separator.wantsLayer = true
         separator.layer?.backgroundColor = NSColor.separatorColor.cgColor
         separator.translatesAutoresizingMaskIntoConstraints = false

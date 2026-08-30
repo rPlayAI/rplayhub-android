@@ -226,10 +226,16 @@ final class MirrorView: NSView, NSMenuItemValidation {
         viewScreenStack.spacing = 2
         addSubview(viewScreenStack)
 
-        viewScreenButton.title = "View Screen"
-        viewScreenButton.image = NSImage(systemSymbolName: "play.rectangle",
+        // Device Hub's own icon: the stock screen-sharing symbol.
+        viewScreenButton.image = NSImage(systemSymbolName: "rectangle.inset.filled.and.person.filled",
                                          accessibilityDescription: "View Screen")
         viewScreenButton.imagePosition = .imageLeading
+        // Centre the image+title as one group. The button has an explicit 127pt frame, wider than
+        // its fitting size, and without this the cell pins the group to the leading edge — which
+        // puts the icon inside the capsule's rounded end rather than clear of it. The two leading
+        // spaces in the title are the gap between icon and text.
+        viewScreenButton.alignment = .center
+        viewScreenButton.title = "  View Screen"
         viewScreenButton.target = self
         viewScreenButton.action = #selector(viewScreenPressed)
         addSubview(viewScreenButton)

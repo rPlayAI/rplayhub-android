@@ -58,7 +58,7 @@ final class CrashesPanel: NSView {
         textView.isEditable = false
         textView.isRichText = false
         textView.font = .monospacedSystemFont(ofSize: 10, weight: .regular)
-        textView.backgroundColor = .textBackgroundColor
+        textView.backgroundColor = Palette.canvas
         textView.autoresizingMask = [.width]
         textView.isVerticallyResizable = true
         textView.textContainer?.widthTracksTextView = true

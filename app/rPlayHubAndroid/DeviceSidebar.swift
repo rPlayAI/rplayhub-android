@@ -40,6 +40,13 @@ final class DeviceSidebar: NSView {
     }
 
     private func build() {
+        // A literal colour, not a semantic one. NSColor.windowBackgroundColor and friends have an
+        // inactive variant that macOS tints warmer when the window loses key, so a pane using one
+        // and a pane using another visibly drift apart on focus change. #FAFAFA is what
+        // ~/rplay-hub measured off Device Hub's own sidebar.
+        wantsLayer = true
+        layer?.backgroundColor = Palette.pane.cgColor
+
         search.placeholderString = "Search"
         search.target = self
         search.action = #selector(searchChanged)
@@ -60,7 +67,7 @@ final class DeviceSidebar: NSView {
         wantsLayer = true
         layer?.backgroundColor = NSColor(srgbRed: 0xFA / 255, green: 0xFA / 255,
                                          blue: 0xFA / 255, alpha: 1).cgColor
-        tableView.backgroundColor = .clear
+        tableView.backgroundColor = .clear     // let the pane colour show through
         tableView.selectionHighlightStyle = .regular
         tableView.dataSource = self
         tableView.delegate = self

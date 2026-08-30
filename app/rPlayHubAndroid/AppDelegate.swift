@@ -118,18 +118,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.contentView = splitView
         window.setContentSize(NSSize(width: 1000, height: 760))
 
-        // Device Hub keeps these in the title bar at the trailing edge, not in the pane.
-        // The accessory needs a concrete frame at the time it is added: given only Auto Layout
-        // constraints it comes up zero-sized and nothing appears in the title bar at all.
-        let accessory = NSTitlebarAccessoryViewController()
-        inspector.iconTabs.frame = NSRect(x: 0, y: 0, width: 108, height: 28)
-        accessory.view = inspector.iconTabs
-        accessory.layoutAttribute = .trailing
-        window.addTitlebarAccessoryViewController(accessory)
+        buildToolbar()
 
         wireUp()
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    /// The title bar, split into three sections that follow the split view's own dividers.
+    ///
+    /// Device Hub's title bar is not one continuous strip: each column gets its own section, so
+    /// the sidebar's toolbar area reads as part of the sidebar and the inspector's as part of the
+    /// inspector. NSTrackingSeparatorToolbarItem is what does that — it follows a divider as the
+    /// panes resize.
+    private func buildToolbar() {
+        let toolbar = NSToolbar(identifier: "main")
+        toolbar.delegate = self
+        toolbar.displayMode = .iconOnly
+        toolbar.showsBaselineSeparator = false
+        window.titlebarAppearsTransparent = true
+        window.toolbar = toolbar
+        window.toolbarStyle = .unified
+        // The app name and the device name are both toolbar items now; leaving the standard
+        // centred title visible would put a second copy of roughly the same text in the row.
+        window.titleVisibility = .hidden
+        window.titlebarSeparatorStyle = .none
     }
 
     private func wireUp() {
@@ -196,9 +209,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             inspector.serial = nil
             mirror.deviceName = nil
             mirror.deviceSubtitle = nil
+            deviceTitleName.stringValue = "No device"
+            deviceTitleDetail.stringValue = ""
             return
         }
         window.title = "rPlayHub — \(device.displayName)"
+        deviceTitleName.stringValue = device.displayName
+        deviceTitleDetail.stringValue = device.isReady ? device.serial : device.state
         mirror.deviceName = device.displayName
         mirror.deviceSubtitle = device.isReady ? device.serial : device.state
         inspector.serial = device.isReady ? device.serial : nil
@@ -214,6 +231,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             DispatchQueue.main.async { [weak self] in
                 guard self?.propertiesForSerial == device.serial, !release.isEmpty else { return }
                 self?.mirror.deviceSubtitle = "Android \(release)"
+                self?.deviceTitleDetail.stringValue = "Android \(release)"
             }
         }
     }
@@ -326,6 +344,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - the screen's right-click menu
 
     private var isPinned = false
+    private let deviceTitleName = NSTextField(labelWithString: "No device")
+    private let deviceTitleDetail = NSTextField(labelWithString: "")
 
     private func perform(_ command: MirrorView.Command) {
         switch command {
@@ -580,4 +600,78 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 /// Device Hub's own window.
 final class PaneSplitView: NSSplitView {
     override var dividerColor: NSColor { .clear }
+}
+
+// MARK: - the three-column title bar
+
+extension AppDelegate: NSToolbarDelegate {
+    private static let appTitleItem = NSToolbarItem.Identifier("appTitle")
+    private static let deviceTitleItem = NSToolbarItem.Identifier("deviceTitle")
+    private static let inspectorTabsItem = NSToolbarItem.Identifier("inspectorTabs")
+    /// These two follow the split view's dividers, which is what cuts the bar into columns.
+    private static let sidebarSeparator = NSToolbarItem.Identifier("sidebarSeparator")
+    private static let inspectorSeparator = NSToolbarItem.Identifier("inspectorSeparator")
+
+    private static let order: [NSToolbarItem.Identifier] = [
+        appTitleItem,
+        sidebarSeparator,
+        deviceTitleItem, .flexibleSpace,
+        inspectorSeparator,
+        // Pushes the icon tabs to the trailing edge of the inspector's own section; without it
+        // they sit hard against the separator.
+        .flexibleSpace, inspectorTabsItem,
+    ]
+
+    func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+        Self.order
+    }
+
+    func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+        Self.order
+    }
+
+    func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier id: NSToolbarItem.Identifier,
+                 willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
+        switch id {
+        case Self.sidebarSeparator:
+            return NSTrackingSeparatorToolbarItem(identifier: id, splitView: splitView,
+                                                  dividerIndex: 0)
+        case Self.inspectorSeparator:
+            return NSTrackingSeparatorToolbarItem(identifier: id, splitView: splitView,
+                                                  dividerIndex: 1)
+
+        case Self.appTitleItem:
+            let label = NSTextField(labelWithString: "rPlayHub Android")
+            label.font = .systemFont(ofSize: 13, weight: .semibold)
+            let item = NSToolbarItem(itemIdentifier: id)
+            item.view = label
+            item.label = "rPlayHub Android"
+            return item
+
+        case Self.deviceTitleItem:
+            // Two lines, as Device Hub's is: the name over the OS version. Not the standard
+            // window title, which is centred across the whole bar rather than sitting where the
+            // canvas begins.
+            deviceTitleName.font = .systemFont(ofSize: 12, weight: .medium)
+            deviceTitleDetail.font = .systemFont(ofSize: 10)
+            deviceTitleDetail.textColor = .secondaryLabelColor
+            let stack = NSStackView(views: [deviceTitleName, deviceTitleDetail])
+            stack.orientation = .vertical
+            stack.alignment = .leading
+            stack.spacing = 0
+            let item = NSToolbarItem(itemIdentifier: id)
+            item.view = stack
+            item.label = "Device"
+            return item
+
+        case Self.inspectorTabsItem:
+            let item = NSToolbarItem(itemIdentifier: id)
+            item.view = inspector.iconTabs
+            item.label = "Inspector"
+            return item
+
+        default:
+            return nil
+        }
+    }
 }
