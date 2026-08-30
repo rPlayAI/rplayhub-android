@@ -93,16 +93,27 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
         }
 
         // "Set Facing Me", not "Re-centre": the button's job is to declare the current pose as
-        // the face-on default, and it persists that for later sessions.
+        // the face-on default, and it persists that for later sessions. Styled as a clear filled
+        // pill — a default rounded button vanishes into the dark 3D scene and reads as plain text.
         let recenterButton = NSButton(title: "Set Facing Me  (R)", target: self,
                                       action: #selector(recenterPressed))
-        recenterButton.bezelStyle = .rounded
-        recenterButton.controlSize = .small
+        recenterButton.isBordered = false
+        recenterButton.wantsLayer = true
+        recenterButton.contentTintColor = .white
+        recenterButton.font = .systemFont(ofSize: 13, weight: .semibold)
+        recenterButton.attributedTitle = NSAttributedString(
+            string: "Set Facing Me  (R)",
+            attributes: [.foregroundColor: NSColor.white,
+                         .font: NSFont.systemFont(ofSize: 13, weight: .semibold)])
+        recenterButton.layer?.backgroundColor = NSColor(calibratedRed: 0.15, green: 0.47, blue: 0.95, alpha: 0.95).cgColor
+        recenterButton.layer?.cornerRadius = 9
         recenterButton.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(recenterButton)
         NSLayoutConstraint.activate([
             recenterButton.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            recenterButton.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -10),
+            recenterButton.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -16),
+            recenterButton.heightAnchor.constraint(equalToConstant: 34),
+            recenterButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 170),
         ])
 
         // First-run prompt: with no saved reference, the twin has no way to know which way the
