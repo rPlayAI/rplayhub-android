@@ -46,10 +46,13 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
     private var isActive = false
 
     // Render-thread state.
-    private var yawCorrection: simd_quatf?
     private var reference: simd_quatf?
     private var smoothed: simd_quatf?
     private var recenterRequested = true
+    /// The saved "facing me" calibration — the device pose that maps to the twin face-on. Set by
+    /// the button (or R), persisted, and reused as the default on every later session so the twin
+    /// starts in the right position instead of adopting whatever pose the phone happens to be in.
+    private var savedFacingMe: simd_quatf?
 
     // Main thread writes on geometry changes, render thread reads.
     private let geometryLock = NSLock()
@@ -88,7 +91,9 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
             textureCache = cache
         }
 
-        let recenterButton = NSButton(title: "Re-centre  (R)", target: self,
+        // "Set Facing Me", not "Re-centre": the button's job is to declare the current pose as
+        // the face-on default, and it persists that for later sessions.
+        let recenterButton = NSButton(title: "Set Facing Me  (R)", target: self,
                                       action: #selector(recenterPressed))
         recenterButton.bezelStyle = .rounded
         recenterButton.controlSize = .small
@@ -107,7 +112,11 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
     func activate(displaySize: CGSize) {
         scnView.scene = buildScene(displaySize: displaySize)
         scnView.rendersContinuously = true       // orientation changes without scene mutations
-        recenterRequested = true
+        // Prefer the saved "facing me" calibration as the default; only capture a fresh one from
+        // the phone's live pose if the user has never set it.
+        savedFacingMe = Self.loadFacingMe()
+        reference = savedFacingMe
+        recenterRequested = savedFacingMe == nil
         smoothed = nil
         window?.makeFirstResponder(scnView)
         frameLock.lock()
@@ -311,25 +320,24 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
     private func updateOrientation() {
         guard let q = orientationSource?() else { return }
         if recenterRequested {
-            yawCorrection = Self.yawCorrection(for: q)
-            reference = yawCorrection! * q
+            reference = q
+            Self.saveFacingMe(q)     // this pose is now the default "facing me" for every session
+            savedFacingMe = q
             smoothed = nil
             recenterRequested = false
         }
-        // Re-centre is a calibration: hold the phone parallel to the Mac's screen, press R, and
-        // that pose becomes the twin's face-on. What renders afterwards is the *delta* from that
-        // reference, taken in the world frame with the heading corrected so the viewer sits
-        // where the screen pointed at re-centre — which is what keeps directions true: turning
-        // the phone left turns the twin left, tilting the top toward you brings it toward you,
-        // and coming back parallel to the Mac screen brings the twin back flat.
+        // The reference is the device pose the user chose as "facing me" — held facing the Mac
+        // and captured with the button (or R), then persisted so it is the default next time.
+        // What renders is the rotation FROM that reference TO the current pose, so at the
+        // reference the twin is exactly face-on, and any real rotation of the phone shows as the
+        // same rotation of the twin. Because it is a true rotation delta (not an attitude reset)
+        // gravity stays honest: tilt the top toward you and the twin's top comes toward you.
         //
-        // Android's rotation vector maps the device frame into an East-North-Up world: x east,
-        // y north, z sky. SceneKit's world is x right, y up, z toward the viewer. Rotating the
-        // world -90° about x maps one onto the other (E→x, U→y, N→away); the delta is conjugated
-        // through that map to act about SceneKit's axes.
-        let identity = simd_quatf(ix: 0, iy: 0, iz: 0, r: 1)
-        let corrected = (yawCorrection ?? identity) * q
-        let delta = corrected * (reference ?? corrected).inverse
+        // Android's rotation vector lives in an East-North-Up world (x east, y north, z sky);
+        // SceneKit's is x right, y up, z toward the viewer. Rotating the world -90° about x maps
+        // one onto the other, so the delta is conjugated through that map to act on SceneKit axes.
+        let ref = reference ?? q
+        let delta = q * ref.inverse
         let worldFix = simd_quatf(angle: -.pi / 2, axis: simd_float3(1, 0, 0))
         let target = worldFix * delta * worldFix.inverse
         let next = smoothed.map { simd_slerp($0, target, 0.35) } ?? target
@@ -337,22 +345,18 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
         phoneNode?.simdOrientation = next
     }
 
-    /// The pure world-vertical rotation that brings the phone's current heading to the viewer,
-    /// in ENU coordinates. For an upright-ish phone, the screen normal is the heading and should
-    /// point South — with East-North-Up mapped so the viewer looks North, South is toward them.
-    /// For a flat phone the normal is vertical and carries no heading, so the top edge stands
-    /// in, pointing North — lying on the desk with its top away, as a phone in front of you does.
-    private static func yawCorrection(for q: simd_quatf) -> simd_quatf {
-        let normal = q.act(simd_float3(0, 0, 1))
-        let top = q.act(simd_float3(0, 1, 0))
-        let normalIsHorizontal = normal.x * normal.x + normal.y * normal.y > 0.09
-        let (east, north, targetAzimuth): (Float, Float, Float) = normalIsHorizontal
-            ? (normal.x, normal.y, .pi)   // South
-            : (top.x, top.y, 0)           // North
-        // Azimuth measured from North toward East; a rotation of θ about the vertical moves a
-        // vector's azimuth by -θ, so turning `azimuth` into `targetAzimuth` takes their difference.
-        let azimuth = atan2f(east, north)
-        return simd_quatf(angle: azimuth - targetAzimuth, axis: simd_float3(0, 0, 1))
+    // MARK: - the saved "facing me" reference
+
+    private static let facingMeKey = "TwinFacingMeReference"
+
+    private static func saveFacingMe(_ q: simd_quatf) {
+        UserDefaults.standard.set([q.imag.x, q.imag.y, q.imag.z, q.real], forKey: facingMeKey)
+    }
+
+    private static func loadFacingMe() -> simd_quatf? {
+        guard let v = UserDefaults.standard.array(forKey: facingMeKey) as? [Double], v.count == 4,
+              !(v[0] == 0 && v[1] == 0 && v[2] == 0 && v[3] == 0) else { return nil }
+        return simd_normalize(simd_quatf(ix: Float(v[0]), iy: Float(v[1]), iz: Float(v[2]), r: Float(v[3])))
     }
 }
 
