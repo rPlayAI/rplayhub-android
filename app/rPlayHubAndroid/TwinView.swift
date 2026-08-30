@@ -234,6 +234,28 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
         dot.position = SCNVector3(0, bodyHeight * 0.44, bodyDepth / 2 + 0.004)
         phone.addChildNode(dot)
 
+        // A user-supplied back image wins: texture it straight onto the back face so the twin
+        // wears whatever device the user handed it — a Samsung, a Xiaomi, anything. When one is
+        // set the procedural Pixel back (camera bar, lenses, G) is skipped entirely.
+        if let backImage = Self.loadBackImage() {
+            let backPlane = SCNPlane(width: bodyWidth, height: bodyHeight)
+            let backMat = SCNMaterial()
+            backMat.lightingModel = .constant     // show the photo as printed, not relit
+            backMat.diffuse.contents = backImage
+            backMat.diffuse.wrapS = .clamp
+            backMat.diffuse.wrapT = .clamp
+            backMat.isDoubleSided = false
+            backPlane.materials = [backMat]
+            let backNode = SCNNode(geometry: backPlane)
+            backNode.position = SCNVector3(0, 0, -bodyDepth / 2 - 0.001)
+            backNode.eulerAngles = SCNVector3(0, CGFloat.pi, 0)   // face out the back
+            phone.addChildNode(backNode)
+            scene.rootNode.addChildNode(phone)
+            phoneNode = phone
+            addCameraAndLights(scene)
+            return scene
+        }
+
         // The camera bar across the back — the Pixel's signature, and it makes the back a back
         // instead of an anonymous dark slab when the twin turns around.
         let barHeight = bodyHeight * 0.105
@@ -295,7 +317,11 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
 
         scene.rootNode.addChildNode(phone)
         phoneNode = phone
+        addCameraAndLights(scene)
+        return scene
+    }
 
+    private func addCameraAndLights(_ scene: SCNScene) {
         let camera = SCNCamera()
         camera.fieldOfView = 40
         let cameraNode = SCNNode()
@@ -315,8 +341,16 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
         ambient.light!.type = .ambient
         ambient.light!.intensity = 350
         scene.rootNode.addChildNode(ambient)
+    }
 
-        return scene
+    // MARK: - user-supplied back image
+
+    static let backImageKey = "TwinBackImagePath"
+
+    private static func loadBackImage() -> NSImage? {
+        guard let path = UserDefaults.standard.string(forKey: backImageKey), !path.isEmpty,
+              FileManager.default.fileExists(atPath: path) else { return nil }
+        return NSImage(contentsOfFile: path)
     }
 
     // MARK: - per-frame
