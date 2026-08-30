@@ -364,13 +364,17 @@ final class MirrorView: NSView {
                        y: (n.y * displaySize.height).rounded())
     }
 
+    /// Every motion event carries its pointer, ACTION_UP included.
+    ///
+    /// The agent builds the MotionEvent entirely out of `message.pointers()` — it counts them,
+    /// fills the coordinate array from them, and injects whatever that produces. Sending an empty
+    /// array on UP yields a MotionEvent with pointer_count 0, which is malformed, so the gesture
+    /// never completes and every tap is a DOWN that is never released.
     private func sendMotion(_ point: CGPoint, action: Int32) {
         guard let control else { return }
         let x = Int32(max(0, min(displaySize.width - 1, point.x)))
         let y = Int32(max(0, min(displaySize.height - 1, point.y)))
-        control.send(ControlMessage.motionEvent(
-            pointers: action == MotionAction.up ? [] : [.init(x: x, y: y)],
-            action: action))
+        control.send(ControlMessage.motionEvent(pointers: [.init(x: x, y: y)], action: action))
     }
 
     override var acceptsFirstResponder: Bool { true }
@@ -379,6 +383,7 @@ final class MirrorView: NSView {
         window?.makeFirstResponder(self)
         guard control != nil else { onViewScreen?(); return }
         guard let p = devicePoint(convert(event.locationInWindow, from: nil)) else { return }
+        lastDevicePoint = p
         sendMotion(p, action: MotionAction.down)
     }
 
@@ -388,16 +393,21 @@ final class MirrorView: NSView {
         // events, so the device's own gesture detector decides — which is what makes flings and
         // long-presses work without any of it being modelled here.
         guard let p = devicePoint(convert(event.locationInWindow, from: nil)) else { return }
+        lastDevicePoint = p
         sendMotion(p, action: MotionAction.move)
     }
 
     override func mouseUp(with event: NSEvent) {
-        guard let p = devicePoint(convert(event.locationInWindow, from: nil)) else { return }
-        // MotionEventMessage carries no pointers on ACTION_UP — the agent uses the last known
-        // position — but the coordinates are sent anyway for the move that precedes it.
-        sendMotion(p, action: MotionAction.move)
+        // A drag that leaves the picture still has to be released, or the agent is left with an
+        // unfinished gesture and its motion_event_start_time_ never resets. Clamp instead of
+        // bailing out.
+        let p = devicePoint(convert(event.locationInWindow, from: nil)) ?? lastDevicePoint
+        guard let p else { return }
         sendMotion(p, action: MotionAction.up)
     }
+
+    /// Where the pointer last was inside the picture, so a release outside it still lands.
+    private var lastDevicePoint: CGPoint?
 
     override func scrollWheel(with event: NSEvent) {
         guard let control,

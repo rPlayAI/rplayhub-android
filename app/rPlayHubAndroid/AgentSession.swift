@@ -90,6 +90,24 @@ final class AgentSession {
         return candidates.first { fm.fileExists(atPath: $0 + "/" + jarName) }
     }
 
+    /// flags.h values.
+    private static let flagStartVideoStream: Int = 0x01
+    private static let flagUseUInput: Int = 0x08
+
+    /// START_VIDEO_STREAM is not optional: without it the agent comes up, connects its channels
+    /// and streams nothing until asked, which reads exactly like a broken pipeline.
+    ///
+    /// USE_UINPUT is deliberately NOT set. On API 37 it routes input through a virtual drawing
+    /// tablet, and on a Pixel 9a that tablet is created — the UI_ABS_SETUP ioctls all log
+    /// cleanly, with axis ranges matching the display — but it never appears in /dev/input, so
+    /// every touch is silently dropped. `getevent -p` lists only the four real devices. Plain
+    /// InputManager injection works there, so this stays off; override to experiment.
+    private func agentFlags(featureLevel: Int) -> Int {
+        if let override = ProcessInfo.processInfo.environment["RPLAYHUB_AGENT_FLAGS"],
+           let value = Int(override) { return value }
+        return Self.flagStartVideoStream
+    }
+
     // MARK: - lifecycle
 
     func start(maxVideoSize: CGSize) {
@@ -151,10 +169,7 @@ final class AgentSession {
             + " com.android.tools.screensharing.Main"
             + " --socket=\(socketName)"
             + " --max_size=\(maxSize)"
-            // START_VIDEO_STREAM (flags.h: 0x01). Without it the agent comes up, connects its
-            // channels, and streams nothing at all until asked — which reads exactly like a
-            // broken pipeline.
-            + " --flags=1"
+            + " --flags=\(agentFlags(featureLevel: sdk))"
             // "avc", not "h264": the agent builds its MediaCodec mime as "video/" + this, and
             // "video/avc" is the Android name. Read off agent.cc, which also shows the default
             // is vp8 — a codec VideoToolbox will not take through our path, so this is required
@@ -162,7 +177,7 @@ final class AgentSession {
             + " --codec=avc"
             // "--log", not "--log_level". Studio's Kotlin calls the variable logLevelArg, which
             // is not the flag the agent parses.
-            + " --log=info"
+            + " --log=\(ProcessInfo.processInfo.environment["RPLAYHUB_AGENT_LOG"] ?? "info")"
         AppBuild.log("launching: \(command)")
         agentShell = try Adb.shellStream(serial, command)
         startAgentLogReader()
