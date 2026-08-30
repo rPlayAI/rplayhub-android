@@ -27,7 +27,8 @@ for f in files:
     builds.append(f'\t\t{bf} /* {f} in Sources */ = {{isa = PBXBuildFile; fileRef = {fr} /* {f} */; }};')
     entries.append((f, fr, bf))
 
-PLIST_REF, ENT_REF = oid(0x2001), oid(0x2002)
+PLIST_REF, ENT_REF, ICON_REF = oid(0x2001), oid(0x2002), oid(0x2003)
+ICON_BUILD = oid(0x2004)
 PRODUCT, TARGET, PROJECT = oid(0x3001), oid(0x3002), oid(0x3003)
 GRP_ROOT, GRP_SRC, GRP_PRODUCTS = oid(0x4001), oid(0x4002), oid(0x4003)
 PH_SOURCES, PH_FRAMEWORKS, PH_RESOURCES = oid(0x5001), oid(0x5002), oid(0x5003)
@@ -70,11 +71,13 @@ pbx = f"""// !$*UTF8*$!
 
 /* Begin PBXBuildFile section */
 {chr(10).join(builds)}
+		{ICON_BUILD} /* AppIcon.icns in Resources */ = {{isa = PBXBuildFile; fileRef = {ICON_REF} /* AppIcon.icns */; }};
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 {chr(10).join(refs)}
 		{PLIST_REF} /* Info.plist */ = {{isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; }};
+		{ICON_REF} /* AppIcon.icns */ = {{isa = PBXFileReference; lastKnownFileType = image.icns; path = AppIcon.icns; sourceTree = "<group>"; }};
 		{ENT_REF} /* rPlayHubAndroid.entitlements */ = {{isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = rPlayHubAndroid.entitlements; sourceTree = "<group>"; }};
 		{PRODUCT} /* rPlayHubAndroid.app */ = {{isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = rPlayHubAndroid.app; sourceTree = BUILT_PRODUCTS_DIR; }};
 /* End PBXFileReference section */
@@ -102,6 +105,7 @@ pbx = f"""// !$*UTF8*$!
 			isa = PBXGroup;
 			children = (
 {group_children}
+				{ICON_REF} /* AppIcon.icns */,
 				{PLIST_REF} /* Info.plist */,
 				{ENT_REF} /* rPlayHubAndroid.entitlements */,
 			);
@@ -174,6 +178,7 @@ pbx = f"""// !$*UTF8*$!
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				{ICON_BUILD} /* AppIcon.icns in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		}};

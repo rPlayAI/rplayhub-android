@@ -605,7 +605,9 @@ final class PaneSplitView: NSSplitView {
 // MARK: - the three-column title bar
 
 extension AppDelegate: NSToolbarDelegate {
-    private static let appTitleItem = NSToolbarItem.Identifier("appTitle")
+    private static let addDeviceItem = NSToolbarItem.Identifier("addDevice")
+    private static let sortItem = NSToolbarItem.Identifier("sortDevices")
+    private static let sidebarItem = NSToolbarItem.Identifier("toggleSidebar")
     private static let deviceTitleItem = NSToolbarItem.Identifier("deviceTitle")
     private static let inspectorTabsItem = NSToolbarItem.Identifier("inspectorTabs")
     /// These two follow the split view's dividers, which is what cuts the bar into columns.
@@ -613,7 +615,7 @@ extension AppDelegate: NSToolbarDelegate {
     private static let inspectorSeparator = NSToolbarItem.Identifier("inspectorSeparator")
 
     private static let order: [NSToolbarItem.Identifier] = [
-        appTitleItem,
+        addDeviceItem, sortItem, sidebarItem,
         sidebarSeparator,
         deviceTitleItem, .flexibleSpace,
         inspectorSeparator,
@@ -632,6 +634,16 @@ extension AppDelegate: NSToolbarDelegate {
 
     func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier id: NSToolbarItem.Identifier,
                  willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
+        func icon(_ symbol: String, _ label: String, _ tip: String,
+                  _ action: Selector?) -> NSToolbarItem {
+            let item = NSToolbarItem(itemIdentifier: id)
+            item.label = label
+            item.toolTip = tip
+            item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: tip)
+            item.target = self
+            item.action = action
+            return item
+        }
         switch id {
         case Self.sidebarSeparator:
             return NSTrackingSeparatorToolbarItem(identifier: id, splitView: splitView,
@@ -640,13 +652,14 @@ extension AppDelegate: NSToolbarDelegate {
             return NSTrackingSeparatorToolbarItem(identifier: id, splitView: splitView,
                                                   dividerIndex: 1)
 
-        case Self.appTitleItem:
-            let label = NSTextField(labelWithString: "rPlayHub Android")
-            label.font = .systemFont(ofSize: 13, weight: .semibold)
-            let item = NSToolbarItem(itemIdentifier: id)
-            item.view = label
-            item.label = "rPlayHub Android"
-            return item
+        case Self.addDeviceItem:
+            return icon("plus", "Add", "Connect a device over the network",
+                        #selector(addDeviceTapped))
+        case Self.sortItem:
+            return icon("line.3.horizontal.decrease", "Sort", "Sort Devices",
+                        #selector(sortDevicesTapped))
+        case Self.sidebarItem:
+            return icon("sidebar.left", "Sidebar", "Hide Sidebar", #selector(toggleSidebar))
 
         case Self.deviceTitleItem:
             // Two lines, as Device Hub's is: the name over the OS version. Not the standard
@@ -673,5 +686,118 @@ extension AppDelegate: NSToolbarDelegate {
         default:
             return nil
         }
+    }
+}
+
+// MARK: - the sidebar's toolbar actions
+
+extension AppDelegate {
+    /// Connect a device over the network. This is what `+` means on Android: there is no pairing
+    /// dance to run for an already-authorised device, just `adb connect host:port`.
+    ///
+    /// Port 5555 is filled in because that is what `adb tcpip 5555` opens and what practically
+    /// every network device listens on; typing a bare address should just work.
+    @objc func addDeviceTapped() {
+        let alert = NSAlert()
+        alert.messageText = "Connect to a device"
+        alert.informativeText = "The device must already have wireless debugging enabled, and "
+            + "have accepted this computer. Run `adb tcpip 5555` over USB first if it has not."
+        alert.addButton(withTitle: "Connect")
+        alert.addButton(withTitle: "Restart ADB")
+        alert.addButton(withTitle: "Cancel")
+
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
+        field.placeholderString = "192.168.1.50:5555"
+        field.stringValue = UserDefaults.standard.string(forKey: "LastConnectAddress") ?? ""
+        alert.accessoryView = field
+        alert.window.initialFirstResponder = field
+
+        let choice = alert.runModal()
+        if choice == .alertSecondButtonReturn { restartAdbServer(); return }
+        guard choice == .alertFirstButtonReturn else { return }
+        var address = field.stringValue.trimmingCharacters(in: .whitespaces)
+        guard !address.isEmpty else { return }
+        if !address.contains(":") { address += ":5555" }      // the port is the boring part
+        UserDefaults.standard.set(address, forKey: "LastConnectAddress")
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            do {
+                let reply = try Adb.connect(address)
+                AppBuild.log("connect \(address): \(reply)")
+                DispatchQueue.main.async { self?.refreshDevices() }
+            } catch {
+                AppBuild.log("connect \(address) failed: \(error)")
+                DispatchQueue.main.async {
+                    self?.present(message: "Could not connect to \(address)", detail: "\(error)")
+                }
+            }
+        }
+    }
+
+    /// Kill and restart the adb server, then reload the list. The usual cure for a device stuck
+    /// in `offline`, or an `unauthorized` that persists after accepting the prompt.
+    ///
+    /// Any live session dies with the server, so it is torn down first rather than left to fail
+    /// on its own.
+    func restartAdbServer() {
+        stopMirroring()
+        sidebar.update(devices: [], note: "restarting the adb server…")
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            var problem: String?
+            do {
+                try Adb.killServer()
+                // The server needs a moment to release :5037 before it can be rebound.
+                Thread.sleep(forTimeInterval: 0.6)
+                try Adb.startServer()
+                // And another for it to enumerate what is attached, or the first poll is empty.
+                Thread.sleep(forTimeInterval: 1.0)
+                AppBuild.log("adb server restarted")
+                // A network device is not remembered across a restart — the new server knows
+                // only about USB. Put the last one back rather than making the user retype it.
+                if let last = UserDefaults.standard.string(forKey: "LastConnectAddress"),
+                   !last.isEmpty {
+                    if let reply = try? Adb.connect(last) {
+                        AppBuild.log("reconnected \(last): \(reply)")
+                    }
+                }
+            } catch {
+                problem = "\(error)"
+                AppBuild.log("adb restart failed: \(error)")
+            }
+            DispatchQueue.main.async {
+                self?.refreshDevices()
+                if let problem {
+                    self?.present(message: "Could not restart the adb server", detail: problem)
+                }
+            }
+        }
+    }
+
+    @objc func sortDevicesTapped(_ sender: Any?) {
+        let menu = NSMenu()
+        for option in DeviceSidebar.Sort.allCases {
+            let item = menu.addItem(withTitle: option.rawValue, action: #selector(sortChosen(_:)),
+                                    keyEquivalent: "")
+            item.target = self
+            item.representedObject = option.rawValue
+            item.state = sidebar.sort == option ? .on : .off
+        }
+        // Anchored under the toolbar button rather than at the pointer, which is where a menu
+        // hung off a toolbar item belongs.
+        if let item = sender as? NSToolbarItem, let button = item.view {
+            menu.popUp(positioning: nil, at: NSPoint(x: 0, y: button.bounds.height), in: button)
+        } else {
+            menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
+        }
+    }
+
+    @objc private func sortChosen(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let option = DeviceSidebar.Sort(rawValue: raw) else { return }
+        sidebar.sort = option
+    }
+
+    @objc func toggleSidebar() {
+        sidebar.isHidden.toggle()
     }
 }

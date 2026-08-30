@@ -97,6 +97,7 @@ final class InspectorPane: NSView {
 
         textTabs.segmentStyle = .automatic
         textTabs.trackingMode = .selectOne
+        textTabs.segmentDistribution = .fillEqually
         textTabs.target = self
         textTabs.action = #selector(textTabChanged)
         textTabs.translatesAutoresizingMaskIntoConstraints = false
@@ -119,7 +120,7 @@ final class InspectorPane: NSView {
         NSLayoutConstraint.activate([
             textTabs.topAnchor.constraint(equalTo: topAnchor, constant: 8),
             textTabs.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
-            textTabs.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -10),
+            textTabs.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
 
             container.topAnchor.constraint(equalTo: textTabs.bottomAnchor, constant: 6),
             container.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -156,7 +157,7 @@ final class InspectorPane: NSView {
         textTabs.segmentCount = tabs.count
         for (i, tab) in tabs.enumerated() {
             textTabs.setLabel(tab.0, forSegment: i)
-            textTabs.setWidth(0, forSegment: i)      // fit to the label
+            textTabs.setWidth(0, forSegment: i)      // even split, see segmentDistribution
         }
         // A single sub-tab is not a choice; hide the row rather than showing one lonely segment.
         textTabs.isHidden = tabs.count < 2

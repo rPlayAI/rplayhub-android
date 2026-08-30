@@ -16,8 +16,30 @@ final class DeviceSidebar: NSView {
     /// "Mirror" from the row's context menu or a double click.
     var onMirror: ((AdbDevice) -> Void)?
 
+    /// How the list is ordered. Device Hub offers the same choice from its toolbar.
+    enum Sort: String, CaseIterable {
+        case name = "Name"
+        case serial = "Serial"
+        case state = "Status"
+    }
+
+    var sort: Sort = .name {
+        didSet { if sort != oldValue { applyFilter() } }
+    }
+
     private(set) var devices: [AdbDevice] = []
+    /// What a row is. Device Hub groups its list under "Available" and "Unavailable" headers,
+    /// so the table is a flat list of headers and devices rather than of devices alone.
+    private enum Row {
+        case header(String)
+        case device(AdbDevice)
+    }
+
+    private var rows: [Row] = []
     private var filtered: [AdbDevice] = []
+    /// Android version per serial, fetched once per device and cached. Device Hub shows the OS
+    /// version right-aligned on every row, and one getprop per device per poll would be absurd.
+    private var versions: [String: String] = [:]
     private var selectedSerial: String?
     /// Set while we are rebuilding the table ourselves. `reloadData()` drops the selection and
     /// AppKit reports that as a user selection change — which nils `selectedSerial` before the
@@ -52,11 +74,6 @@ final class DeviceSidebar: NSView {
         search.action = #selector(searchChanged)
         search.translatesAutoresizingMaskIntoConstraints = false
 
-        let header = NSTextField(labelWithString: "Available")
-        header.font = .systemFont(ofSize: 11, weight: .semibold)
-        header.textColor = .secondaryLabelColor
-        header.translatesAutoresizingMaskIntoConstraints = false
-
         let column = NSTableColumn(identifier: .init("device"))
         column.resizingMask = .autoresizingMask
         tableView.addTableColumn(column)
@@ -90,7 +107,6 @@ final class DeviceSidebar: NSView {
         statusLabel.translatesAutoresizingMaskIntoConstraints = false
 
         addSubview(search)
-        addSubview(header)
         addSubview(scroll)
         addSubview(statusLabel)
         NSLayoutConstraint.activate([
@@ -98,10 +114,7 @@ final class DeviceSidebar: NSView {
             search.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
             search.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
 
-            header.topAnchor.constraint(equalTo: search.bottomAnchor, constant: 12),
-            header.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
-
-            scroll.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 6),
+            scroll.topAnchor.constraint(equalTo: search.bottomAnchor, constant: 10),
             scroll.leadingAnchor.constraint(equalTo: leadingAnchor),
             scroll.trailingAnchor.constraint(equalTo: trailingAnchor),
             scroll.bottomAnchor.constraint(equalTo: statusLabel.topAnchor, constant: -6),
@@ -124,6 +137,9 @@ final class DeviceSidebar: NSView {
         menu.addItem(.separator())
         menu.addItem(withTitle: "Copy Serial", action: #selector(copySerial), keyEquivalent: "")
             .target = self
+        menu.addItem(.separator())
+        menu.addItem(withTitle: "Disconnect", action: #selector(disconnectFromMenu),
+                     keyEquivalent: "").target = self
         return menu
     }
 
@@ -150,8 +166,8 @@ final class DeviceSidebar: NSView {
         let keep = selectedSerial
         isReloading = true
         applyFilter()
-        if let serial = keep, let row = filtered.firstIndex(where: { $0.serial == serial }) {
-            tableView.selectRowIndexes([row], byExtendingSelection: false)
+        if let serial = keep, filtered.contains(where: { $0.serial == serial }) {
+            select(serial: serial)
             selectedSerial = serial
         } else if keep != nil {
             selectedSerial = nil          // the device really did go away
@@ -162,7 +178,10 @@ final class DeviceSidebar: NSView {
 
     /// Select a row by serial, as if the user had clicked it.
     func select(serial: String) {
-        guard let row = filtered.firstIndex(where: { $0.serial == serial }) else { return }
+        guard let row = rows.firstIndex(where: {
+            if case .device(let d) = $0 { return d.serial == serial }
+            return false
+        }) else { return }
         tableView.selectRowIndexes([row], byExtendingSelection: false)
     }
 
@@ -175,46 +194,127 @@ final class DeviceSidebar: NSView {
         let keep = selectedSerial
         isReloading = true
         applyFilter()
-        if let serial = keep, let row = filtered.firstIndex(where: { $0.serial == serial }) {
-            tableView.selectRowIndexes([row], byExtendingSelection: false)
+        if let serial = keep, filtered.contains(where: { $0.serial == serial }) {
+            select(serial: serial)
             selectedSerial = serial
         }
         isReloading = false
     }
 
+    /// One getprop per device we have not seen before, off the main queue.
+    private func loadMissingVersions() {
+        for device in devices where device.isReady && versions[device.serial] == nil {
+            let serial = device.serial
+            versions[serial] = ""        // claim it, so the next poll does not queue a second
+            DispatchQueue.global(qos: .utility).async { [weak self] in
+                let release = (try? Adb.getprop(serial, "ro.build.version.release")) ?? ""
+                DispatchQueue.main.async {
+                    guard let self, !release.isEmpty else { return }
+                    self.versions[serial] = release
+                    self.tableView.reloadData()
+                }
+            }
+        }
+    }
+
     private func applyFilter() {
         let query = search.stringValue.trimmingCharacters(in: .whitespaces).lowercased()
-        filtered = query.isEmpty ? devices : devices.filter {
+        loadMissingVersions()
+        var result = query.isEmpty ? devices : devices.filter {
             $0.displayName.lowercased().contains(query) || $0.serial.lowercased().contains(query)
         }
+        switch sort {
+        case .name:   result.sort { $0.displayName.lowercased() < $1.displayName.lowercased() }
+        case .serial: result.sort { $0.serial < $1.serial }
+        // Ready devices first — the ones you can actually do anything with.
+        case .state:  result.sort {
+            $0.isReady == $1.isReady ? $0.displayName.lowercased() < $1.displayName.lowercased()
+                                     : $0.isReady
+        }
+        }
+        filtered = result
+        // Rebuild the flat row list: available devices first under their header, then the rest.
+        let available = result.filter { $0.isReady }
+        let unavailable = result.filter { !$0.isReady }
+        var built: [Row] = []
+        if !available.isEmpty {
+            built.append(.header("Available"))
+            built.append(contentsOf: available.map { Row.device($0) })
+        }
+        if !unavailable.isEmpty {
+            built.append(.header("Unavailable"))
+            built.append(contentsOf: unavailable.map { Row.device($0) })
+        }
+        rows = built
         tableView.reloadData()
     }
 
     @objc private func rowDoubleClicked() {
-        guard tableView.clickedRow >= 0, tableView.clickedRow < filtered.count else { return }
-        onMirror?(filtered[tableView.clickedRow])
+        guard let device = device(at: tableView.clickedRow) else { return }
+        onMirror?(device)
     }
 
     @objc private func mirrorFromMenu() {
-        let row = tableView.clickedRow >= 0 ? tableView.clickedRow : tableView.selectedRow
-        guard row >= 0, row < filtered.count else { return }
-        onMirror?(filtered[row])
+        guard let device = clickedOrSelected() else { return }
+        onMirror?(device)
+    }
+
+    private func clickedOrSelected() -> AdbDevice? {
+        device(at: tableView.clickedRow >= 0 ? tableView.clickedRow : tableView.selectedRow)
+    }
+
+    /// Only meaningful for a network device; a USB one comes back on the next poll.
+    @objc private func disconnectFromMenu() {
+        guard let device = clickedOrSelected() else { return }
+        DispatchQueue.global(qos: .utility).async { _ = try? Adb.disconnect(device.serial) }
     }
 
     @objc private func copySerial() {
-        let row = tableView.clickedRow >= 0 ? tableView.clickedRow : tableView.selectedRow
-        guard row >= 0, row < filtered.count else { return }
+        guard let device = clickedOrSelected() else { return }
         NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(filtered[row].serial, forType: .string)
+        NSPasteboard.general.setString(device.serial, forType: .string)
     }
 }
 
 extension DeviceSidebar: NSTableViewDataSource, NSTableViewDelegate {
-    func numberOfRows(in tableView: NSTableView) -> Int { filtered.count }
+    func numberOfRows(in tableView: NSTableView) -> Int { rows.count }
+
+    private func device(at row: Int) -> AdbDevice? {
+        guard row >= 0, row < rows.count, case .device(let d) = rows[row] else { return nil }
+        return d
+    }
+
+    /// Headers are labels, not selectable rows.
+    func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool {
+        device(at: row) != nil
+    }
+
+    func tableView(_ tableView: NSTableView, isGroupRow row: Int) -> Bool {
+        if case .header = rows[row] { return true }
+        return false
+    }
+
+    func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
+        if case .header = rows[row] { return 24 }
+        return 42
+    }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?,
                    row: Int) -> NSView? {
-        let device = filtered[row]
+        if case .header(let title) = rows[row] {
+            let cell = NSTableCellView()
+            let label = NSTextField(labelWithString: title)
+            label.font = .systemFont(ofSize: 11, weight: .semibold)
+            label.textColor = .secondaryLabelColor
+            label.translatesAutoresizingMaskIntoConstraints = false
+            cell.addSubview(label)
+            NSLayoutConstraint.activate([
+                label.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 6),
+                label.bottomAnchor.constraint(equalTo: cell.bottomAnchor, constant: -2),
+            ])
+            return cell
+        }
+        guard let device = device(at: row) else { return nil }
         let cell = NSTableCellView()
 
         let dot = NSView()
@@ -244,10 +344,20 @@ extension DeviceSidebar: NSTableViewDataSource, NSTableViewDelegate {
         text.spacing = 1
         text.translatesAutoresizingMaskIntoConstraints = false
 
+        // The OS version, right-aligned — Device Hub puts it there on every row.
+        let version = NSTextField(labelWithString: versions[device.serial] ?? "")
+        version.font = .systemFont(ofSize: 11)
+        version.textColor = .secondaryLabelColor
+        version.alignment = .right
+        version.translatesAutoresizingMaskIntoConstraints = false
+
         cell.addSubview(dot)
         cell.addSubview(glyph)
         cell.addSubview(text)
+        cell.addSubview(version)
         NSLayoutConstraint.activate([
+            version.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -10),
+            version.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
             dot.widthAnchor.constraint(equalToConstant: 8),
             dot.heightAnchor.constraint(equalToConstant: 8),
             dot.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 6),
@@ -258,7 +368,7 @@ extension DeviceSidebar: NSTableViewDataSource, NSTableViewDelegate {
             glyph.widthAnchor.constraint(equalToConstant: 16),
 
             text.leadingAnchor.constraint(equalTo: glyph.trailingAnchor, constant: 8),
-            text.trailingAnchor.constraint(lessThanOrEqualTo: cell.trailingAnchor, constant: -8),
+            text.trailingAnchor.constraint(lessThanOrEqualTo: version.leadingAnchor, constant: -8),
             text.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
         ])
         return cell
@@ -266,14 +376,13 @@ extension DeviceSidebar: NSTableViewDataSource, NSTableViewDelegate {
 
     func tableViewSelectionDidChange(_ notification: Notification) {
         guard !isReloading else { return }
-        let row = tableView.selectedRow
-        guard row >= 0, row < filtered.count else {
+        guard let device = device(at: tableView.selectedRow) else {
             selectedSerial = nil
             onSelect?(nil)
             return
         }
-        selectedSerial = filtered[row].serial
-        onSelect?(filtered[row])
+        selectedSerial = device.serial
+        onSelect?(device)
     }
 
     private func statusColor(_ device: AdbDevice) -> NSColor {

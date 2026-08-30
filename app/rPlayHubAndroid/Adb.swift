@@ -125,6 +125,70 @@ enum Adb {
         try hostRequest("host:version")
     }
 
+    /// Kill the adb server. Everything connected through it drops, so callers should expect to
+    /// rebuild any session they hold.
+    static func killServer() throws {
+        // host:kill gets no reply — the server closes the socket as it dies — so a missing OKAY
+        // here is success, not failure.
+        let s = try openServer(timeout: 3)
+        defer { s.shutdownAndClose() }
+        let body = Data("host:kill".utf8)
+        try s.writeAll(Data(String(format: "%04x", body.count).utf8) + body)
+        _ = try? s.readFully(4)
+    }
+
+    /// Start the adb server, which is the one thing the wire protocol cannot do — only the adb
+    /// binary can fork a server. Everything else in this file talks to :5037 directly.
+    static func startServer() throws {
+        guard let binary = binaryPath() else {
+            throw AdbError.failed("cannot find the adb binary to start a server")
+        }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: binary)
+        process.arguments = ["start-server"]
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        try process.run()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else {
+            throw AdbError.failed("`adb start-server` exited \(process.terminationStatus)")
+        }
+    }
+
+    /// Where adb lives. A GUI app does not inherit the shell's PATH, so `which` is no help and
+    /// the usual install locations have to be tried directly.
+    static func binaryPath() -> String? {
+        var candidates = [
+            "/opt/homebrew/bin/adb",
+            "/usr/local/bin/adb",
+            "/opt/homebrew/share/android-commandlinetools/platform-tools/adb",
+        ]
+        for key in ["ANDROID_HOME", "ANDROID_SDK_ROOT"] {
+            if let root = ProcessInfo.processInfo.environment[key], !root.isEmpty {
+                candidates.insert(root + "/platform-tools/adb", at: 0)
+            }
+        }
+        candidates.append(NSString(string: "~/Library/Android/sdk/platform-tools/adb")
+                            .expandingTildeInPath)
+        return candidates.first { FileManager.default.isExecutableFile(atPath: $0) }
+    }
+
+    /// `adb connect`. The reply is a human sentence rather than a status code, so success has to
+    /// be read out of the text — "connected to" and "already connected to" both mean it worked.
+    static func connect(_ address: String) throws -> String {
+        let reply = try hostRequest("host:connect:\(address)")
+        let text = reply.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard text.lowercased().contains("connected to") else {
+            throw AdbError.failed(text.isEmpty ? "no reply from adb" : text)
+        }
+        return text
+    }
+
+    static func disconnect(_ address: String) throws -> String {
+        try hostRequest("host:disconnect:\(address)")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     static func devices() throws -> [AdbDevice] {
         let text = try hostRequest("host:devices-l")
         return text.split(separator: "\n").compactMap { line in
