@@ -25,7 +25,7 @@
 import AppKit
 import AVFoundation
 
-final class MirrorView: NSView {
+final class MirrorView: NSView, NSMenuItemValidation {
     /// Coded frame size, from the parameter sets. Includes the alignment padding.
     var videoSize: CGSize = .zero { didSet { if videoSize != oldValue { needsLayout = true } } }
 
@@ -54,6 +54,18 @@ final class MirrorView: NSView {
 
     /// The View Screen button was pressed, or the idle mockup was clicked.
     var onViewScreen: (() -> Void)?
+
+    /// A right-click menu item was chosen.
+    var onCommand: ((Command) -> Void)?
+
+    /// What the right-click menu offers. Device Hub puts these on the screen itself rather than
+    /// in a side pane, because they act on the picture.
+    enum Command: String {
+        case screenshot, home, back, recents, rotate
+        case pin, openWindow, openTab
+        case wake, power
+        case stop, reconnect
+    }
 
     /// Shown under the mockup while idle, the way Device Hub labels its pre-connect device.
     var deviceName: String? {
@@ -91,7 +103,70 @@ final class MirrorView: NSView {
         setUpLayers()
     }
 
+    /// A click should reach the device even when the window was not already focused — otherwise
+    /// the first click of every visit is swallowed activating the app.
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    private func buildContextMenu() {
+        let menu = NSMenu()
+        func add(_ title: String, _ command: Command, _ symbol: String? = nil) {
+            let item = NSMenuItem(title: title, action: #selector(contextAction(_:)),
+                                  keyEquivalent: "")
+            item.target = self
+            item.representedObject = command.rawValue
+            if let symbol {
+                item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: title)
+            }
+            menu.addItem(item)
+        }
+        add("Take Screenshot", .screenshot, "camera")
+        menu.addItem(.separator())
+        add("Back", .back, "chevron.backward")
+        add("Home", .home, "circle")
+        add("Recents", .recents, "square")
+        add("Rotate", .rotate, "rotate.right")
+        menu.addItem(.separator())
+        add("Wake", .wake, "sun.max")
+        add("Power Button", .power, "power")
+        menu.addItem(.separator())
+        add("Open in New Window", .openWindow, "macwindow")
+        add("Open in New Tab", .openTab, "square.on.square")
+        pinItem = menu.items.last
+        add("Pin Window on Top", .pin, "pin")
+        pinItem = menu.items.last
+        menu.addItem(.separator())
+        add("Reconnect", .reconnect, "arrow.clockwise")
+        add("Stop Mirroring", .stop, "stop.circle")
+        self.menu = menu
+    }
+
+    private var pinItem: NSMenuItem?
+
+    /// Reflect the pinned state back into the menu, so the item says what it will do next.
+    func setPinned(_ pinned: Bool) {
+        pinItem?.title = pinned ? "Unpin Window" : "Pin Window on Top"
+        pinItem?.image = NSImage(systemSymbolName: pinned ? "pin.fill" : "pin",
+                                 accessibilityDescription: "Pin")
+    }
+
+    @objc private func contextAction(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let command = Command(rawValue: raw) else { return }
+        onCommand?(command)
+    }
+
+    /// Grey out what cannot work without a live session, rather than letting it fail silently.
+    func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        guard let raw = item.representedObject as? String,
+              let command = Command(rawValue: raw) else { return true }
+        switch command {
+        case .pin, .openWindow, .openTab, .reconnect: return true
+        default:                                      return control != nil
+        }
+    }
+
     private func setUpLayers() {
+        buildContextMenu()
         wantsLayer = true
         layer?.masksToBounds = true
         layer?.backgroundColor = NSColor.textBackgroundColor.cgColor

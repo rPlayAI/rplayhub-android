@@ -63,7 +63,7 @@ enum Adb {
     }
 
     /// Send one request and read its OKAY/FAIL. Leaves the socket open for whatever follows.
-    private static func send(_ socket: TCPSocket, _ request: String) throws {
+    static func send(_ socket: TCPSocket, _ request: String) throws {
         let body = Data(request.utf8)
         let header = String(format: "%04x", body.count)
         try socket.writeAll(Data(header.utf8) + body)
@@ -108,7 +108,7 @@ enum Adb {
     }
 
     /// A socket already switched to one device, ready for a device-scoped service.
-    private static func openTransport(_ serial: String) throws -> TCPSocket {
+    static func openTransport(_ serial: String) throws -> TCPSocket {
         let s = try openServer(timeout: 10)
         do {
             try send(s, "host:transport:\(serial)")
@@ -232,12 +232,12 @@ enum Adb {
         }
     }
 
-    private static func le32(_ v: UInt32) -> Data {
+    static func le32(_ v: UInt32) -> Data {
         var x = v.littleEndian
         return withUnsafeBytes(of: &x) { Data($0) }
     }
 
-    private static func le32Value(_ d: Data) -> UInt32 {
+    static func le32Value(_ d: Data) -> UInt32 {
         d.reduce(0) { ($0 >> 8) | (UInt32($1) << 24) }
     }
 }

@@ -153,6 +153,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.startSession(for: device)
         }
         strip.onAction = { [weak self] action in self?.perform(action) }
+        mirror.onCommand = { [weak self] command in self?.perform(command) }
     }
 
     private func selectInspectorTab(_ index: Int) {
@@ -361,6 +362,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         inspector.setHealth(lines.joined(separator: "\n"))
     }
 
+    // MARK: - the screen's right-click menu
+
+    private var isPinned = false
+
+    private func perform(_ command: MirrorView.Command) {
+        switch command {
+        case .screenshot: saveScreenshot()
+        case .home:       perform(ControlStrip.Action.home)
+        case .back:       perform(ControlStrip.Action.back)
+        case .recents:    perform(ControlStrip.Action.overview)
+        case .rotate:     perform(ControlStrip.Action.rotate)
+        case .power:      perform(ControlStrip.Action.power)
+        case .wake:
+            session?.control?.send(ControlMessage.keyEvent(action: KeyAction.downAndUp,
+                                                           keycode: AndroidKey.wakeup))
+        case .pin:
+            isPinned.toggle()
+            window.level = isPinned ? .floating : .normal
+            mirror.setPinned(isPinned)
+        case .openWindow:
+            screenWindow.open(stage: stage, from: splitView, title: window.title, tabbedWith: nil)
+        case .openTab:
+            screenWindow.open(stage: stage, from: splitView, title: window.title,
+                              tabbedWith: window)
+        case .stop:
+            stopMirroring()
+        case .reconnect:
+            if let device = sidebar.selected ?? sidebar.devices.first(where: { $0.isReady }) {
+                startSession(for: device)
+            }
+        }
+    }
+
     // MARK: - actions
 
     private func perform(_ action: ControlStrip.Action) {
@@ -463,6 +497,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let viewMenu = NSMenu(title: "View")
         viewMenu.addItem(withTitle: "Open Screen in New Window",
                          action: #selector(openScreenWindow), keyEquivalent: "n").target = self
+        viewMenu.addItem(withTitle: "Open Screen in New Tab",
+                         action: #selector(openScreenTab), keyEquivalent: "t").target = self
+        viewMenu.addItem(.separator())
+        viewMenu.addItem(withTitle: "Pin Window on Top",
+                         action: #selector(togglePin), keyEquivalent: "p").target = self
         viewItem.submenu = viewMenu
         main.addItem(viewItem)
 
@@ -492,9 +531,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func refreshFromMenu() { refreshDevices() }
 
     @objc private func openScreenWindow() {
-        screenWindow.open(stage: stage, from: splitView,
-                          title: window.title, tabbedWith: window)
+        screenWindow.open(stage: stage, from: splitView, title: window.title, tabbedWith: nil)
     }
+
+    @objc private func openScreenTab() {
+        screenWindow.open(stage: stage, from: splitView, title: window.title, tabbedWith: window)
+    }
+
+    @objc private func togglePin() { perform(MirrorView.Command.pin) }
 }
 
 /// The columns are separated by the shadow each side pane casts, not by a drawn line — so the
