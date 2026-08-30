@@ -330,6 +330,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func perform(_ command: MirrorView.Command) {
         switch command {
         case .screenshot: saveScreenshot()
+        case .record:     toggleRecording()
         case .home:       perform(ControlStrip.Action.home)
         case .back:       perform(ControlStrip.Action.back)
         case .recents:    perform(ControlStrip.Action.overview)
@@ -437,6 +438,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let serial = session?.serial else { return }
         recordingSerial = serial
         strip.setRecording(true)
+        mirror.setRecording(true)
         AppBuild.log("recording started")
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let socket = try? Adb.shellStream(
@@ -456,6 +458,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let serial = recordingSerial else { return }
         recordingSerial = nil
         strip.setRecording(false)
+        mirror.setRecording(false)
         let socket = recordingSocket
         recordingSocket = nil
 

@@ -61,7 +61,7 @@ final class MirrorView: NSView, NSMenuItemValidation {
     /// What the right-click menu offers. Device Hub puts these on the screen itself rather than
     /// in a side pane, because they act on the picture.
     enum Command: String {
-        case screenshot, home, back, recents, rotate
+        case screenshot, record, home, back, recents, rotate
         case pin, openWindow, openTab
         case wake, power
         case stop, reconnect
@@ -123,6 +123,8 @@ final class MirrorView: NSView, NSMenuItemValidation {
             menu.addItem(item)
         }
         add("Take Screenshot", .screenshot, "camera")
+        add("Record Screen", .record, "record.circle")
+        recordItem = menu.items.last
         menu.addItem(.separator())
         add("Back", .back, "chevron.backward")
         add("Home", .home, "circle")
@@ -150,6 +152,15 @@ final class MirrorView: NSView, NSMenuItemValidation {
     private(set) var commandMenu: NSMenu?
 
     private var pinItem: NSMenuItem?
+    private var recordItem: NSMenuItem?
+
+    /// Keep the menu item in step with the strip button, so both say what they will do next.
+    func setRecording(_ recording: Bool) {
+        recordItem?.title = recording ? "Stop Recording" : "Record Screen"
+        recordItem?.image = NSImage(
+            systemSymbolName: recording ? "stop.circle.fill" : "record.circle",
+            accessibilityDescription: "Record")
+    }
 
     /// Reflect the pinned state back into the menu, so the item says what it will do next.
     func setPinned(_ pinned: Bool) {
