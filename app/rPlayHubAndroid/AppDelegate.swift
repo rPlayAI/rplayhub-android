@@ -42,6 +42,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var twinOpenItem: NSMenuItem?
     private var screenOffItem: NSMenuItem?
 
+    /// Clipboard sync, scrcpy-style: device changes land on the Mac clipboard automatically,
+    /// Mac changes are pushed to the device on a one-second poll (AppKit offers no pasteboard
+    /// notification; polling changeCount is what everyone does). On by default.
+    private var clipboardTimer: Timer?
+    private var lastClipboardText: String?
+    private var lastPasteboardCount = NSPasteboard.general.changeCount
+    private var clipboardSyncItem: NSMenuItem?
+    private var clipboardSyncEnabled: Bool {
+        UserDefaults.standard.object(forKey: "SyncClipboard") == nil
+            ? true : UserDefaults.standard.bool(forKey: "SyncClipboard")
+    }
+
     /// What we ask the agent to cap the encode at. Well above any display we will show it on, so
     /// the picture is never the limiting factor; the agent scales down to the device's own size
     /// anyway.
@@ -287,6 +299,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .idle:
             window.subtitle = ""
             strip.setSessionActive(false)
+            clipboardTimer?.invalidate()
+            clipboardTimer = nil
         case .deploying(let step):
             window.subtitle = step
         case .running:
@@ -357,6 +371,57 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             AppBuild.log("video: \(reason)")
             self.autoReconnect(after: reason)
         }
+        startClipboardSyncIfEnabled()
+    }
+
+    // MARK: - clipboard sync
+
+    @objc private func toggleClipboardSync() {
+        let enabled = !clipboardSyncEnabled
+        UserDefaults.standard.set(enabled, forKey: "SyncClipboard")
+        clipboardSyncItem?.state = enabled ? .on : .off
+        if enabled {
+            startClipboardSyncIfEnabled()
+        } else {
+            clipboardTimer?.invalidate()
+            clipboardTimer = nil
+            session?.control?.send(ControlMessage.stopClipboardSync())
+        }
+        AppBuild.log("clipboard sync \(enabled ? "on" : "off")")
+    }
+
+    private func startClipboardSyncIfEnabled() {
+        clipboardTimer?.invalidate()
+        clipboardTimer = nil
+        guard clipboardSyncEnabled, let control = session?.control else { return }
+        let pasteboard = NSPasteboard.general
+        let text = pasteboard.string(forType: .string) ?? ""
+        lastClipboardText = text
+        lastPasteboardCount = pasteboard.changeCount
+        control.send(ControlMessage.startClipboardSync(text: text))
+        control.onClipboardChanged = { [weak self] text in
+            guard let self, !text.isEmpty, text != self.lastClipboardText else { return }
+            self.lastClipboardText = text
+            let pb = NSPasteboard.general
+            pb.clearContents()
+            pb.setString(text, forType: .string)
+            self.lastPasteboardCount = pb.changeCount
+            AppBuild.log("clipboard: \(text.count) chars from the device")
+        }
+        clipboardTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            self?.pollPasteboard()
+        }
+    }
+
+    private func pollPasteboard() {
+        guard let control = session?.control else { return }
+        let pasteboard = NSPasteboard.general
+        guard pasteboard.changeCount != lastPasteboardCount else { return }
+        lastPasteboardCount = pasteboard.changeCount
+        guard let text = pasteboard.string(forType: .string), text != lastClipboardText else { return }
+        lastClipboardText = text
+        control.send(ControlMessage.startClipboardSync(text: text))
+        AppBuild.log("clipboard: \(text.count) chars to the device")
     }
 
     /// The screen's physical outline — rounded corners and the camera hole. One dumpsys call,
@@ -777,6 +842,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         screenOff.state = UserDefaults.standard.bool(forKey: "TurnScreenOffWhileMirroring")
             ? .on : .off
         screenOffItem = screenOff
+        let clipSync = deviceMenu.addItem(withTitle: "Synchronize Clipboard",
+                                          action: #selector(toggleClipboardSync), keyEquivalent: "")
+        clipSync.target = self
+        clipSync.state = clipboardSyncEnabled ? .on : .off
+        clipboardSyncItem = clipSync
         deviceMenu.addItem(.separator())
         deviceMenu.addItem(withTitle: "Refresh Devices", action: #selector(refreshFromMenu),
                            keyEquivalent: "r").target = self

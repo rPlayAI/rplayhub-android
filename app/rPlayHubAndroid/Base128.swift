@@ -61,6 +61,14 @@ struct Base128Writer {
         writeUInt32(UInt32(units.count))
         for u in units { writeUInt32(UInt32(u)) }
     }
+
+    /// The agent's WriteBytes: varint byte count, then the raw bytes. Its std::string fields —
+    /// clipboard text among them — are UTF-8.
+    mutating func writeBytes(_ value: String) {
+        let utf8 = Array(value.utf8)
+        writeUInt32(UInt32(utf8.count))
+        data.append(contentsOf: utf8)
+    }
 }
 
 /// Reads the agent's replies. The control channel is bidirectional: display configuration,

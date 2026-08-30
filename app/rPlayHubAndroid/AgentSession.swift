@@ -329,9 +329,10 @@ final class AgentSession {
     }
 }
 
-/// The control channel. Writes are serialised onto one queue; the agent's replies are drained and
-/// discarded, which is not optional — an unread socket eventually blocks the agent's writer and
-/// with it the thread that also drives input injection.
+/// The control channel. Writes are serialised onto one queue; the agent's messages back are
+/// parsed on a reader thread — reading them is not optional even when nobody listens, since an
+/// unread socket eventually blocks the agent's writer and with it the thread that also drives
+/// input injection.
 final class ControlSender {
     private let socket: TCPSocket
     private let queue = DispatchQueue(label: "rplayhub.android.control")
@@ -339,22 +340,95 @@ final class ControlSender {
     private var stopping = false
 
     private(set) var messagesSent = 0
+    private(set) var notificationsReceived = 0
+
+    /// The device's clipboard changed (only sent while clipboard sync is started). Main queue.
+    var onClipboardChanged: ((String) -> Void)?
 
     init(socket: TCPSocket) {
         self.socket = socket
     }
 
     func start() {
-        socket.setReadTimeout(2)
-        let t = Thread { [weak self] in
-            while true {
-                guard let self, !self.stopping else { return }
-                do { _ = try self.socket.read() } catch { return }
-            }
-        }
+        socket.setReadTimeout(0)   // messages arrive whenever they arrive; stop() breaks the read
+        let t = Thread { [weak self] in self?.readLoop() }
         t.name = "rplayhub.android.controlreader"
         reader = t
         t.start()
+    }
+
+    // MARK: - reading the agent's messages
+
+    /// Nothing on this channel is length-prefixed, so every message type the agent can send
+    /// unprompted must be decoded field by field; one unknown type and the byte stream can no
+    /// longer be framed. That is handled by giving up parsing, not the draining: the loop falls
+    /// back to reading and discarding, which keeps the agent's writer unblocked.
+    private func readLoop() {
+        do {
+            while !stopping {
+                let type = try readVarint()
+                switch Int(type) {
+                case ControlMessage.typeErrorResponse:
+                    _ = try readVarint()                     // request id
+                    let message = try readBytesString()
+                    AppBuild.log("agent error response: \(message)")
+                case ControlMessage.typeDisplayConfigurationResponse:
+                    _ = try readVarint()                     // request id
+                    let count = try readVarint()
+                    for _ in 0..<(count * 5) { _ = try readVarint() }
+                case ControlMessage.typeClipboardChanged:
+                    let text = try readBytesString()
+                    notificationsReceived += 1
+                    DispatchQueue.main.async { [weak self] in self?.onClipboardChanged?(text) }
+                case ControlMessage.typeSupportedDeviceStates:
+                    let count = try readVarint()
+                    for _ in 0..<count {
+                        _ = try readVarint()                 // identifier
+                        _ = try readBytesString()            // name
+                        _ = try readVarint()                 // system properties
+                        _ = try readVarint()                 // physical properties
+                    }
+                    _ = try readVarint()                     // current state id + 1
+                case ControlMessage.typeDeviceState:
+                    _ = try readVarint()
+                case ControlMessage.typeDisplayAddedOrChanged:
+                    for _ in 0..<7 { _ = try readVarint() }
+                case ControlMessage.typeDisplayRemoved:
+                    _ = try readVarint()
+                case ControlMessage.typeXrPassthroughChanged:
+                    _ = try socket.readFully(4)              // fixed32 float
+                case ControlMessage.typeXrEnvironmentChanged, ControlMessage.typeXrInputUnavailable:
+                    _ = try readVarint()
+                default:
+                    AppBuild.log("control channel: unknown message type \(type); draining from here on")
+                    while !stopping { _ = try socket.read() }
+                    return
+                }
+            }
+        } catch {
+            if !stopping { AppBuild.log("control channel reader ended: \(error)") }
+        }
+    }
+
+    private func readVarint() throws -> UInt32 {
+        var result: UInt32 = 0
+        var shift: UInt32 = 0
+        while true {
+            let data = try socket.readFully(1)
+            let b = data[data.startIndex]
+            result |= UInt32(b & 0x7F) &<< shift
+            if b & 0x80 == 0 { return result }
+            shift += 7
+            guard shift < 35 else { throw AdbError.protocolError("runaway varint on the control channel") }
+        }
+    }
+
+    /// The agent's WriteBytes: varint byte count, then that many UTF-8 bytes.
+    private func readBytesString() throws -> String {
+        let count = try readVarint()
+        guard count < 8 << 20 else { throw AdbError.protocolError("implausible string size \(count)") }
+        let data = count > 0 ? try socket.readFully(Int(count)) : Data()
+        return String(decoding: data, as: UTF8.self)
     }
 
     func send(_ message: Data) {

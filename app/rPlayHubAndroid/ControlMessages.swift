@@ -22,6 +22,21 @@ enum ControlMessage {
     static let typeSetMaxVideoResolution = 5
     static let typeStartVideoStream = 6
     static let typeStopVideoStream = 7
+    static let typeStartClipboardSync = 10
+    static let typeStopClipboardSync = 11
+
+    // Device → host. Parsed by ControlSender's reader; nothing is length-prefixed, so every
+    // type the agent can send unprompted has to be decodable or the channel desynchronises.
+    static let typeErrorResponse = 21
+    static let typeDisplayConfigurationResponse = 22
+    static let typeClipboardChanged = 23
+    static let typeSupportedDeviceStates = 24
+    static let typeDeviceState = 25
+    static let typeDisplayAddedOrChanged = 26
+    static let typeDisplayRemoved = 27
+    static let typeXrPassthroughChanged = 28
+    static let typeXrEnvironmentChanged = 29
+    static let typeXrInputUnavailable = 30
 
     /// One finger or mouse pointer, in the display's ORIGINAL orientation — not the rotated one
     /// we happen to be showing. The agent injects these coordinates verbatim.
@@ -112,6 +127,24 @@ enum ControlMessage {
         var w = Base128Writer()
         w.writeInt32(Int32(typeStopVideoStream))
         w.writeInt32(displayId)
+        return w.data
+    }
+
+    /// Sets the device clipboard to `text` (the agent skips the set when unchanged) and
+    /// subscribes to device-side clipboard changes, which arrive as ClipboardChanged
+    /// notifications. This one message is both "set clipboard" and "start syncing" — there is
+    /// no separate setter in the protocol.
+    static func startClipboardSync(maxSyncedLength: Int32 = 262144, text: String) -> Data {
+        var w = Base128Writer()
+        w.writeInt32(Int32(typeStartClipboardSync))
+        w.writeInt32(maxSyncedLength)
+        w.writeBytes(text)
+        return w.data
+    }
+
+    static func stopClipboardSync() -> Data {
+        var w = Base128Writer()
+        w.writeInt32(Int32(typeStopClipboardSync))
         return w.data
     }
 }
