@@ -22,6 +22,8 @@ enum ControlMessage {
     static let typeSetMaxVideoResolution = 5
     static let typeStartVideoStream = 6
     static let typeStopVideoStream = 7
+    static let typeStartAudioStream = 8
+    static let typeStopAudioStream = 9
     static let typeStartClipboardSync = 10
     static let typeStopClipboardSync = 11
 
@@ -127,6 +129,20 @@ enum ControlMessage {
         var w = Base128Writer()
         w.writeInt32(Int32(typeStopVideoStream))
         w.writeInt32(displayId)
+        return w.data
+    }
+
+    /// The agent starts capturing and encoding device audio onto the audio channel. Works any
+    /// time on API 31+ — the channel itself is always open.
+    static func startAudioStream() -> Data {
+        var w = Base128Writer()
+        w.writeInt32(Int32(typeStartAudioStream))
+        return w.data
+    }
+
+    static func stopAudioStream() -> Data {
+        var w = Base128Writer()
+        w.writeInt32(Int32(typeStopAudioStream))
         return w.data
     }
 

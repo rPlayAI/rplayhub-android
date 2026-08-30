@@ -54,6 +54,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             ? true : UserDefaults.standard.bool(forKey: "SyncClipboard")
     }
 
+    /// Device audio on the Mac's speakers, scrcpy's headline feature. On by default; the toggle
+    /// works live because the agent starts and stops capture by control message.
+    private var audioItem: NSMenuItem?
+    private var audioForwardingEnabled: Bool {
+        UserDefaults.standard.object(forKey: "ForwardAudio") == nil
+            ? true : UserDefaults.standard.bool(forKey: "ForwardAudio")
+    }
+
     /// What we ask the agent to cap the encode at. Well above any display we will show it on, so
     /// the picture is never the limiting factor; the agent scales down to the device's own size
     /// anyway.
@@ -372,6 +380,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.autoReconnect(after: reason)
         }
         startClipboardSyncIfEnabled()
+        if audioForwardingEnabled { session.setAudioForwarding(true) }
+    }
+
+    @objc private func toggleAudio() {
+        let enabled = !audioForwardingEnabled
+        UserDefaults.standard.set(enabled, forKey: "ForwardAudio")
+        audioItem?.state = enabled ? .on : .off
+        session?.setAudioForwarding(enabled)
+        AppBuild.log("audio forwarding \(enabled ? "on" : "off")")
     }
 
     // MARK: - clipboard sync
@@ -466,6 +483,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         if let sensor = session?.sensor {
             lines.append("gyro      \(sensor.packetsReceived) pkts")
+        }
+        if let audio = session?.audio {
+            lines.append("audio     \(audio.packetsReceived) pkts"
+                         + (audio.packetsDropped > 0 ? " (\(audio.packetsDropped) dropped)" : ""))
+            if let error = audio.lastError { lines.append("audio err \(error)") }
         }
         if video.awaitingKeyframe {
             lines.append("waiting for a keyframe (\(video.framesBeforeKeyframe) dropped)")
@@ -847,6 +869,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         clipSync.target = self
         clipSync.state = clipboardSyncEnabled ? .on : .off
         clipboardSyncItem = clipSync
+        let audio = deviceMenu.addItem(withTitle: "Forward Audio",
+                                       action: #selector(toggleAudio), keyEquivalent: "")
+        audio.target = self
+        audio.state = audioForwardingEnabled ? .on : .off
+        audioItem = audio
         deviceMenu.addItem(.separator())
         deviceMenu.addItem(withTitle: "Refresh Devices", action: #selector(refreshFromMenu),
                            keyEquivalent: "r").target = self

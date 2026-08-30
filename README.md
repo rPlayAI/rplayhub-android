@@ -54,6 +54,10 @@ Then plug in a device with USB debugging on, accept the prompt, and double-click
 | Control: base128 MotionEvent / KeyEvent | **verified** — keys and touch, against a Pixel 9a |
 | Right panel: Info, Apps, Files, Logcat, Crashes, Settings | **working** |
 | Right-click menu, open as window/tab, pin | **working** |
+| Audio forwarding — device audio on the Mac (Opus 48 kHz) | **working** — on by default, API 31+ |
+| Clipboard sync, both directions | **working** — on by default |
+| Turn screen off while mirroring | **working** — Device menu |
+| Drag-and-drop: APK installs, files land in Download | **working** |
 | 3D device twin — gyro-tracked 3D mirror (experimental, gated) | **working** — see below |
 
 Verified end to end against a Pixel 9a (tegu, Android 17 / SDK 37) over network adb.

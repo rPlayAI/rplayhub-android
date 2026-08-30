@@ -51,6 +51,8 @@ final class AgentSession {
     private(set) var control: ControlSender?
     /// Device orientation, when the agent build has our sensor channel. Nil on older builds.
     private(set) var sensor: SensorStream?
+    /// Device audio playback, created on first use — see `setAudioForwarding`.
+    private(set) var audio: AudioStream?
     let decoder = VideoDecoder()
 
     private var listener: TCPListener?
@@ -303,6 +305,28 @@ final class AgentSession {
         t.start()
     }
 
+    /// Turn device-audio playback on or off, live. The audio channel is always open on API 31+;
+    /// what starts and stops is the agent's capture (by control message) and our player. The
+    /// reader survives a pause so forwarding can come back without a new session.
+    func setAudioForwarding(_ enabled: Bool) {
+        guard let control else { return }
+        if enabled {
+            guard let socket = audioSocket else {
+                AppBuild.log("audio: no audio channel (device below API 31)")
+                return
+            }
+            if audio == nil {
+                let a = AudioStream(socket: socket)
+                audio = a
+                a.start()
+            }
+            control.send(ControlMessage.startAudioStream())
+        } else {
+            control.send(ControlMessage.stopAudioStream())
+            audio?.pause()
+        }
+    }
+
     func stop() {
         stopping = true
         teardown()
@@ -313,9 +337,11 @@ final class AgentSession {
         control?.stop()
         video?.stop()
         sensor?.stop()
+        audio?.stop()
         control = nil
         video = nil
         sensor = nil
+        audio = nil
         listener?.close()
         listener = nil
         if !socketName.isEmpty {
