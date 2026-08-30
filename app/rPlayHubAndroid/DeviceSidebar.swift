@@ -133,6 +133,12 @@ final class DeviceSidebar: NSView {
         isReloading = false
     }
 
+    /// Select a row by serial, as if the user had clicked it.
+    func select(serial: String) {
+        guard let row = filtered.firstIndex(where: { $0.serial == serial }) else { return }
+        tableView.selectRowIndexes([row], byExtendingSelection: false)
+    }
+
     var selected: AdbDevice? {
         guard let serial = selectedSerial else { return nil }
         return devices.first { $0.serial == serial }

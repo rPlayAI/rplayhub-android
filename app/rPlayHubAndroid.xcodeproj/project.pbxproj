@@ -8,48 +8,60 @@
 
 /* Begin PBXBuildFile section */
 		1A0000000000000000001002 /* Adb.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001001 /* Adb.swift */; };
-		1A0000000000000000001004 /* AgentSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001003 /* AgentSession.swift */; };
-		1A0000000000000000001006 /* AnnexB.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001005 /* AnnexB.swift */; };
-		1A0000000000000000001008 /* AppBuild.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001007 /* AppBuild.swift */; };
-		1A000000000000000000100A /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001009 /* AppDelegate.swift */; };
-		1A000000000000000000100C /* Base128.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000000000000000000100B /* Base128.swift */; };
-		1A000000000000000000100E /* ControlMessages.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000000000000000000100D /* ControlMessages.swift */; };
-		1A0000000000000000001010 /* ControlStrip.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000000000000000000100F /* ControlStrip.swift */; };
-		1A0000000000000000001012 /* DeviceSidebar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001011 /* DeviceSidebar.swift */; };
-		1A0000000000000000001014 /* DisplayShape.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001013 /* DisplayShape.swift */; };
-		1A0000000000000000001016 /* IconTabBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001015 /* IconTabBar.swift */; };
-		1A0000000000000000001018 /* InspectorPane.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001017 /* InspectorPane.swift */; };
-		1A000000000000000000101A /* LogcatPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001019 /* LogcatPanel.swift */; };
-		1A000000000000000000101C /* MirrorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000000000000000000101B /* MirrorView.swift */; };
-		1A000000000000000000101E /* ScreenWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000000000000000000101D /* ScreenWindow.swift */; };
-		1A0000000000000000001020 /* TCPSocket.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000000000000000000101F /* TCPSocket.swift */; };
-		1A0000000000000000001022 /* VideoDecoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001021 /* VideoDecoder.swift */; };
-		1A0000000000000000001024 /* VideoPacket.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001023 /* VideoPacket.swift */; };
-		1A0000000000000000001026 /* VideoStream.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001025 /* VideoStream.swift */; };
-		1A0000000000000000001028 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001027 /* main.swift */; };
+		1A0000000000000000001004 /* AdbFiles.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001003 /* AdbFiles.swift */; };
+		1A0000000000000000001006 /* AgentSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001005 /* AgentSession.swift */; };
+		1A0000000000000000001008 /* AnnexB.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001007 /* AnnexB.swift */; };
+		1A000000000000000000100A /* AppBuild.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001009 /* AppBuild.swift */; };
+		1A000000000000000000100C /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000000000000000000100B /* AppDelegate.swift */; };
+		1A000000000000000000100E /* AppsPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000000000000000000100D /* AppsPanel.swift */; };
+		1A0000000000000000001010 /* Base128.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000000000000000000100F /* Base128.swift */; };
+		1A0000000000000000001012 /* ControlMessages.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001011 /* ControlMessages.swift */; };
+		1A0000000000000000001014 /* ControlStrip.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001013 /* ControlStrip.swift */; };
+		1A0000000000000000001016 /* CrashesPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001015 /* CrashesPanel.swift */; };
+		1A0000000000000000001018 /* DeviceInfoPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001017 /* DeviceInfoPanel.swift */; };
+		1A000000000000000000101A /* DeviceSidebar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001019 /* DeviceSidebar.swift */; };
+		1A000000000000000000101C /* DisplayShape.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000000000000000000101B /* DisplayShape.swift */; };
+		1A000000000000000000101E /* FilesPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000000000000000000101D /* FilesPanel.swift */; };
+		1A0000000000000000001020 /* IconTabBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000000000000000000101F /* IconTabBar.swift */; };
+		1A0000000000000000001022 /* InspectorPane.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001021 /* InspectorPane.swift */; };
+		1A0000000000000000001024 /* LogcatPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001023 /* LogcatPanel.swift */; };
+		1A0000000000000000001026 /* MirrorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001025 /* MirrorView.swift */; };
+		1A0000000000000000001028 /* ScreenWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001027 /* ScreenWindow.swift */; };
+		1A000000000000000000102A /* SettingsPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001029 /* SettingsPanel.swift */; };
+		1A000000000000000000102C /* TCPSocket.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000000000000000000102B /* TCPSocket.swift */; };
+		1A000000000000000000102E /* VideoDecoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000000000000000000102D /* VideoDecoder.swift */; };
+		1A0000000000000000001030 /* VideoPacket.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000000000000000000102F /* VideoPacket.swift */; };
+		1A0000000000000000001032 /* VideoStream.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001031 /* VideoStream.swift */; };
+		1A0000000000000000001034 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001033 /* main.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		1A0000000000000000001001 /* Adb.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Adb.swift; sourceTree = "<group>"; };
-		1A0000000000000000001003 /* AgentSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentSession.swift; sourceTree = "<group>"; };
-		1A0000000000000000001005 /* AnnexB.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnnexB.swift; sourceTree = "<group>"; };
-		1A0000000000000000001007 /* AppBuild.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppBuild.swift; sourceTree = "<group>"; };
-		1A0000000000000000001009 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
-		1A000000000000000000100B /* Base128.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Base128.swift; sourceTree = "<group>"; };
-		1A000000000000000000100D /* ControlMessages.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ControlMessages.swift; sourceTree = "<group>"; };
-		1A000000000000000000100F /* ControlStrip.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ControlStrip.swift; sourceTree = "<group>"; };
-		1A0000000000000000001011 /* DeviceSidebar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceSidebar.swift; sourceTree = "<group>"; };
-		1A0000000000000000001013 /* DisplayShape.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DisplayShape.swift; sourceTree = "<group>"; };
-		1A0000000000000000001015 /* IconTabBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IconTabBar.swift; sourceTree = "<group>"; };
-		1A0000000000000000001017 /* InspectorPane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InspectorPane.swift; sourceTree = "<group>"; };
-		1A0000000000000000001019 /* LogcatPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogcatPanel.swift; sourceTree = "<group>"; };
-		1A000000000000000000101B /* MirrorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MirrorView.swift; sourceTree = "<group>"; };
-		1A000000000000000000101D /* ScreenWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenWindow.swift; sourceTree = "<group>"; };
-		1A000000000000000000101F /* TCPSocket.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TCPSocket.swift; sourceTree = "<group>"; };
-		1A0000000000000000001021 /* VideoDecoder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoDecoder.swift; sourceTree = "<group>"; };
-		1A0000000000000000001023 /* VideoPacket.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoPacket.swift; sourceTree = "<group>"; };
-		1A0000000000000000001025 /* VideoStream.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoStream.swift; sourceTree = "<group>"; };
-		1A0000000000000000001027 /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
+		1A0000000000000000001003 /* AdbFiles.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdbFiles.swift; sourceTree = "<group>"; };
+		1A0000000000000000001005 /* AgentSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentSession.swift; sourceTree = "<group>"; };
+		1A0000000000000000001007 /* AnnexB.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnnexB.swift; sourceTree = "<group>"; };
+		1A0000000000000000001009 /* AppBuild.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppBuild.swift; sourceTree = "<group>"; };
+		1A000000000000000000100B /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+		1A000000000000000000100D /* AppsPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppsPanel.swift; sourceTree = "<group>"; };
+		1A000000000000000000100F /* Base128.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Base128.swift; sourceTree = "<group>"; };
+		1A0000000000000000001011 /* ControlMessages.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ControlMessages.swift; sourceTree = "<group>"; };
+		1A0000000000000000001013 /* ControlStrip.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ControlStrip.swift; sourceTree = "<group>"; };
+		1A0000000000000000001015 /* CrashesPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrashesPanel.swift; sourceTree = "<group>"; };
+		1A0000000000000000001017 /* DeviceInfoPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceInfoPanel.swift; sourceTree = "<group>"; };
+		1A0000000000000000001019 /* DeviceSidebar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceSidebar.swift; sourceTree = "<group>"; };
+		1A000000000000000000101B /* DisplayShape.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DisplayShape.swift; sourceTree = "<group>"; };
+		1A000000000000000000101D /* FilesPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FilesPanel.swift; sourceTree = "<group>"; };
+		1A000000000000000000101F /* IconTabBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IconTabBar.swift; sourceTree = "<group>"; };
+		1A0000000000000000001021 /* InspectorPane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InspectorPane.swift; sourceTree = "<group>"; };
+		1A0000000000000000001023 /* LogcatPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogcatPanel.swift; sourceTree = "<group>"; };
+		1A0000000000000000001025 /* MirrorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MirrorView.swift; sourceTree = "<group>"; };
+		1A0000000000000000001027 /* ScreenWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenWindow.swift; sourceTree = "<group>"; };
+		1A0000000000000000001029 /* SettingsPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsPanel.swift; sourceTree = "<group>"; };
+		1A000000000000000000102B /* TCPSocket.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TCPSocket.swift; sourceTree = "<group>"; };
+		1A000000000000000000102D /* VideoDecoder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoDecoder.swift; sourceTree = "<group>"; };
+		1A000000000000000000102F /* VideoPacket.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoPacket.swift; sourceTree = "<group>"; };
+		1A0000000000000000001031 /* VideoStream.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoStream.swift; sourceTree = "<group>"; };
+		1A0000000000000000001033 /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
 		1A0000000000000000002001 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		1A0000000000000000002002 /* rPlayHubAndroid.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = rPlayHubAndroid.entitlements; sourceTree = "<group>"; };
 		1A0000000000000000003001 /* rPlayHubAndroid.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = rPlayHubAndroid.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -78,25 +90,31 @@
 			isa = PBXGroup;
 			children = (
 				1A0000000000000000001001 /* Adb.swift */,
-				1A0000000000000000001003 /* AgentSession.swift */,
-				1A0000000000000000001005 /* AnnexB.swift */,
-				1A0000000000000000001007 /* AppBuild.swift */,
-				1A0000000000000000001009 /* AppDelegate.swift */,
-				1A000000000000000000100B /* Base128.swift */,
-				1A000000000000000000100D /* ControlMessages.swift */,
-				1A000000000000000000100F /* ControlStrip.swift */,
-				1A0000000000000000001011 /* DeviceSidebar.swift */,
-				1A0000000000000000001013 /* DisplayShape.swift */,
-				1A0000000000000000001015 /* IconTabBar.swift */,
-				1A0000000000000000001017 /* InspectorPane.swift */,
-				1A0000000000000000001019 /* LogcatPanel.swift */,
-				1A000000000000000000101B /* MirrorView.swift */,
-				1A000000000000000000101D /* ScreenWindow.swift */,
-				1A000000000000000000101F /* TCPSocket.swift */,
-				1A0000000000000000001021 /* VideoDecoder.swift */,
-				1A0000000000000000001023 /* VideoPacket.swift */,
-				1A0000000000000000001025 /* VideoStream.swift */,
-				1A0000000000000000001027 /* main.swift */,
+				1A0000000000000000001003 /* AdbFiles.swift */,
+				1A0000000000000000001005 /* AgentSession.swift */,
+				1A0000000000000000001007 /* AnnexB.swift */,
+				1A0000000000000000001009 /* AppBuild.swift */,
+				1A000000000000000000100B /* AppDelegate.swift */,
+				1A000000000000000000100D /* AppsPanel.swift */,
+				1A000000000000000000100F /* Base128.swift */,
+				1A0000000000000000001011 /* ControlMessages.swift */,
+				1A0000000000000000001013 /* ControlStrip.swift */,
+				1A0000000000000000001015 /* CrashesPanel.swift */,
+				1A0000000000000000001017 /* DeviceInfoPanel.swift */,
+				1A0000000000000000001019 /* DeviceSidebar.swift */,
+				1A000000000000000000101B /* DisplayShape.swift */,
+				1A000000000000000000101D /* FilesPanel.swift */,
+				1A000000000000000000101F /* IconTabBar.swift */,
+				1A0000000000000000001021 /* InspectorPane.swift */,
+				1A0000000000000000001023 /* LogcatPanel.swift */,
+				1A0000000000000000001025 /* MirrorView.swift */,
+				1A0000000000000000001027 /* ScreenWindow.swift */,
+				1A0000000000000000001029 /* SettingsPanel.swift */,
+				1A000000000000000000102B /* TCPSocket.swift */,
+				1A000000000000000000102D /* VideoDecoder.swift */,
+				1A000000000000000000102F /* VideoPacket.swift */,
+				1A0000000000000000001031 /* VideoStream.swift */,
+				1A0000000000000000001033 /* main.swift */,
 				1A0000000000000000002001 /* Info.plist */,
 				1A0000000000000000002002 /* rPlayHubAndroid.entitlements */,
 			);
@@ -180,25 +198,31 @@
 			buildActionMask = 2147483647;
 			files = (
 				1A0000000000000000001002 /* Adb.swift in Sources */,
-				1A0000000000000000001004 /* AgentSession.swift in Sources */,
-				1A0000000000000000001006 /* AnnexB.swift in Sources */,
-				1A0000000000000000001008 /* AppBuild.swift in Sources */,
-				1A000000000000000000100A /* AppDelegate.swift in Sources */,
-				1A000000000000000000100C /* Base128.swift in Sources */,
-				1A000000000000000000100E /* ControlMessages.swift in Sources */,
-				1A0000000000000000001010 /* ControlStrip.swift in Sources */,
-				1A0000000000000000001012 /* DeviceSidebar.swift in Sources */,
-				1A0000000000000000001014 /* DisplayShape.swift in Sources */,
-				1A0000000000000000001016 /* IconTabBar.swift in Sources */,
-				1A0000000000000000001018 /* InspectorPane.swift in Sources */,
-				1A000000000000000000101A /* LogcatPanel.swift in Sources */,
-				1A000000000000000000101C /* MirrorView.swift in Sources */,
-				1A000000000000000000101E /* ScreenWindow.swift in Sources */,
-				1A0000000000000000001020 /* TCPSocket.swift in Sources */,
-				1A0000000000000000001022 /* VideoDecoder.swift in Sources */,
-				1A0000000000000000001024 /* VideoPacket.swift in Sources */,
-				1A0000000000000000001026 /* VideoStream.swift in Sources */,
-				1A0000000000000000001028 /* main.swift in Sources */,
+				1A0000000000000000001004 /* AdbFiles.swift in Sources */,
+				1A0000000000000000001006 /* AgentSession.swift in Sources */,
+				1A0000000000000000001008 /* AnnexB.swift in Sources */,
+				1A000000000000000000100A /* AppBuild.swift in Sources */,
+				1A000000000000000000100C /* AppDelegate.swift in Sources */,
+				1A000000000000000000100E /* AppsPanel.swift in Sources */,
+				1A0000000000000000001010 /* Base128.swift in Sources */,
+				1A0000000000000000001012 /* ControlMessages.swift in Sources */,
+				1A0000000000000000001014 /* ControlStrip.swift in Sources */,
+				1A0000000000000000001016 /* CrashesPanel.swift in Sources */,
+				1A0000000000000000001018 /* DeviceInfoPanel.swift in Sources */,
+				1A000000000000000000101A /* DeviceSidebar.swift in Sources */,
+				1A000000000000000000101C /* DisplayShape.swift in Sources */,
+				1A000000000000000000101E /* FilesPanel.swift in Sources */,
+				1A0000000000000000001020 /* IconTabBar.swift in Sources */,
+				1A0000000000000000001022 /* InspectorPane.swift in Sources */,
+				1A0000000000000000001024 /* LogcatPanel.swift in Sources */,
+				1A0000000000000000001026 /* MirrorView.swift in Sources */,
+				1A0000000000000000001028 /* ScreenWindow.swift in Sources */,
+				1A000000000000000000102A /* SettingsPanel.swift in Sources */,
+				1A000000000000000000102C /* TCPSocket.swift in Sources */,
+				1A000000000000000000102E /* VideoDecoder.swift in Sources */,
+				1A0000000000000000001030 /* VideoPacket.swift in Sources */,
+				1A0000000000000000001032 /* VideoStream.swift in Sources */,
+				1A0000000000000000001034 /* main.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

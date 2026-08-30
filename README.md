@@ -49,13 +49,18 @@ Then plug in a device with USB debugging on, accept the prompt, and double-click
 | macOS app, three panes, device list | builds clean, runs |
 | adb host protocol (`devices`, `shell`, `reverse`, sync push) | written, verified against a live adb server |
 | Building the agent | **done** — `tools/build-agent.sh`, jar + 4 ABIs |
-| Agent deploy → launch → two channels | written, **not yet run against a device** |
-| Video: 44-byte header → Annex-B → VideoToolbox | written, **not yet run** |
-| Control: base128 MotionEvent / KeyEvent | written, **not yet run** |
+| Agent deploy → launch → three channels | **verified** |
+| Video: 44-byte header → Annex-B → VideoToolbox | **verified** — H.264, hardware decode |
+| Control: base128 MotionEvent / KeyEvent | **verified** — keys and touch, against a Pixel 9a |
+| Right panel: Info, Apps, Files, Logcat, Crashes, Settings | **working** |
+| Right-click menu, open as window/tab, pin | **working** |
 
-Everything up to the device is done and proven. Nothing has touched a real device yet: both the
-USB and the network Pixel sit at `unauthorized`, which needs the "Allow USB debugging" dialog
-accepted on the device itself. That one tap is the only thing between here and a first frame.
+Verified end to end against a Pixel 9a (tegu, Android 17 / SDK 37) over network adb.
+
+**Known issue:** a long session eventually fails with `kVTVideoDecoderBadDataErr (-12909)`. On a
+run of ~9,300 frames the agent had also logged `Writing to video socket failed - Try again` and
+retried, which is the obvious suspect — a retried partial write would desynchronise the packet
+stream. Not yet investigated.
 
 ## If your JDK crashes on startup
 

@@ -17,15 +17,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let mirror = MirrorView()
     private let strip = ControlStrip()
     private let inspector = InspectorPane()
-    private let logPanel = LogcatPanel()
     private let screenWindow = ScreenWindow()
-    private var tabBar: IconTabBar!
     private var stage: NSView!
 
     private var session: AgentSession?
     private var pollTimer: Timer?
     private var healthTimer: Timer?
-    private var inspectorTab = 0
     private var propertiesForSerial: String?
 
     /// What we ask the agent to cap the encode at. Well above any display we will show it on, so
@@ -98,7 +95,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // width has nothing to hold on to. Resting width at a middling priority, plus a hard
         // minimum, is what ~/rplay-hub arrived at for the same failure.
         for (pane, width) in [(sidebar as NSView, 250.0), (middle as NSView, 389.0),
-                              (inspector as NSView, 300.0), (logPanel as NSView, 300.0)] {
+                              (inspector as NSView, 320.0)] {
             pane.translatesAutoresizingMaskIntoConstraints = false
             let resting = pane.widthAnchor.constraint(equalToConstant: width)
             resting.priority = NSLayoutConstraint.Priority(700)
@@ -108,8 +105,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // A soft shadow cast outward from each side pane, in place of a divider line — the same
         // separation Device Hub draws between its columns.
-        for (pane, dx) in [(sidebar as NSView, CGFloat(2)), (inspector as NSView, CGFloat(-2)),
-                           (logPanel as NSView, CGFloat(-2))] {
+        for (pane, dx) in [(sidebar as NSView, CGFloat(2)), (inspector as NSView, CGFloat(-2))] {
             pane.wantsLayer = true
             pane.layer?.masksToBounds = false
             pane.shadow = NSShadow()
@@ -122,12 +118,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.contentView = splitView
         window.setContentSize(NSSize(width: 1000, height: 760))
 
-        tabBar = IconTabBar(icons: [("info.circle", "Info"), ("doc.plaintext", "Log")])
-        tabBar.selected = 0
-        tabBar.onSelect = { [weak self] index in self?.selectInspectorTab(index) }
+        // Device Hub keeps these in the title bar at the trailing edge, not in the pane.
+        // The accessory needs a concrete frame at the time it is added: given only Auto Layout
+        // constraints it comes up zero-sized and nothing appears in the title bar at all.
         let accessory = NSTitlebarAccessoryViewController()
-        accessory.view = tabBar
-        accessory.layoutAttribute = .right
+        inspector.iconTabs.frame = NSRect(x: 0, y: 0, width: 108, height: 28)
+        accessory.view = inspector.iconTabs
+        accessory.layoutAttribute = .trailing
         window.addTitlebarAccessoryViewController(accessory)
 
         wireUp()
@@ -156,29 +153,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         mirror.onCommand = { [weak self] command in self?.perform(command) }
     }
 
-    private func selectInspectorTab(_ index: Int) {
-        // Re-selecting the active tab collapses the pane, as Device Hub does.
-        if index == inspectorTab, !inspector.isHidden || !logPanel.isHidden {
-            inspector.isHidden = true
-            logPanel.isHidden = true
-            tabBar.selected = nil
-            return
-        }
-        inspectorTab = index
-        tabBar.selected = index
-        let wanted: NSView = index == 0 ? inspector : logPanel
-        if splitView.arrangedSubviews.count > 2 {
-            let current = splitView.arrangedSubviews[2]
-            if current !== wanted {
-                splitView.removeArrangedSubview(current)
-                current.removeFromSuperview()
-                splitView.addArrangedSubview(wanted)
-                splitView.setHoldingPriority(NSLayoutConstraint.Priority(260), forSubviewAt: 2)
-            }
-        }
-        wanted.isHidden = false
-    }
-
     // MARK: - devices
 
     private func startPolling() {
@@ -203,14 +177,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             let captured = (devices, note)
             DispatchQueue.main.async { [weak self] in
-                self?.sidebar.update(devices: captured.0, note: captured.1)
+                guard let self else { return }
+                self.sidebar.update(devices: captured.0, note: captured.1)
+                // Nothing to choose between: select it, so the inspector has a device rather
+                // than showing "No device selected" beside a list of exactly one.
+                if self.sidebar.selected == nil {
+                    let ready = captured.0.filter { $0.isReady }
+                    if ready.count == 1 { self.sidebar.select(serial: ready[0].serial) }
+                }
             }
         }
     }
 
     private func selectionChanged(_ device: AdbDevice?) {
         guard let device else {
-            inspector.setProperties("No device selected")
+            inspector.serial = nil
             mirror.deviceName = nil
             mirror.deviceSubtitle = nil
             return
@@ -218,38 +199,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.title = "rPlayHub — \(device.displayName)"
         mirror.deviceName = device.displayName
         mirror.deviceSubtitle = device.isReady ? device.serial : device.state
-        guard device.isReady else {
-            inspector.setProperties(
-                "\(device.displayName)\n\(device.serial)\nstate: \(device.state)")
-            return
-        }
-        guard propertiesForSerial != device.serial else { return }
+        inspector.serial = device.isReady ? device.serial : nil
+        guard device.isReady, propertiesForSerial != device.serial else { return }
         propertiesForSerial = device.serial
-        loadProperties(device)
+        loadAndroidVersion(device)
     }
 
-    /// getprop once per selection, off the main queue — each of these is a round trip.
-    private func loadProperties(_ device: AdbDevice) {
+    /// Just for the label under the idle mockup; the Info tab loads the rest itself.
+    private func loadAndroidVersion(_ device: AdbDevice) {
         DispatchQueue.global(qos: .utility).async { [weak self] in
-            let wanted = [
-                ("Model", "ro.product.model"),
-                ("Device", "ro.product.device"),
-                ("Android", "ro.build.version.release"),
-                ("SDK", "ro.build.version.sdk"),
-                ("ABI", "ro.product.cpu.abi"),
-                ("Build", "ro.build.display.id"),
-            ]
-            var lines = ["Serial   \(device.serial)"]
-            for (label, key) in wanted {
-                let value = (try? Adb.getprop(device.serial, key)) ?? "?"
-                lines.append("\(label.padding(toLength: 9, withPad: " ", startingAt: 0))\(value)")
-            }
-            let text = lines.joined(separator: "\n")
             let release = (try? Adb.getprop(device.serial, "ro.build.version.release")) ?? ""
             DispatchQueue.main.async { [weak self] in
-                guard self?.propertiesForSerial == device.serial else { return }
-                self?.inspector.setProperties(text)
-                if !release.isEmpty { self?.mirror.deviceSubtitle = "Android \(release)" }
+                guard self?.propertiesForSerial == device.serial, !release.isEmpty else { return }
+                self?.mirror.deviceSubtitle = "Android \(release)"
             }
         }
     }
@@ -266,13 +228,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         session?.stop()
         mirror.reset()
-        logPanel.clear()
         strip.setSessionActive(false)
 
         let s = AgentSession(serial: device.serial)
         session = s
         s.onState = { [weak self] state in self?.sessionStateChanged(state) }
-        s.onAgentLog = { [weak self] line in self?.logPanel.append(line) }
+        s.onAgentLog = { line in AppBuild.log("agent: \(line)") }
         s.decoder.onFrame = { [weak self] picture in
             self?.mirror.displayLayer.present(picture)
         }
@@ -286,7 +247,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             strip.setSessionActive(false)
         case .deploying(let step):
             window.subtitle = step
-            logPanel.append("· \(step)")
         case .running:
             window.subtitle = "mirroring"
             strip.setSessionActive(true)
@@ -295,7 +255,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .failed(let reason):
             window.subtitle = "failed"
             strip.setSessionActive(false)
-            logPanel.append("! \(reason)")
             mirror.reset()
             present(message: "Mirroring failed", detail: reason)
         }
@@ -310,7 +269,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.mirror.apply(header: header)
         }
         video.onDisconnect = { [weak self] reason in
-            self?.logPanel.append("! video: \(reason)")
+            AppBuild.log("video: \(reason)")
             self?.strip.setSessionActive(false)
         }
     }
@@ -339,7 +298,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func updateHealth() {
-        guard let video = session?.video else { inspector.setHealth(""); return }
+        guard let video = session?.video else { inspector.info.setHealth(""); return }
         let layer = mirror.displayLayer
         var lines = [
             "codec     \(video.advertisedCodec)",
@@ -359,7 +318,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             lines.append("waiting for a keyframe (\(video.framesBeforeKeyframe) dropped)")
         }
         if let error = video.lastError { lines.append("error     \(error)") }
-        inspector.setHealth(lines.joined(separator: "\n"))
+        inspector.info.setHealth(lines.joined(separator: "\n"))
     }
 
     // MARK: - the screen's right-click menu
@@ -438,21 +397,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panel.allowedContentTypes = [.png]
         panel.beginSheetModal(for: window) { response in
             guard response == .OK, let url = panel.url else { return }
-            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            DispatchQueue.global(qos: .userInitiated).async {
                 do {
                     let remote = "/data/local/tmp/rplayhub-screenshot.png"
                     _ = try Adb.shell(serial, "screencap -p \(remote)")
-                    let data = try Adb.shell(serial, "cat \(remote)")
+                    // Pulled over sync:, not `cat` through exec:. Adb.shell decodes its output
+                    // as UTF-8, which silently mangles every non-text byte — a PNG does not
+                    // survive the round trip.
+                    try Adb.pull(serial, remotePath: remote, localPath: url.path)
                     _ = try? Adb.shell(serial, "rm -f \(remote)")
-                    // `cat` through exec: is a byte-transparent channel, so this is the file.
-                    try Data(data.utf8).write(to: url)
-                    DispatchQueue.main.async { [weak self] in
-                        self?.logPanel.append("· screenshot saved to \(url.path)")
-                    }
+                    AppBuild.log("screenshot saved to \(url.path)")
                 } catch {
-                    DispatchQueue.main.async { [weak self] in
-                        self?.logPanel.append("! screenshot: \(error)")
-                    }
+                    AppBuild.log("screenshot failed: \(error)")
                 }
             }
         }
