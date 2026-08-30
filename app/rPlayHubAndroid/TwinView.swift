@@ -272,13 +272,13 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
         // monochrome polished-metal G etched into the panel, the same tone as the body, catching
         // the light as the phone turns. A metallic material (not constant) gives it that glint;
         // the mask is a single-colour G facing -z out of the back.
-        let gSize = bodyWidth * 0.19
+        let gSize = bodyWidth * 0.34      // a bold, clearly-readable G, no plate behind it
         let gPlane = SCNPlane(width: gSize, height: gSize)
         let gMaterial = SCNMaterial()
         gMaterial.lightingModel = .physicallyBased
-        gMaterial.diffuse.contents = NSColor(calibratedWhite: 0.14, alpha: 1)   // a shade below the body
+        gMaterial.diffuse.contents = NSColor(calibratedWhite: 0.62, alpha: 1)   // polished aluminium
         gMaterial.metalness.contents = 1.0
-        gMaterial.roughness.contents = 0.22       // polished, so the engraved edges catch light
+        gMaterial.roughness.contents = 0.28       // brushed-metal sheen that glints as it turns
         // rgbZero: transparency comes from the mask's luminance, so the black background is fully
         // transparent and ONLY the G stroke carries the material — otherwise the whole square
         // plane would show as a metal patch.
