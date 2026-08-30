@@ -551,9 +551,9 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
         ring.close()
         ring.fill()
 
-        // The crossbar: centred on the middle, from the centre out to the ring on the right.
-        NSBezierPath(rect: NSRect(x: c - stroke * 0.05, y: c - stroke / 2,
-                                  width: inner + stroke * 0.05, height: stroke)).fill()
+        // The crossbar: its TOP edge on the centre line (so the sharp top-left corner sits at
+        // the exact centre, as the real mark does), from the centre out to the ring on the right.
+        NSBezierPath(rect: NSRect(x: c, y: c - stroke, width: outer, height: stroke)).fill()
 
         image.unlockFocus()
         return image
