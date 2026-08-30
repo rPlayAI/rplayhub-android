@@ -272,13 +272,15 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
         // monochrome polished-metal G etched into the panel, the same tone as the body, catching
         // the light as the phone turns. A metallic material (not constant) gives it that glint;
         // the mask is a single-colour G facing -z out of the back.
-        let gSize = bodyWidth * 0.34      // a bold, clearly-readable G, no plate behind it
+        let gSize = bodyWidth * 0.26      // medium, as the reference wears it — no plate behind it
         let gPlane = SCNPlane(width: gSize, height: gSize)
         let gMaterial = SCNMaterial()
         gMaterial.lightingModel = .physicallyBased
-        gMaterial.diffuse.contents = NSColor(calibratedWhite: 0.62, alpha: 1)   // polished aluminium
-        gMaterial.metalness.contents = 1.0
-        gMaterial.roughness.contents = 0.28       // brushed-metal sheen that glints as it turns
+        // Subtle, close to the body's tone but a touch lighter and glossier, so it reads as an
+        // engraved metal mark that catches the light rather than a bright silver inlay.
+        gMaterial.diffuse.contents = NSColor(calibratedWhite: 0.30, alpha: 1)
+        gMaterial.metalness.contents = 0.85
+        gMaterial.roughness.contents = 0.42
         // rgbZero: transparency comes from the mask's luminance, so the black background is fully
         // transparent and ONLY the G stroke carries the material — otherwise the whole square
         // plane would show as a metal patch.
@@ -287,7 +289,7 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
         gMaterial.isDoubleSided = false
         gPlane.materials = [gMaterial]
         let gNode = SCNNode(geometry: gPlane)
-        gNode.position = SCNVector3(0, -bodyHeight * 0.12, -bodyDepth / 2 - 0.001)
+        gNode.position = SCNVector3(0, -bodyHeight * 0.05, -bodyDepth / 2 - 0.001)   // near centre
         gNode.eulerAngles = SCNVector3(0, CGFloat.pi, 0)   // turn to face out the back
         phone.addChildNode(gNode)
 
@@ -429,33 +431,34 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
         phoneNode?.simdOrientation = smoothed!
     }
 
-    /// A white-on-black mask of the Pixel "G" — the ring with a gap on the right and a crossbar
-    /// reaching in. Used as a material's transparency mask so only the G shape carries the
-    /// metallic finish, the rest of the plane staying clear over the panel.
+    /// A white-on-black mask of the Google "G" mark a Pixel wears on its back — a ring open on the
+    /// right with a crossbar reaching in to the centre. Used as a transparency mask so only the
+    /// mark carries the finish, the rest of the plane staying clear over the panel.
     private static func pixelGMask(side: Int) -> NSImage {
-        let size = NSSize(width: side, height: side)
-        let image = NSImage(size: size)
+        let s = CGFloat(side)
+        let image = NSImage(size: NSSize(width: side, height: side))
         image.lockFocus()
         NSColor.black.setFill()
         NSRect(x: 0, y: 0, width: side, height: side).fill()
 
-        let c = CGFloat(side) / 2
-        let outer = CGFloat(side) * 0.46
-        let inner = CGFloat(side) * 0.29     // a slightly heavier stroke reads better when engraved
+        let c = s / 2
         let center = NSPoint(x: c, y: c)
+        let outer = s * 0.42
+        let inner = s * 0.26          // stroke ~0.16·side, matching the reference's proportions
         NSColor.white.setFill()
 
-        // The ring spans 20°→340° (CCW through the top), leaving a gap on the right; the crossbar
-        // fills the lower part of that gap, which is what makes the O read as a G.
+        // The ring, open on the right (a ~44° gap centred at 3 o'clock).
         let ring = NSBezierPath()
-        ring.appendArc(withCenter: center, radius: outer, startAngle: 20, endAngle: 340, clockwise: false)
-        ring.appendArc(withCenter: center, radius: inner, startAngle: 340, endAngle: 20, clockwise: true)
+        ring.appendArc(withCenter: center, radius: outer, startAngle: 22, endAngle: 338, clockwise: false)
+        ring.appendArc(withCenter: center, radius: inner, startAngle: 338, endAngle: 22, clockwise: true)
         ring.close()
         ring.fill()
 
+        // The crossbar: from the centre out to the ring, at mid-height, the same weight as the
+        // stroke — this is what turns the open ring into a G.
         let barHeight = outer - inner
-        NSBezierPath(rect: NSRect(x: c, y: c - barHeight / 2,
-                                  width: outer - CGFloat(side) * 0.04, height: barHeight)).fill()
+        NSBezierPath(rect: NSRect(x: c - barHeight * 0.1, y: c - barHeight / 2,
+                                  width: outer + barHeight * 0.1, height: barHeight)).fill()
 
         image.unlockFocus()
         return image
