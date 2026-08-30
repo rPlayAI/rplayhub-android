@@ -56,6 +56,10 @@ final class DeviceSidebar: NSView {
         tableView.headerView = nil
         tableView.rowHeight = 42
         tableView.style = .inset
+        // Pane colour taken from ~/rplay-hub, so the two apps read as one family.
+        wantsLayer = true
+        layer?.backgroundColor = NSColor(srgbRed: 0xFA / 255, green: 0xFA / 255,
+                                         blue: 0xFA / 255, alpha: 1).cgColor
         tableView.backgroundColor = .clear
         tableView.selectionHighlightStyle = .regular
         tableView.dataSource = self

@@ -88,6 +88,10 @@ final class InspectorPane: NSView {
     }
 
     private func build() {
+        // Same pane colour as ~/rplay-hub's inspector.
+        wantsLayer = true
+        layer?.backgroundColor = NSColor(srgbRed: 0xFA / 255, green: 0xFA / 255,
+                                         blue: 0xFA / 255, alpha: 1).cgColor
         iconTabs.selected = activeIcon
         iconTabs.onSelect = { [weak self] index in self?.iconSelected(index) }
 

@@ -78,6 +78,9 @@ final class MirrorView: NSView, NSMenuItemValidation {
     let displayLayer = VideoLayer()
     private let clipLayer = CALayer()
     private let cutoutLayer = CAShapeLayer()
+
+    /// The black surround drawn around a live picture, in points.
+    private static let bezelWidth: CGFloat = 14
     private let placeholderLayer = CAGradientLayer()
     private let nameLabel = NSTextField(labelWithString: "No device selected")
     private let osLabel = NSTextField(labelWithString: "")
@@ -175,7 +178,8 @@ final class MirrorView: NSView, NSMenuItemValidation {
         buildContextMenu()
         wantsLayer = true
         layer?.masksToBounds = true
-        layer?.backgroundColor = NSColor.textBackgroundColor.cgColor
+        // Matches ~/rplay-hub: the mirror pane is white, the two side panes 0xFAFAFA.
+        layer?.backgroundColor = NSColor.white.cgColor
 
         placeholderLayer.colors = [
             NSColor(srgbRed: 0.31, green: 0.33, blue: 0.42, alpha: 1).cgColor,
@@ -236,6 +240,12 @@ final class MirrorView: NSView, NSMenuItemValidation {
 
     /// Called on the main queue as each packet header changes.
     func apply(header: VideoPacketHeader) {
+        if Int(header.displayOrientation) != displayOrientation
+            || Int(header.displayOrientationCorrection) != orientationCorrection {
+            AppBuild.log("orientation=\(header.displayOrientation) "
+                         + "correction=\(header.displayOrientationCorrection) "
+                         + "display=\(header.displaySize)")
+        }
         displaySize = header.displaySize
         displayOrientation = Int(header.displayOrientation)
         orientationCorrection = Int(header.displayOrientationCorrection)
@@ -258,7 +268,37 @@ final class MirrorView: NSView, NSMenuItemValidation {
     // MARK: - geometry
 
     /// The display as the picture presents it.
+    /// Quadrants the picture is presented at, as one definition rather than three.
+    ///
+    /// The agent pre-rotates by `orientationCorrection` and reports both numbers. When the
+    /// correction is odd it has already absorbed the whole rotation, so the presented angle is
+    /// `displayOrientation` alone; when it is even the two add. `devicePoint` has always used
+    /// this rule for clicks, but `rotatedDisplaySize` used `displayOrientation - correction`,
+    /// and the two disagree by 90 degrees exactly when the correction is odd.
+    ///
+    /// A Pixel 9a in landscape reports orientation=1 correction=1: the old expression gave 0,
+    /// so the frame stayed portrait while the picture inside it was landscape, letterboxed.
+    private var presentedQuadrants: Int {
+        let raw = orientationCorrection % 2 == 0
+            ? displayOrientation + orientationCorrection
+            : displayOrientation
+        return ((raw % 4) + 4) % 4
+    }
+
     private var rotatedDisplaySize: CGSize {
+        guard displaySize.width > 0 else { return CGSize(width: 9, height: 19.5) }
+        return presentedQuadrants % 2 == 1
+            ? CGSize(width: displaySize.height, height: displaySize.width)
+            : displaySize
+    }
+
+    /// The display as the CODED PICTURE sees it — before `sublayerTransform` undoes the agent's
+    /// pre-rotation. Distinct from `rotatedDisplaySize`, which is what the viewer ends up seeing.
+    ///
+    /// The crop maths needs this one: the band it is measuring lives in the encoder's frame, not
+    /// on screen. Sharing a single "rotated size" between the two is what made the picture show
+    /// one magnified corner after the frame started rotating correctly.
+    private var codedDisplaySize: CGSize {
         guard displaySize.width > 0 else { return CGSize(width: 9, height: 19.5) }
         let quadrants = ((displayOrientation - orientationCorrection) % 4 + 4) % 4
         return quadrants % 2 == 1
@@ -299,7 +339,7 @@ final class MirrorView: NSView, NSMenuItemValidation {
     /// only the height is padded, because ComputeVideoSize derives the height from the width.
     private var liveBand: (height: CGFloat, startY: CGFloat) {
         let frameW = videoSize.width, frameH = videoSize.height
-        let display = rotatedDisplaySize
+        let display = codedDisplaySize
         guard frameW > 0, frameH > 0, display.width > 0 else { return (frameH, 0) }
         let imageHeight = min((frameW * display.height / display.width).rounded(), frameH)
         return (imageHeight, ((frameH - imageHeight) / 2).rounded(.down))
@@ -314,7 +354,10 @@ final class MirrorView: NSView, NSMenuItemValidation {
 
         clipLayer.frame = rect
         clipLayer.cornerRadius = cornerRadius(for: rect)
-        clipLayer.borderWidth = isGated ? max(1, rect.width * 0.05) : 1
+        // Device Hub keeps a black bezel around the live screen, not a hairline — it is what
+        // makes the picture read as a phone rather than as a rectangle of video. The idle
+        // mockup's bezel stays proportional to its own small size.
+        clipLayer.borderWidth = isGated ? max(1, rect.width * 0.05) : Self.bezelWidth
         placeholderLayer.frame = clipLayer.bounds
         placeholderLayer.isHidden = !isGated
         placeholderLayer.cornerRadius = clipLayer.cornerRadius
@@ -443,11 +486,8 @@ final class MirrorView: NSView, NSMenuItemValidation {
         let fx = (p.x - r.minX) / r.width
         let fy = (p.y - r.minY) / r.height
 
-        let quadrants = orientationCorrection % 2 == 0
-            ? (displayOrientation + orientationCorrection) % 4
-            : displayOrientation % 4
         let n: CGPoint
-        switch ((quadrants % 4) + 4) % 4 {
+        switch presentedQuadrants {
         case 1:  n = CGPoint(x: 1 - fy, y: fx)
         case 2:  n = CGPoint(x: 1 - fx, y: 1 - fy)
         case 3:  n = CGPoint(x: fy, y: 1 - fx)
