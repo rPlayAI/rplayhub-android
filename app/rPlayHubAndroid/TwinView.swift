@@ -348,9 +348,60 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
     static let backImageKey = "TwinBackImagePath"
 
     private static func loadBackImage() -> NSImage? {
+        // Only a user-set image overrides the drawn back; the Pixel default is the procedural
+        // drawing (real 3D camera bar, no photo-cutout rim). Other brands get a supplied photo.
         guard let path = UserDefaults.standard.string(forKey: backImageKey), !path.isEmpty,
-              FileManager.default.fileExists(atPath: path) else { return nil }
-        return NSImage(contentsOfFile: path)
+              FileManager.default.fileExists(atPath: path),
+              let raw = NSImage(contentsOfFile: path) else { return nil }
+        return removingLightBackground(raw)
+    }
+
+    /// Clears a light photo backdrop to transparent so the phone sits on the twin's body with no
+    /// white plate around it. A flood fill from the borders only removes background connected to
+    /// the edge, so a white flash or highlight inside the phone survives.
+    private static func removingLightBackground(_ image: NSImage) -> NSImage {
+        let w = Int(image.size.width), h = Int(image.size.height)
+        guard w > 0, h > 0,
+              let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil),
+              let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8,
+                                  bytesPerRow: w * 4, space: CGColorSpaceCreateDeviceRGB(),
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue),
+              let buf = { () -> UnsafeMutablePointer<UInt8>? in
+                  ctx.draw(cg, in: CGRect(x: 0, y: 0, width: w, height: h))
+                  return ctx.data?.bindMemory(to: UInt8.self, capacity: w * h * 4)
+              }() else { return image }
+
+        // A feathered cut. The flood fill spreads through everything lighter than the phone
+        // (luminance above `edge`), but the alpha it writes ramps with brightness: fully clear
+        // for the bright backdrop, partial through the anti-aliased rim, fading to opaque as it
+        // reaches the dark body — so the silhouette gets a smooth edge, not a hard one.
+        let edge = 105, solid = 185
+        func lum(_ i: Int) -> Int { (Int(buf[i]) + Int(buf[i + 1]) + Int(buf[i + 2])) / 3 }
+        func alphaFor(_ l: Int) -> UInt8 {
+            if l >= solid { return 0 }
+            return UInt8(max(0, min(255, 255 * (solid - l) / (solid - edge))))
+        }
+        var visited = [Bool](repeating: false, count: w * h)
+        var stack: [Int] = []
+        func consider(_ p: Int) {
+            if visited[p] { return }
+            let i = p * 4
+            guard lum(i) > edge else { return }       // hit the body; stop, keep it opaque
+            visited[p] = true
+            buf[i + 3] = alphaFor(lum(i))
+            stack.append(p)
+        }
+        for x in 0..<w { consider(x); consider((h - 1) * w + x) }
+        for y in 0..<h { consider(y * w); consider(y * w + w - 1) }
+        while let p = stack.popLast() {
+            let x = p % w, y = p / w
+            if x > 0 { consider(p - 1) }
+            if x < w - 1 { consider(p + 1) }
+            if y > 0 { consider(p - w) }
+            if y < h - 1 { consider(p + w) }
+        }
+        guard let out = ctx.makeImage() else { return image }
+        return NSImage(cgImage: out, size: NSSize(width: w, height: h))
     }
 
     // MARK: - per-frame
