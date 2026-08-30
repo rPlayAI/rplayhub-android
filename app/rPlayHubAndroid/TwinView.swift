@@ -513,13 +513,14 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
         // same rotation of the twin. Because it is a true rotation delta (not an attitude reset)
         // gravity stays honest: tilt the top toward you and the twin's top comes toward you.
         //
-        // Android's rotation vector lives in an East-North-Up world (x east, y north, z sky);
-        // SceneKit's is x right, y up, z toward the viewer. Rotating the world -90° about x maps
-        // one onto the other, so the delta is conjugated through that map to act on SceneKit axes.
+        // The delta MUST be taken in the phone's own body frame — ref⁻¹ · q, not q · ref⁻¹. The
+        // world-frame form smears a pure tilt across yaw whenever the "facing me" pose is itself
+        // tilted (a handheld pose always is), which is the "pitch toward me also twists left/right"
+        // symptom. And no world→SceneKit remap is needed: the twin's face-on pose already aligns
+        // its axes with the phone's screen axes (x right, y up/top, z out toward the viewer), so
+        // the body delta drives the node directly. Conjugating through a remap is what mixed axes.
         let ref = reference ?? q
-        let delta = q * ref.inverse
-        let worldFix = simd_quatf(angle: -.pi / 2, axis: simd_float3(1, 0, 0))
-        let target = worldFix * delta * worldFix.inverse
+        let target = ref.inverse * q
 
         // Adaptive smoothing, so accuracy does not fight latency. A fixed slerp is a bad
         // compromise: gentle enough to kill the small jitter of a still phone, it visibly lags a
