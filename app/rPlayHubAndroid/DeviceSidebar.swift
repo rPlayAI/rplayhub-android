@@ -101,14 +101,30 @@ final class DeviceSidebar: NSView {
         ])
     }
 
+    /// The row's context menu. Exposed because the device commands that used to live on the
+    /// mirror pane get appended to it — they act on the device, so this is where they belong.
+    private(set) var rowContextMenu = NSMenu()
+
     private func rowMenu() -> NSMenu {
-        let menu = NSMenu()
+        let menu = rowContextMenu
+        menu.removeAllItems()
         menu.addItem(withTitle: "Mirror", action: #selector(mirrorFromMenu), keyEquivalent: "")
             .target = self
         menu.addItem(.separator())
         menu.addItem(withTitle: "Copy Serial", action: #selector(copySerial), keyEquivalent: "")
             .target = self
         return menu
+    }
+
+    /// Append the mirror's device commands under a separator. Their target is the mirror view,
+    /// so validation and dispatch stay where they were.
+    func appendDeviceCommands(from menu: NSMenu) {
+        guard !menu.items.isEmpty else { return }
+        rowContextMenu.addItem(.separator())
+        for item in menu.items {
+            menu.removeItem(item)          // an NSMenuItem belongs to one menu at a time
+            rowContextMenu.addItem(item)
+        }
     }
 
     // MARK: - data

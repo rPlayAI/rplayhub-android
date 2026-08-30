@@ -32,6 +32,7 @@ final class AppsPanel: NSView, NSTableViewDataSource, NSTableViewDelegate {
     private let table = NSTableView()
     private let scroll = NSScrollView()
     private let search = NSSearchField()
+    private let divider = NSBox()
     private let status = NSTextField(labelWithString: "")
     private let systemToggle = NSButton(checkboxWithTitle: "System apps", target: nil, action: nil)
     private let installButton = NSButton()
@@ -93,26 +94,37 @@ final class AppsPanel: NSView, NSTableViewDataSource, NSTableViewDelegate {
         status.lineBreakMode = .byTruncatingTail
         status.translatesAutoresizingMaskIntoConstraints = false
 
-        for v in [search, systemToggle, installButton, scroll, status] { addSubview(v) }
+        // The hairline Device Hub draws above its bottom Filter row, as the iOS hub's Apps tab
+        // has it: list first, then the +/- row and status, then the filter along the bottom.
+        divider.boxType = .separator
+        divider.translatesAutoresizingMaskIntoConstraints = false
+
+        // Same shape as the Logcat tab: the list owns the pane, and everything that acts on it
+        // or narrows it sits below the hairline — actions first, then the filter.
+        for v in [search, systemToggle, installButton, scroll, status, divider] { addSubview(v) }
         NSLayoutConstraint.activate([
-            search.topAnchor.constraint(equalTo: topAnchor, constant: 8),
-            search.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
-            search.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
-
-            systemToggle.topAnchor.constraint(equalTo: search.bottomAnchor, constant: 6),
-            systemToggle.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
-
-            installButton.centerYAnchor.constraint(equalTo: systemToggle.centerYAnchor),
-            installButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
-
-            scroll.topAnchor.constraint(equalTo: systemToggle.bottomAnchor, constant: 6),
+            scroll.topAnchor.constraint(equalTo: topAnchor),
             scroll.leadingAnchor.constraint(equalTo: leadingAnchor),
             scroll.trailingAnchor.constraint(equalTo: trailingAnchor),
             scroll.bottomAnchor.constraint(equalTo: status.topAnchor, constant: -4),
 
             status.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
             status.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
-            status.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6),
+            status.bottomAnchor.constraint(equalTo: divider.topAnchor, constant: -6),
+
+            divider.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
+            divider.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
+            divider.bottomAnchor.constraint(equalTo: systemToggle.topAnchor, constant: -6),
+
+            systemToggle.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+            systemToggle.bottomAnchor.constraint(equalTo: search.topAnchor, constant: -6),
+
+            installButton.centerYAnchor.constraint(equalTo: systemToggle.centerYAnchor),
+            installButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
+
+            search.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
+            search.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
+            search.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -10),
         ])
     }
 
@@ -242,12 +254,37 @@ final class AppsPanel: NSView, NSTableViewDataSource, NSTableViewDelegate {
         label.textColor = package.isSystem ? .secondaryLabelColor : .labelColor
         label.lineBreakMode = .byTruncatingMiddle
         label.translatesAutoresizingMaskIntoConstraints = false
+
+        // The APK may not yield an icon at all (see AppIcons), so the slot keeps its width
+        // either way and the names stay aligned down the column.
+        let icon = NSImageView()
+        icon.imageScaling = .scaleProportionallyUpOrDown
+        icon.translatesAutoresizingMaskIntoConstraints = false
+        cell.imageView = icon
+
+        cell.addSubview(icon)
         cell.addSubview(label)
         NSLayoutConstraint.activate([
-            label.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 8),
+            icon.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 8),
+            icon.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+            icon.widthAnchor.constraint(equalToConstant: 16),
+            icon.heightAnchor.constraint(equalToConstant: 16),
+            label.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 6),
             label.trailingAnchor.constraint(lessThanOrEqualTo: cell.trailingAnchor, constant: -8),
             label.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
         ])
+
+        if let serial {
+            let wanted = package.id
+            AppIcons.icon(serial: serial, package: wanted) { [weak icon, weak self] image in
+                // The cell is reused as the list scrolls, so only paint if this view is still
+                // showing the package we asked about.
+                guard let icon, let self else { return }
+                let r = self.table.row(for: icon)
+                guard r >= 0, r < self.filtered.count, self.filtered[r].id == wanted else { return }
+                icon.image = image
+            }
+        }
         return cell
     }
 }

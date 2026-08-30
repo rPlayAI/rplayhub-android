@@ -14,6 +14,8 @@
 		1A000000000000000000100A /* AppBuild.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001009 /* AppBuild.swift */; };
 		1A000000000000000000100C /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000000000000000000100B /* AppDelegate.swift */; };
 		1A000000000000000000100E /* AppsPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000000000000000000100D /* AppsPanel.swift */; };
+		1A0000000000000000009003 /* LogcatWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000009004 /* LogcatWindow.swift */; };
+		1A0000000000000000009001 /* AppIcons.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000009002 /* AppIcons.swift */; };
 		1A0000000000000000001010 /* Base128.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000000000000000000100F /* Base128.swift */; };
 		1A0000000000000000001012 /* ControlMessages.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001011 /* ControlMessages.swift */; };
 		1A0000000000000000001014 /* ControlStrip.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001013 /* ControlStrip.swift */; };
@@ -43,6 +45,8 @@
 		1A0000000000000000001009 /* AppBuild.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppBuild.swift; sourceTree = "<group>"; };
 		1A000000000000000000100B /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		1A000000000000000000100D /* AppsPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppsPanel.swift; sourceTree = "<group>"; };
+		1A0000000000000000009004 /* LogcatWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogcatWindow.swift; sourceTree = "<group>"; };
+		1A0000000000000000009002 /* AppIcons.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppIcons.swift; sourceTree = "<group>"; };
 		1A000000000000000000100F /* Base128.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Base128.swift; sourceTree = "<group>"; };
 		1A0000000000000000001011 /* ControlMessages.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ControlMessages.swift; sourceTree = "<group>"; };
 		1A0000000000000000001013 /* ControlStrip.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ControlStrip.swift; sourceTree = "<group>"; };
@@ -96,6 +100,8 @@
 				1A0000000000000000001009 /* AppBuild.swift */,
 				1A000000000000000000100B /* AppDelegate.swift */,
 				1A000000000000000000100D /* AppsPanel.swift */,
+				1A0000000000000000009004 /* LogcatWindow.swift */,
+				1A0000000000000000009002 /* AppIcons.swift */,
 				1A000000000000000000100F /* Base128.swift */,
 				1A0000000000000000001011 /* ControlMessages.swift */,
 				1A0000000000000000001013 /* ControlStrip.swift */,
@@ -204,6 +210,8 @@
 				1A000000000000000000100A /* AppBuild.swift in Sources */,
 				1A000000000000000000100C /* AppDelegate.swift in Sources */,
 				1A000000000000000000100E /* AppsPanel.swift in Sources */,
+				1A0000000000000000009003 /* LogcatWindow.swift in Sources */,
+				1A0000000000000000009001 /* AppIcons.swift in Sources */,
 				1A0000000000000000001010 /* Base128.swift in Sources */,
 				1A0000000000000000001012 /* ControlMessages.swift in Sources */,
 				1A0000000000000000001014 /* ControlStrip.swift in Sources */,

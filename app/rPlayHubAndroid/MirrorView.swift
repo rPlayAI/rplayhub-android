@@ -137,8 +137,14 @@ final class MirrorView: NSView, NSMenuItemValidation {
         menu.addItem(.separator())
         add("Reconnect", .reconnect, "arrow.clockwise")
         add("Stop Mirroring", .stop, "stop.circle")
-        self.menu = menu
+        // Deliberately NOT `self.menu`. These commands act on the device, so they belong on the
+        // device's row in the sidebar; the app moves them there. The items still target this
+        // view, so `contextAction` and `validateMenuItem` keep working unchanged.
+        commandMenu = menu
     }
+
+    /// The device commands, built but unattached. AppDelegate hangs them off the sidebar row.
+    private(set) var commandMenu: NSMenu?
 
     private var pinItem: NSMenuItem?
 
@@ -367,7 +373,19 @@ final class MirrorView: NSView, NSMenuItemValidation {
     /// are drawing the display as currently rotated, so they have to be turned to match — the
     /// inverse of the mapping `devicePoint` applies to clicks.
     private func layOutCutout(in rect: CGRect) {
-        guard !isGated, let shape = displayShape, let cutout = shape.cutout,
+        if isGated {
+            // The idle mockup stands in for a phone we have not queried yet, so give it the
+            // punch-hole a Pixel has — centred on the top edge — rather than leaving a blank
+            // slab. A real device replaces this with its own reported cutout below.
+            cutoutLayer.frame = clipLayer.bounds
+            let r = max(1.5, rect.width * 0.035)
+            let cy = r + rect.width * 0.05
+            let box = CGRect(x: rect.width / 2 - r, y: cy - r, width: r * 2, height: r * 2)
+            cutoutLayer.path = CGPath(ellipseIn: box, transform: nil)
+            cutoutLayer.isHidden = false
+            return
+        }
+        guard let shape = displayShape, let cutout = shape.cutout,
               shape.displaySize.width > 0, shape.displaySize.height > 0 else {
             cutoutLayer.isHidden = true
             return

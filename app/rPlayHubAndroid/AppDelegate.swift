@@ -94,7 +94,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // line. setPosition() alone does not survive layout, because a pane with no intrinsic
         // width has nothing to hold on to. Resting width at a middling priority, plus a hard
         // minimum, is what ~/rplay-hub arrived at for the same failure.
-        for (pane, width) in [(sidebar as NSView, 250.0), (middle as NSView, 389.0),
+        for (pane, width) in [(sidebar as NSView, 210.0), (middle as NSView, 429.0),
                               (inspector as NSView, 320.0)] {
             pane.translatesAutoresizingMaskIntoConstraints = false
             let resting = pane.widthAnchor.constraint(equalToConstant: width)
@@ -151,6 +151,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         strip.onAction = { [weak self] action in self?.perform(action) }
         mirror.onCommand = { [weak self] command in self?.perform(command) }
+        // The device commands move from the mirror pane to the device's row in the sidebar.
+        if let commands = mirror.commandMenu { sidebar.appendDeviceCommands(from: commands) }
     }
 
     // MARK: - devices
@@ -357,6 +359,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - actions
 
     private func perform(_ action: ControlStrip.Action) {
+        // Screenshot and record go over adb, not the control channel, so they are handled before
+        // the guard that requires a live control connection.
+        if action == .screenshot { saveScreenshot(); return }
+        if action == .record { toggleRecording(); return }
         guard let control = session?.control else { return }
         switch action {
         case .back:
@@ -382,8 +388,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // own sensor, which is a different command and belongs on a menu, not this button.
             let next = Int32((mirror.displayOrientation + 1) % 4)
             control.send(ControlMessage.setDeviceOrientation(next))
-        case .screenshot:
-            saveScreenshot()
+        case .screenshot, .record:
+            break               // handled above, before the control-connection guard
         }
     }
 
@@ -409,6 +415,75 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     AppBuild.log("screenshot saved to \(url.path)")
                 } catch {
                     AppBuild.log("screenshot failed: \(error)")
+                }
+            }
+        }
+    }
+
+    // MARK: - screen recording
+
+    private var recordingSerial: String?
+    private var recordingSocket: TCPSocket?
+    private static let recordRemotePath = "/data/local/tmp/rplayhub-record.mp4"
+
+    private func toggleRecording() {
+        recordingSerial == nil ? startRecording() : stopRecording()
+    }
+
+    /// `screenrecord` writes on the device and is capped at three minutes by Android itself. The
+    /// shell socket is held open for the duration: closing it is what would kill the process, and
+    /// a killed screenrecord never writes its moov atom, leaving an unplayable file.
+    private func startRecording() {
+        guard let serial = session?.serial else { return }
+        recordingSerial = serial
+        strip.setRecording(true)
+        AppBuild.log("recording started")
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let socket = try? Adb.shellStream(
+                serial, "screenrecord --bit-rate 8000000 \(Self.recordRemotePath)")
+            DispatchQueue.main.async {
+                guard let self else { socket?.shutdownAndClose(); return }
+                guard self.recordingSerial == serial else {
+                    socket?.shutdownAndClose()      // stopped before the stream came up
+                    return
+                }
+                self.recordingSocket = socket
+            }
+        }
+    }
+
+    private func stopRecording() {
+        guard let serial = recordingSerial else { return }
+        recordingSerial = nil
+        strip.setRecording(false)
+        let socket = recordingSocket
+        recordingSocket = nil
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            // SIGINT, not a socket close: screenrecord traps it and finalises the container.
+            _ = try? Adb.shell(serial, "pkill -SIGINT screenrecord")
+            Thread.sleep(forTimeInterval: 2)        // let it write the moov atom
+            socket?.shutdownAndClose()
+
+            DispatchQueue.main.async {
+                guard let self else { return }
+                let panel = NSSavePanel()
+                panel.nameFieldStringValue = "recording.mp4"
+                panel.allowedContentTypes = [.mpeg4Movie]
+                panel.beginSheetModal(for: self.window) { response in
+                    DispatchQueue.global(qos: .userInitiated).async {
+                        defer {
+                            _ = try? Adb.shell(serial, "rm -f \(Self.recordRemotePath)")
+                        }
+                        guard response == .OK, let url = panel.url else { return }
+                        do {
+                            try Adb.pull(serial, remotePath: Self.recordRemotePath,
+                                         localPath: url.path)
+                            AppBuild.log("recording saved to \(url.path)")
+                        } catch {
+                            AppBuild.log("recording failed: \(error)")
+                        }
+                    }
                 }
             }
         }

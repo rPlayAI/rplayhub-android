@@ -44,8 +44,13 @@ final class InspectorPane: NSView {
             logcat.serial = serial
             crashes.serial = serial
             settings.serial = serial
+            logcatWindow.update(serial: serial)
         }
     }
+
+    /// The log detached into a window of its own. While it is up the inline panel is suppressed,
+    /// so only one logcat socket is ever open.
+    let logcatWindow = LogcatWindow()
 
     private let textTabs = NSSegmentedControl()
     private let container = NSView()
@@ -70,6 +75,16 @@ final class InspectorPane: NSView {
     required init?(coder: NSCoder) {
         super.init(coder: coder)
         build()
+    }
+
+    private func wireLogcatPopOut() {
+        logcat.onPopOut = { [weak self] in
+            guard let self else { return }
+            self.logcat.setSuppressed(true)
+            self.logcatWindow.onClose = { [weak self] in self?.logcat.setSuppressed(false) }
+            self.logcatWindow.open(serial: self.serial,
+                                   title: "Logcat", tabbedWith: self.window)
+        }
     }
 
     private func build() {
@@ -109,6 +124,7 @@ final class InspectorPane: NSView {
         ])
 
         showIcon(activeIcon)
+        wireLogcatPopOut()
     }
 
     // MARK: - tabs

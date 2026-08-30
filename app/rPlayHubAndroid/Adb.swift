@@ -148,14 +148,28 @@ enum Adb {
 
     /// Run a shell command and collect all of its output. For anything long-running use
     /// `shellStream` instead — this reads to EOF and will not return until the command exits.
-    static func shell(_ serial: String, _ command: String) throws -> String {
+    /// `timeout` is the per-read idle limit, not a total budget. The default suits ordinary
+    /// commands; something that thinks for minutes before printing anything — `bugreportz` —
+    /// has to raise it or the read gives up mid-run.
+    static func shell(_ serial: String, _ command: String,
+                      timeout: TimeInterval = 15) throws -> String {
         let s = try openTransport(serial)
         defer { s.shutdownAndClose() }
         // exec: rather than shell: — shell: on API 24+ multiplexes stdout/stderr/exit into a
         // framed protocol, and we only want the raw bytes.
         try send(s, "exec:\(command)")
-        s.setReadTimeout(15)
+        s.setReadTimeout(timeout)
         return String(decoding: try readToEnd(s), as: UTF8.self)
+    }
+
+    /// Same as `shell`, but hands back the raw bytes. `exec:` does no newline translation, so
+    /// this is safe for binary payloads — a PNG streamed out of an APK, for instance.
+    static func shellData(_ serial: String, _ command: String) throws -> Data {
+        let s = try openTransport(serial)
+        defer { s.shutdownAndClose() }
+        try send(s, "exec:\(command)")
+        s.setReadTimeout(15)
+        return try readToEnd(s)
     }
 
     /// Start a shell command and hand back its still-open socket, so the caller can read its

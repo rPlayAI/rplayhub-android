@@ -11,7 +11,7 @@ import AppKit
 
 final class ControlStrip: NSView {
     enum Action {
-        case back, home, overview, power, volumeUp, volumeDown, rotate, screenshot
+        case back, home, overview, power, volumeUp, volumeDown, rotate, screenshot, record
     }
 
     var onAction: ((Action) -> Void)?
@@ -28,6 +28,7 @@ final class ControlStrip: NSView {
         (.power,      "power",                  "Power"),
         (.rotate,     "rotate.right",           "Rotate"),
         (.screenshot, "camera",                 "Screenshot"),
+        (.record,     "record.circle",          "Record Screen"),
     ]
 
     override init(frame frameRect: NSRect) {
@@ -92,6 +93,20 @@ final class ControlStrip: NSView {
     }
 
     private let separator = NSView()
+
+    /// Reflect recording state in the button, so it says what pressing it will do next. The red
+    /// tint is the only colour in the strip, which is the point — a recording left running is
+    /// expensive and easy to forget.
+    func setRecording(_ recording: Bool) {
+        guard let index = Self.items.firstIndex(where: { $0.0 == .record }),
+              index < buttons.count else { return }
+        let b = buttons[index]
+        let symbol = recording ? "stop.circle.fill" : "record.circle"
+        b.image = NSImage(systemSymbolName: symbol, accessibilityDescription: "Record")?
+            .withSymbolConfiguration(.init(pointSize: 16, weight: .regular))
+        b.contentTintColor = recording ? .systemRed : .secondaryLabelColor
+        b.toolTip = recording ? "Stop Recording" : "Record Screen"
+    }
 
     @objc private func hit(_ sender: NSButton) {
         guard sender.tag < Self.items.count else { return }

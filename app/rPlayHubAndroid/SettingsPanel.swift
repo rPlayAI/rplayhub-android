@@ -22,27 +22,34 @@ final class SettingsPanel: NSView {
         didSet { if !isHidden, !loaded, serial != nil { refresh() } }
     }
 
-    /// namespace, key, label, on-value, off-value
+    /// namespace, key, label, SF Symbol, on-value, off-value
     private struct Toggle {
-        let namespace: String, key: String, label: String, on: String, off: String
+        let namespace: String, key: String, label: String, icon: String, on: String, off: String
+        /// What an unset ("null") value means on the device. The animation scales ship on, so
+        /// that stays the default; a developer overlay like the refresh-rate counter ships off.
+        var defaultOn: Bool = true
     }
 
     private static let toggles: [Toggle] = [
         .init(namespace: "system", key: "show_touches", label: "Show taps",
-              on: "1", off: "0"),
+              icon: "hand.tap", on: "1", off: "0"),
         .init(namespace: "system", key: "pointer_location", label: "Pointer location",
-              on: "1", off: "0"),
+              icon: "cursorarrow.motionlines", on: "1", off: "0"),
+        // Developer options' "Show refresh rate" — the Hz counter SurfaceFlinger draws in the
+        // corner. Off unless somebody turned it on, unlike the animation scales below.
+        .init(namespace: "global", key: "show_refresh_rate", label: "Show refresh rate",
+              icon: "speedometer", on: "1", off: "0", defaultOn: false),
         .init(namespace: "global", key: "stay_on_while_plugged_in", label: "Stay awake while charging",
-              on: "7", off: "0"),
+              icon: "bolt", on: "7", off: "0"),
         .init(namespace: "global", key: "window_animation_scale", label: "Window animations",
-              on: "1", off: "0"),
+              icon: "macwindow", on: "1", off: "0"),
         .init(namespace: "global", key: "transition_animation_scale", label: "Transition animations",
-              on: "1", off: "0"),
+              icon: "rectangle.2.swap", on: "1", off: "0"),
         .init(namespace: "global", key: "animator_duration_scale", label: "Animator duration",
-              on: "1", off: "0"),
+              icon: "timer", on: "1", off: "0"),
     ]
 
-    private var checkboxes: [NSButton] = []
+    private var switches: [NSSwitch] = []
     private let status = NSTextField(labelWithString: "")
     private var loaded = false
 
@@ -58,13 +65,36 @@ final class SettingsPanel: NSView {
 
     private func build() {
         var views: [NSView] = []
+        var rows: [NSView] = []
         for (index, toggle) in Self.toggles.enumerated() {
-            let box = NSButton(checkboxWithTitle: toggle.label, target: self,
-                               action: #selector(toggleChanged(_:)))
-            box.tag = index
-            box.font = .systemFont(ofSize: 11)
-            checkboxes.append(box)
-            views.append(box)
+            // Device Hub puts the label on the left and a switch against the trailing edge,
+            // not a titled checkbox. Its switches measure 36x18pt; a stock NSSwitch is 54x21,
+            // half again as wide, so .mini is the closest match.
+            let sw = NSSwitch()
+            sw.controlSize = .mini
+            sw.target = self
+            sw.action = #selector(toggleChanged(_:))
+            sw.tag = index
+            switches.append(sw)
+
+            let label = NSTextField(labelWithString: toggle.label)
+            label.font = .systemFont(ofSize: 11)
+            label.lineBreakMode = .byTruncatingTail
+            label.setContentCompressionResistancePriority(.init(200), for: .horizontal)
+
+            // Leading glyph, as Device Hub and the iOS hub both draw. Secondary tint so it
+            // reads as a marker for the row rather than competing with the label.
+            let image = NSImageView()
+            image.image = NSImage(systemSymbolName: toggle.icon, accessibilityDescription: nil)
+            image.contentTintColor = .secondaryLabelColor
+            image.translatesAutoresizingMaskIntoConstraints = false
+            image.widthAnchor.constraint(equalToConstant: 16).isActive = true
+
+            let row = NSStackView(views: [image, label, NSView(), sw])
+            row.orientation = .horizontal
+            row.spacing = 6
+            rows.append(row)
+            views.append(row)
         }
         status.font = .systemFont(ofSize: 10)
         status.textColor = .tertiaryLabelColor
@@ -82,6 +112,11 @@ final class SettingsPanel: NSView {
             stack.leadingAnchor.constraint(equalTo: leadingAnchor),
             stack.trailingAnchor.constraint(equalTo: trailingAnchor),
         ])
+        // The stack aligns leading, so each row has to be told to span the full width or the
+        // switch would sit next to its label instead of at the end of the row.
+        for row in rows {
+            row.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -28).isActive = true
+        }
     }
 
     /// Read the current values back, so the boxes reflect the device rather than guessing.
@@ -100,15 +135,15 @@ final class SettingsPanel: NSView {
                 self.loaded = true
                 for (index, toggle) in Self.toggles.enumerated() where index < values.count {
                     let value = values[index]
-                    // "null" means unset, which for all of these means the default: on.
-                    let isOn = value == "null" ? (toggle.on != "0") : (value != toggle.off)
-                    self.checkboxes[index].state = isOn ? .on : .off
+                    // "null" means unset, so fall back to what the device ships with.
+                    let isOn = value == "null" ? toggle.defaultOn : (value != toggle.off)
+                    self.switches[index].state = isOn ? .on : .off
                 }
             }
         }
     }
 
-    @objc private func toggleChanged(_ sender: NSButton) {
+    @objc private func toggleChanged(_ sender: NSSwitch) {
         guard let serial, sender.tag < Self.toggles.count else { return }
         let toggle = Self.toggles[sender.tag]
         let value = sender.state == .on ? toggle.on : toggle.off
