@@ -104,7 +104,31 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
             recenterButton.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             recenterButton.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -10),
         ])
+
+        // First-run prompt: with no saved reference, the twin has no way to know which way the
+        // phone faces, so it must be told once. Shown until the user calibrates, then never again.
+        hint.stringValue = "Hold your phone the way you want it to face you,\nthen press Set Facing Me"
+        hint.alignment = .center
+        hint.isEditable = false
+        hint.isBordered = false
+        hint.drawsBackground = true
+        hint.backgroundColor = NSColor(calibratedWhite: 0, alpha: 0.55)
+        hint.textColor = .white
+        hint.font = .systemFont(ofSize: 13, weight: .medium)
+        hint.maximumNumberOfLines = 2
+        hint.wantsLayer = true
+        hint.layer?.cornerRadius = 8
+        hint.isHidden = true
+        hint.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(hint)
+        NSLayoutConstraint.activate([
+            hint.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            hint.bottomAnchor.constraint(equalTo: recenterButton.topAnchor, constant: -14),
+            hint.widthAnchor.constraint(lessThanOrEqualTo: view.widthAnchor, multiplier: 0.9),
+        ])
     }
+
+    private let hint = NSTextField(labelWithString: "")
 
     // MARK: - mode lifecycle
 
@@ -117,8 +141,12 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
         // the phone's live pose if the user has never set it.
         savedFacingMe = Self.loadFacingMe()
         reference = savedFacingMe
-        recenterRequested = savedFacingMe == nil
+        // Never auto-capture: with no saved reference the twin can't know which way the phone
+        // faces, so it waits — sitting face-on and inert — and prompts the user to calibrate.
+        // Only pressing "Set Facing Me" captures. With a saved reference it tracks right away.
+        recenterRequested = false
         referenceSamples = []
+        hint.isHidden = savedFacingMe != nil
         smoothed = nil
         window?.makeFirstResponder(scnView)
         frameLock.lock()
@@ -248,11 +276,15 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
         let gPlane = SCNPlane(width: gSize, height: gSize)
         let gMaterial = SCNMaterial()
         gMaterial.lightingModel = .physicallyBased
-        gMaterial.diffuse.contents = NSColor(calibratedWhite: 0.32, alpha: 1)
+        gMaterial.diffuse.contents = NSColor(calibratedWhite: 0.14, alpha: 1)   // a shade below the body
         gMaterial.metalness.contents = 1.0
-        gMaterial.roughness.contents = 0.25       // fairly polished, so it flashes when it turns
-        gMaterial.transparent.contents = Self.pixelGMask(side: 256)   // the G shape, white on black
-        gMaterial.isDoubleSided = true
+        gMaterial.roughness.contents = 0.22       // polished, so the engraved edges catch light
+        // rgbZero: transparency comes from the mask's luminance, so the black background is fully
+        // transparent and ONLY the G stroke carries the material — otherwise the whole square
+        // plane would show as a metal patch.
+        gMaterial.transparent.contents = Self.pixelGMask(side: 512)   // the G shape, white on black
+        gMaterial.transparencyMode = .rgbZero
+        gMaterial.isDoubleSided = false
         gPlane.materials = [gMaterial]
         let gNode = SCNNode(geometry: gPlane)
         gNode.position = SCNVector3(0, -bodyHeight * 0.12, -bodyDepth / 2 - 0.001)
@@ -359,6 +391,10 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
                 referenceSamples = []
                 recenterRequested = false
                 smoothed = nil
+                let v = averaged.vector
+                AppBuild.log(String(format: "twin: facing-me reference set — gyro (%.4f, %.4f, %.4f, %.4f)",
+                                    v.x, v.y, v.z, v.w))
+                DispatchQueue.main.async { [weak self] in self?.hint.isHidden = true }
             }
             return   // hold the current pose until the reference settles
         }
