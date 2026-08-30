@@ -94,6 +94,7 @@ final class AgentSession {
 
     /// flags.h values.
     private static let flagStartVideoStream: Int = 0x01
+    private static let flagTurnOffDisplay: Int = 0x02
     private static let flagUseUInput: Int = 0x08
     /// Our addition (see PROVENANCE.md): stream rotation vector quaternions on a fourth channel.
     private static let flagStreamOrientation: Int = 0x100
@@ -110,9 +111,12 @@ final class AgentSession {
         if let override = ProcessInfo.processInfo.environment["RPLAYHUB_AGENT_FLAGS"],
            let value = Int(override) { return value }
         // The sensor channel rides the twin gate: with the feature off, the agent is asked for
-        // exactly what it always was.
+        // exactly what it always was. Screen-off is scrcpy's --turn-screen-off: the agent
+        // blanks the panel while mirroring and restores it when the session ends.
         return Self.flagStartVideoStream
             | (AppBuild.twinEnabled ? Self.flagStreamOrientation : 0)
+            | (UserDefaults.standard.bool(forKey: "TurnScreenOffWhileMirroring")
+                   ? Self.flagTurnOffDisplay : 0)
     }
 
     // MARK: - lifecycle

@@ -40,6 +40,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var twinActive = false
     private var twinGateItem: NSMenuItem?
     private var twinOpenItem: NSMenuItem?
+    private var screenOffItem: NSMenuItem?
 
     /// What we ask the agent to cap the encode at. Well above any display we will show it on, so
     /// the picture is never the limiting factor; the agent scales down to the device's own size
@@ -180,6 +181,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         strip.onAction = { [weak self] action in self?.perform(action) }
         mirror.onCommand = { [weak self] command in self?.perform(command) }
+        mirror.onFilesDropped = { [weak self] urls in self?.handleDroppedFiles(urls) }
         // The device commands move from the mirror pane to the device's row in the sidebar.
         if let commands = mirror.commandMenu { sidebar.appendDeviceCommands(from: commands) }
     }
@@ -419,6 +421,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         toggleTwin()
     }
 
+    /// scrcpy's --turn-screen-off. The agent applies it at session start (and restores the panel
+    /// when the session ends), so flipping it mid-session restarts the session with the new flag.
+    @objc private func toggleScreenOff() {
+        let key = "TurnScreenOffWhileMirroring"
+        let enabled = !UserDefaults.standard.bool(forKey: key)
+        UserDefaults.standard.set(enabled, forKey: key)
+        screenOffItem?.state = enabled ? .on : .off
+        AppBuild.log("turn screen off while mirroring: \(enabled)")
+        if let session, sessionReachedRunning,
+           let device = sidebar.devices.first(where: { $0.serial == session.serial }), device.isReady {
+            startSession(for: device)
+        }
+    }
+
     @objc private func toggleTwinGate() {
         AppBuild.twinEnabled.toggle()
         let enabled = AppBuild.twinEnabled
@@ -520,6 +536,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         control.send(ControlMessage.stopVideoStream())
         control.send(ControlMessage.startVideoStream(width: Int32(maxVideoSize.width),
                                                      height: Int32(maxVideoSize.height)))
+    }
+
+    /// scrcpy's window behaviour: drop an APK to install it, drop anything else to put it in
+    /// Download. Sequential on one background queue — two drops should not race adb.
+    private func handleDroppedFiles(_ urls: [URL]) {
+        guard let serial = session?.serial else { return }
+        window.subtitle = "receiving \(urls.count == 1 ? urls[0].lastPathComponent : "\(urls.count) files")"
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            var failures: [String] = []
+            for url in urls {
+                let name = url.lastPathComponent
+                do {
+                    if url.pathExtension.lowercased() == "apk" {
+                        try Adb.install(serial, apkPath: url.path)
+                        AppBuild.log("installed \(name)")
+                    } else {
+                        let remote = "/sdcard/Download/\(name)"
+                        try Adb.push(serial, localPath: url.path, remotePath: remote)
+                        // Make the file visible to apps right away rather than after a reboot.
+                        _ = try? Adb.shell(serial, "am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE -d file://"
+                                           + Adb.shellQuote(remote))
+                        AppBuild.log("pushed \(name) to Download")
+                    }
+                } catch {
+                    AppBuild.log("drop failed for \(name): \(error)")
+                    failures.append(name)
+                }
+            }
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.window.subtitle = self.session != nil ? "mirroring" : ""
+                if !failures.isEmpty {
+                    self.present(message: "Could not transfer \(failures.joined(separator: ", "))",
+                                 detail: "See the log for the adb error.")
+                }
+            }
+        }
     }
 
     private func perform(_ command: MirrorView.Command) {
@@ -717,6 +770,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                            keyEquivalent: "m").target = self
         deviceMenu.addItem(withTitle: "Stop Mirroring", action: #selector(stopMirroring),
                            keyEquivalent: ".").target = self
+        deviceMenu.addItem(.separator())
+        let screenOff = deviceMenu.addItem(withTitle: "Turn Screen Off While Mirroring",
+                                           action: #selector(toggleScreenOff), keyEquivalent: "")
+        screenOff.target = self
+        screenOff.state = UserDefaults.standard.bool(forKey: "TurnScreenOffWhileMirroring")
+            ? .on : .off
+        screenOffItem = screenOff
         deviceMenu.addItem(.separator())
         deviceMenu.addItem(withTitle: "Refresh Devices", action: #selector(refreshFromMenu),
                            keyEquivalent: "r").target = self

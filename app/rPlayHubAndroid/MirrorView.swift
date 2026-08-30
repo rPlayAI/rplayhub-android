@@ -55,6 +55,10 @@ final class MirrorView: NSView, NSMenuItemValidation {
     /// The View Screen button was pressed, or the idle mockup was clicked.
     var onViewScreen: (() -> Void)?
 
+    /// Files dropped on the mirror — APKs install, everything else lands in the device's
+    /// Download folder, the way scrcpy's window does it. Only fires with a live session.
+    var onFilesDropped: (([URL]) -> Void)?
+
     /// A right-click menu item was chosen.
     var onCommand: ((Command) -> Void)?
 
@@ -207,8 +211,27 @@ final class MirrorView: NSView, NSMenuItemValidation {
         }
     }
 
+    // MARK: - drag and drop
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        guard control != nil,
+              sender.draggingPasteboard.canReadObject(forClasses: [NSURL.self], options: nil)
+        else { return [] }
+        return .copy
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        guard control != nil,
+              let urls = sender.draggingPasteboard.readObjects(forClasses: [NSURL.self],
+                                                               options: nil) as? [URL],
+              !urls.isEmpty else { return false }
+        onFilesDropped?(urls)
+        return true
+    }
+
     private func setUpLayers() {
         buildContextMenu()
+        registerForDraggedTypes([.fileURL])
         wantsLayer = true
         layer?.masksToBounds = true
         // Matches ~/rplay-hub: the mirror pane is white, the two side panes 0xFAFAFA.

@@ -44,6 +44,12 @@ Recorded here so a resync can reapply them:
   24 bytes per packet: four little-endian float32 (x, y, z, w) + int64 timestamp_ns. Drives the
   host's 3D "device twin" view. Not upstreamable as-is; on a resync, re-add the files and hooks.
 
+- `agent.cc` (`Run`): when `TURN_OFF_DISPLAY_WHILE_MIRRORING` is set, instantiate the session
+  environment right after the controller is created. Upstream relies on Studio's host sending an
+  initial orientation message, whose side effect creates the environment and with it the
+  display-off and stay-awake behaviour; our host sends no such message, so without this the flag
+  silently did nothing.
+
 ## Refetch
 
     B=refs/heads/mirror-goog-studio-main

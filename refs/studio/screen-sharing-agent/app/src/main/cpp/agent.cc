@@ -248,6 +248,13 @@ void Agent::Run(const vector<string>& args) {
   control_socket_fd_ = CreateAndConnectSocket(socket_name_);
   controller_ = new Controller(control_socket_fd_);
 
+  // rPlayHub addition (see PROVENANCE.md): upstream's host sends an initial orientation message,
+  // which instantiates the session environment as a side effect; ours does not, so the flag has
+  // to force it here or the display never actually turns off (and stay-awake never engages).
+  if ((flags_ & TURN_OFF_DISPLAY_WHILE_MIRRORING) != 0) {
+    GetSessionEnvironment();
+  }
+
   struct sigaction action = { .sa_handler = SighupHandler };
   int res = sigaction(SIGHUP, &action, nullptr);
   if (res < 0) {
