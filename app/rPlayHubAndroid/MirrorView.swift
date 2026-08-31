@@ -364,6 +364,19 @@ final class MirrorView: NSView, NSMenuItemValidation {
 
     private var rotatedDisplaySize: CGSize {
         guard displaySize.width > 0 else { return CGSize(width: 9, height: 19.5) }
+        // The bezel must match what is actually DRAWN, and the drawn aspect is the coded frame's,
+        // turned by the correction the sublayerTransform applies. Keying this off the header's
+        // orientation raced the decoder — the header and the frame arrive through different
+        // paths, and after a few quick rotations the mirror could stick with a portrait bezel
+        // around landscape content. The frame cannot disagree with itself, so prefer it.
+        if videoSize.width > 0, videoSize.height > 0 {
+            let landscape = orientationCorrection % 2 == 1
+                ? videoSize.height > videoSize.width
+                : videoSize.width > videoSize.height
+            return landscape
+                ? CGSize(width: displaySize.height, height: displaySize.width)
+                : displaySize
+        }
         return presentedQuadrants % 2 == 1
             ? CGSize(width: displaySize.height, height: displaySize.width)
             : displaySize
@@ -456,7 +469,7 @@ final class MirrorView: NSView, NSMenuItemValidation {
         // than in the crop maths, which is expressed in the picture's own frame.
         clipLayer.sublayerTransform = orientationCorrection == 0
             ? CATransform3DIdentity
-            : CATransform3DMakeRotation(CGFloat(orientationCorrection) * .pi / 2, 0, 0, 1)
+            : CATransform3DMakeRotation(-CGFloat(orientationCorrection) * .pi / 2, 0, 0, 1)
 
         layOutCutout(in: rect)
 

@@ -1115,6 +1115,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                               action: #selector(toggleMirroring), keyEquivalent: "m")
         mirrorToggle.target = self
         mirrorToggleItem = mirrorToggle
+        // The Rotate button asks the agent for a FIXED quadrant; once used, the picture no longer
+        // follows the phone's own sensor and hand-rotation fights the frozen orientation. This is
+        // the way back (the agent's -1: follow the device again).
+        deviceMenu.addItem(withTitle: "Follow Device Rotation",
+                           action: #selector(followDeviceRotation), keyEquivalent: "").target = self
         deviceMenu.addItem(.separator())
         let screenOff = deviceMenu.addItem(withTitle: "Turn Screen Off While Mirroring",
                                            action: #selector(toggleScreenOff), keyEquivalent: "")
@@ -1217,6 +1222,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func mirrorSelected() {
         guard let device = sidebar.selected else { return }
         revealMirror(for: device)
+    }
+
+    @objc private func followDeviceRotation() {
+        session?.control?.send(ControlMessage.setDeviceOrientation(-1))
     }
 
     @objc private func toggleMirroring() {
