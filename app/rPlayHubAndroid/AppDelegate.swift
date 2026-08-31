@@ -550,6 +550,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             startSession(for: device, reveal: true)   // the .running hook fires the request
             return
         }
+        // Same device as the current session — reveal its mirror and wake it now (the fresh-device
+        // path above reveals via reveal:true, and wakes on adopt).
+        revealCurrentMirror()
+        wakeDevice()
         if let control = session?.control {
             control.send(ControlMessage.stopVideoStream(displayId: currentDisplayId))
             control.send(ControlMessage.createNewDisplay(width: 1920, height: 1080, dpi: 240,
@@ -639,6 +643,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func startFusion(package: String) {
+        // Opening an app on a virtual display also brings the session fully up: reveal the mirror
+        // (as View Screen would) and wake the phone, so nothing is left prepared-but-hidden and
+        // the fusion display — which shares the phone's power state — is awake to render.
+        revealCurrentMirror()
+        wakeDevice()
         // Already showing a fusion display: reuse it. Launching onto the existing display is
         // instant, while a second create-while-streaming can bounce the agent (it recovers via
         // the queued request, but that costs ~15 seconds and leaks the first display).
@@ -1535,6 +1544,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// Reveal a prepared session instantly, or start one if none is prepared for this device.
+    /// Reveal the current session's mirror (what "View Screen" does) without needing a device
+    /// object — used by fusion, so opening an app on a virtual display also turns the prepared
+    /// session into a live, ungated one.
+    private func revealCurrentMirror() {
+        guard session != nil, !mirrorRevealed else { return }
+        mirror.reveal()
+        mirrorRevealed = true
+        strip.setSessionActive(true)
+        window.subtitle = "mirroring"
+        refreshMirrorToggle()
+    }
+
     private func revealMirror(for device: AdbDevice) {
         if let session, session.serial == device.serial {
             mirror.reveal()              // agent already running — show the buffered stream now
