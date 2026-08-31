@@ -70,6 +70,40 @@ fi
 APP="$DD/Build/Products/Release/$APP_NAME.app"
 [[ -d "$APP" ]] || { echo "build did not produce $APP" >&2; exit 1; }
 
+# ---------------------------------------------------------------- bundle the runtime pieces
+# The app is useless without the device agent and an adb binary; bake both into Resources so the
+# DMG runs on a Mac with no Android tooling. agentDirectory() checks Resources/agent first, and
+# Adb.binaryPath() checks Resources/adb/adb first.
+say "bundling the agent and adb into the app"
+AGENT_SRC="${RPLAYHUB_AGENT_DIR:-$ROOT/build/agent}"
+if [[ -f "$AGENT_SRC/screen-sharing-agent.jar" ]]; then
+    mkdir -p "$APP/Contents/Resources/agent"
+    cp -R "$AGENT_SRC/." "$APP/Contents/Resources/agent/"
+else
+    say "WARNING: no built agent at $AGENT_SRC — mirroring will need one on the target machine"
+fi
+ADB_BIN=""
+for c in "${ANDROID_HOME:-}/platform-tools/adb" \
+         /opt/homebrew/share/android-commandlinetools/platform-tools/adb \
+         /opt/homebrew/bin/adb /usr/local/bin/adb; do
+    [[ -x "$c" ]] && { ADB_BIN="$c"; break; }
+done
+if [[ -n "$ADB_BIN" ]]; then
+    mkdir -p "$APP/Contents/Resources/adb"
+    cp "$ADB_BIN" "$APP/Contents/Resources/adb/adb"
+else
+    say "WARNING: no adb binary found to bundle — the target machine will need platform-tools"
+fi
+# Adding files broke the code seal; sign the nested binary, then the bundle again.
+if [[ -n "$SIGN_ID" ]]; then
+    [[ -f "$APP/Contents/Resources/adb/adb" ]] && \
+        codesign --force --sign "$SIGN_ID" --timestamp --options=runtime "$APP/Contents/Resources/adb/adb"
+    codesign --force --sign "$SIGN_ID" --timestamp --options=runtime "$APP"
+else
+    [[ -f "$APP/Contents/Resources/adb/adb" ]] && codesign --force --sign - "$APP/Contents/Resources/adb/adb"
+    codesign --force --sign - "$APP"
+fi
+
 # ---------------------------------------------------------------- verify signature
 say "verifying signature"
 codesign --verify --deep --strict --verbose=2 "$APP" 2>&1 | sed 's/^/    /'
