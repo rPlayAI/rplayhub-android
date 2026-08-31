@@ -522,10 +522,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         guard let w = screenWindow.window else { return }
         w.title = title
-        // The title bar floats transparently over the video — borderless to the eye, but the
-        // traffic lights and drag remain.
-        w.titlebarAppearsTransparent = true
-        w.styleMask.insert(.fullSizeContentView)
+        // A classic title bar — traffic lights and the app's name — with the picture flush
+        // against it below; only the content area keeps the 16:9 aspect.
         w.contentAspectRatio = NSSize(width: 16, height: 9)
         w.setContentSize(NSSize(width: 1152, height: 648))
     }

@@ -423,7 +423,7 @@ final class MirrorView: NSView, NSMenuItemValidation {
                           y: max(20, (bounds.height - blockHeight) / 2),
                           width: w, height: h)
         }
-        let inset: CGFloat = 12
+        let inset: CGFloat = borderless ? 0 : 12   // fusion windows want the picture flush
         let available = bounds.insetBy(dx: inset, dy: inset)
         let scale = min(available.width / content.width, available.height / content.height)
         let w = content.width * scale
