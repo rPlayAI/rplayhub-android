@@ -236,6 +236,14 @@ final class AppsPanel: NSView, NSTableViewDataSource, NSTableViewDelegate {
         return filtered[row]
     }
 
+    /// The package id currently selected in the list, for a keyboard-driven action (e.g. Fuse).
+    /// nil when nothing is selected.
+    var selectedPackageId: String? {
+        let row = table.selectedRow
+        guard row >= 0, row < filtered.count else { return nil }
+        return filtered[row].id
+    }
+
     // MARK: - actions
 
     /// Every one of these is a round trip, so none of them run on the main queue.

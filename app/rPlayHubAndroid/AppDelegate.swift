@@ -482,6 +482,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var stripMinHeight: NSLayoutConstraint?
     private var stripZeroHeight: NSLayoutConstraint?
 
+    /// Fuse whatever app is selected in the Apps tab — the keyboard path to what the Apps-list
+    /// right-click "Open on Virtual Display" does, so fusion is drivable without the mouse.
+    @objc private func fuseSelectedApp() {
+        guard let package = inspector.apps.selectedPackageId else {
+            present(message: "No app selected",
+                    detail: "Pick an app in the Apps tab, then press ⇧⌘F.")
+            return
+        }
+        startFusion(package: package)
+    }
+
     @objc private func startDesktopMode() { requestDesktopMode(on: nil) }
 
     /// `device` targets a specific phone (the sidebar row's context menu); nil means the current
@@ -1329,6 +1340,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         displaysMenu = displaySub
         deviceMenu.addItem(withTitle: "Desktop Mode", action: #selector(startDesktopMode),
                            keyEquivalent: "d").target = self
+        let fuse = deviceMenu.addItem(withTitle: "Open Selected App on Virtual Display",
+                                      action: #selector(fuseSelectedApp), keyEquivalent: "f")
+        fuse.keyEquivalentModifierMask = [.command, .shift]
+        fuse.target = self
         let newDisplay = deviceMenu.addItem(withTitle: "New Virtual Display", action: nil,
                                             keyEquivalent: "")
         let newDisplaySub = NSMenu(title: "New Virtual Display")
