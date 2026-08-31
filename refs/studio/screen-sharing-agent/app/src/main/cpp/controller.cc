@@ -408,7 +408,7 @@ void Controller::ProcessMessage(const ControlMessage& message) {
     // rPlayHub additions (see refs/studio/PROVENANCE.md).
     case CreateNewDisplayMessage::TYPE: {
       const auto& m = (const CreateNewDisplayMessage&) message;
-      Agent::CreateNewDisplay(m.width(), m.height(), m.dpi());
+      Agent::CreateNewDisplay(m.width(), m.height(), m.dpi(), m.decorations());
       break;
     }
 

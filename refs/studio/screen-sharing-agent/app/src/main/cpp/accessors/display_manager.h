@@ -52,7 +52,7 @@ public:
 
   // rPlayHub addition (see PROVENANCE.md): a standalone virtual display of its own — not a
   // mirror — for running apps on, scrcpy's --new-display. Null on failure.
-  static VirtualDisplay CreateNewDisplay(Jni jni, const char* name, int32_t width, int32_t height, int32_t dpi);
+  static VirtualDisplay CreateNewDisplay(Jni jni, const char* name, int32_t width, int32_t height, int32_t dpi, bool decorations);
   // rPlayHub addition: the display id of a VirtualDisplay.
   static int32_t GetVirtualDisplayId(Jni jni, const VirtualDisplay& display);
   // rPlayHub addition: launch a package's main activity onto a display, so a new virtual display

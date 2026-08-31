@@ -345,14 +345,14 @@ void Agent::SetMaxVideoResolution(int32_t display_id, Size max_video_resolution)
 }
 
 // rPlayHub addition (see PROVENANCE.md).
-void Agent::CreateNewDisplay(int32_t width, int32_t height, int32_t dpi) {
+void Agent::CreateNewDisplay(int32_t width, int32_t height, int32_t dpi, bool decorations) {
   assert(this_thread::get_id() == main_thread_id_);
   if (feature_level_ < 34) {
     Log::W("New virtual displays need API 34+; this device reports %d", feature_level_);
     return;
   }
   Jni jni = Jvm::GetJni();
-  VirtualDisplay created = DisplayManager::CreateNewDisplay(jni, "rplayhub.display", width, height, dpi);
+  VirtualDisplay created = DisplayManager::CreateNewDisplay(jni, "rplayhub.display", width, height, dpi, decorations);
   // The explicit upcast avoids VirtualDisplay's deleted copy constructor winning overload
   // resolution — the class is only constructible from JObject&&.
   auto display = std::make_unique<VirtualDisplay>(static_cast<JObject&&>(created));

@@ -214,6 +214,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         sidebar.onMirror = { [weak self] device in self?.startSession(for: device) }
         sidebar.onStopMirror = { [weak self] in self?.stopMirroring() }
         sidebar.isMirroring = { [weak self] in self?.mirrorRevealed ?? false }
+        sidebar.onDesktopMode = { [weak self] device in self?.requestDesktopMode(on: device) }
         mirror.onViewScreen = { [weak self] in
             guard let self else { return }
             // Fall back to the only device there is. Requiring a selection when there is
@@ -381,7 +382,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                let control = session?.control {
                 fusionRequested = true
                 control.send(ControlMessage.stopVideoStream(displayId: currentDisplayId))
-                control.send(ControlMessage.createNewDisplay(width: 1920, height: 1080, dpi: 240))
+                control.send(ControlMessage.createNewDisplay(width: 1920, height: 1080, dpi: 240,
+                                                             decorations: desktopModeRequested))
                 AppBuild.log("fusion: requested a display for \(pendingFusionPackage ?? "desktop mode")")
             }
         case .failed(let reason):
@@ -480,11 +482,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var stripMinHeight: NSLayoutConstraint?
     private var stripZeroHeight: NSLayoutConstraint?
 
-    @objc private func startDesktopMode() {
+    @objc private func startDesktopMode() { requestDesktopMode(on: nil) }
+
+    /// `device` targets a specific phone (the sidebar row's context menu); nil means the current
+    /// session or the selected device — Desktop Mode is per-device, like everything else here.
+    private func requestDesktopMode(on device: AdbDevice?) {
         desktopModeRequested = true
+        if let device, session?.serial != device.serial {
+            startSession(for: device, reveal: true)   // the .running hook fires the request
+            return
+        }
         if let control = session?.control {
             control.send(ControlMessage.stopVideoStream(displayId: currentDisplayId))
-            control.send(ControlMessage.createNewDisplay(width: 1920, height: 1080, dpi: 240))
+            control.send(ControlMessage.createNewDisplay(width: 1920, height: 1080, dpi: 240,
+                                                         decorations: true))
             AppBuild.log("fusion: requested a desktop-mode display")
         } else if let device = sidebar.selected ?? sidebar.devices.first(where: { $0.isReady }) {
             startSession(for: device, reveal: true)   // the .running hook fires the request
@@ -563,7 +574,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         pendingFusionPackage = package
         if let control = session?.control {
             control.send(ControlMessage.stopVideoStream(displayId: currentDisplayId))
-            control.send(ControlMessage.createNewDisplay(width: 1920, height: 1080, dpi: 240))
+            control.send(ControlMessage.createNewDisplay(width: 1920, height: 1080, dpi: 240,
+                                                         decorations: false))
             AppBuild.log("fusion: requested a display for \(package)")
         } else if let device = sidebar.selected ?? sidebar.devices.first(where: { $0.isReady }) {
             startSession(for: device, reveal: true)   // the .running hook fires the request
@@ -581,7 +593,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         control.send(ControlMessage.stopVideoStream(displayId: currentDisplayId))
         control.send(ControlMessage.createNewDisplay(width: dims[0].int32Value,
                                                      height: dims[1].int32Value,
-                                                     dpi: dims[2].int32Value))
+                                                     dpi: dims[2].int32Value,
+                                                     decorations: true))
         AppBuild.log("requested a \(dims[0])×\(dims[1]) virtual display")
     }
 

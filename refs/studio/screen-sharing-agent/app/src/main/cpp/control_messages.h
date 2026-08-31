@@ -1201,17 +1201,20 @@ private:
 // host learns the new display's id from the video packet headers that follow.
 class CreateNewDisplayMessage : ControlMessage {
 public:
-  CreateNewDisplayMessage(int32_t width, int32_t height, int32_t dpi)
+  CreateNewDisplayMessage(int32_t width, int32_t height, int32_t dpi, bool decorations)
       : ControlMessage(TYPE),
         width_(width),
         height_(height),
-        dpi_(dpi) {
+        dpi_(dpi),
+        decorations_(decorations) {
   }
   ~CreateNewDisplayMessage() override = default;
 
   [[nodiscard]] int32_t width() const { return width_; }
   [[nodiscard]] int32_t height() const { return height_; }
   [[nodiscard]] int32_t dpi() const { return dpi_; }
+  // System decorations (taskbar, launcher): on for a desktop, off for a bare app display.
+  [[nodiscard]] bool decorations() const { return decorations_; }
 
   static constexpr int TYPE = 120;
 
@@ -1223,6 +1226,7 @@ private:
   int32_t width_;
   int32_t height_;
   int32_t dpi_;
+  bool decorations_;
 
   DISALLOW_COPY_AND_ASSIGN(CreateNewDisplayMessage);
 };

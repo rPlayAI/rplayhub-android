@@ -166,6 +166,33 @@ final class AppsPanel: NSView, NSTableViewDataSource, NSTableViewDelegate {
                 self.loaded = true
                 self.applyFilter()
                 self.status.stringValue = "\(result.count) package\(result.count == 1 ? "" : "s")"
+                self.fetchLabels(serial: serial, packages: result.map(\.id))
+            }
+        }
+    }
+
+    /// Real launcher names for the whole list in ONE device round trip: the agent jar's AppLabel
+    /// entry (run via app_process) prints one label per argument package, in order, echoing the
+    /// package back where it has no label. Labels arrive a beat after the list renders.
+    private func fetchLabels(serial: String, packages ids: [String]) {
+        guard !ids.isEmpty else { return }
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let cmd = "CLASSPATH=\(AgentSession.devicePathBase)/\(AgentSession.jarName)"
+                + " app_process / com.android.tools.screensharing.AppLabel "
+                + ids.joined(separator: " ") + " 2>/dev/null"
+            guard let out = try? Adb.shell(serial, cmd) else { return }
+            let labels = out.components(separatedBy: "\n")
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.isEmpty }
+            guard labels.count == ids.count else { return }
+            DispatchQueue.main.async {
+                guard let self, self.serial == serial else { return }
+                var byId = [String: String]()
+                for (id, label) in zip(ids, labels) where label != id { byId[id] = label }
+                for i in self.packages.indices {
+                    self.packages[i].label = byId[self.packages[i].id]
+                }
+                self.applyFilter()
             }
         }
     }
@@ -177,7 +204,9 @@ final class AppsPanel: NSView, NSTableViewDataSource, NSTableViewDelegate {
 
     @objc private func applyFilter() {
         let query = search.stringValue.trimmingCharacters(in: .whitespaces).lowercased()
-        filtered = query.isEmpty ? packages : packages.filter { $0.id.lowercased().contains(query) }
+        filtered = query.isEmpty ? packages : packages.filter {
+            $0.id.lowercased().contains(query) || ($0.label?.lowercased().contains(query) ?? false)
+        }
         table.reloadData()
     }
 
@@ -296,7 +325,9 @@ final class AppsPanel: NSView, NSTableViewDataSource, NSTableViewDelegate {
                    row: Int) -> NSView? {
         let package = filtered[row]
         let cell = NSTableCellView()
-        let label = NSTextField(labelWithString: package.id)
+        // "YouTube (com.google.android.youtube)" once the labels arrive; the package alone until.
+        let title = package.label.map { "\($0) (\(package.id))" } ?? package.id
+        let label = NSTextField(labelWithString: title)
         label.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
         label.textColor = package.isSystem ? .secondaryLabelColor : .labelColor
         label.lineBreakMode = .byTruncatingMiddle

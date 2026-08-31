@@ -214,11 +214,12 @@ VirtualDisplay DisplayManager::CreateVirtualDisplay(
       jni, create_virtual_display_method_, JString(jni, name).ref(), width, height, display_id, SurfaceToJava(jni, surface).ref()));
 }
 
-VirtualDisplay DisplayManager::CreateNewDisplay(Jni jni, const char* name, int32_t width, int32_t height, int32_t dpi) {
+VirtualDisplay DisplayManager::CreateNewDisplay(Jni jni, const char* name, int32_t width, int32_t height, int32_t dpi, bool decorations) {
   JClass factory_class = jni.GetClass("com/android/tools/screensharing/VirtualDisplayFactory");
   jmethodID method = factory_class.GetStaticMethod(
-      "createNewDisplay", "(Ljava/lang/String;III)Landroid/hardware/display/VirtualDisplay;");
-  return VirtualDisplay(factory_class.CallStaticObjectMethod(jni, method, JString(jni, name).ref(), width, height, dpi));
+      "createNewDisplay", "(Ljava/lang/String;IIIZ)Landroid/hardware/display/VirtualDisplay;");
+  return VirtualDisplay(factory_class.CallStaticObjectMethod(
+      jni, method, JString(jni, name).ref(), width, height, dpi, decorations));
 }
 
 int32_t DisplayManager::GetVirtualDisplayId(Jni jni, const VirtualDisplay& display) {

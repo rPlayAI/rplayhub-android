@@ -306,7 +306,8 @@ CreateNewDisplayMessage* CreateNewDisplayMessage::Deserialize(Base128InputStream
   int32_t width = stream.ReadInt32();
   int32_t height = stream.ReadInt32();
   int32_t dpi = stream.ReadInt32();
-  return new CreateNewDisplayMessage(width, height, dpi);
+  bool decorations = stream.ReadInt32() != 0;
+  return new CreateNewDisplayMessage(width, height, dpi, decorations);
 }
 
 DestroyNewDisplayMessage* DestroyNewDisplayMessage::Deserialize(Base128InputStream& stream) {

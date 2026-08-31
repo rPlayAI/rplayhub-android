@@ -54,11 +54,16 @@ public final class VirtualDisplayFactory {
   /** Keeps the newest standalone display's device powered; see createNewDisplay. */
   private static android.media.ImageReader keepAlive;
 
-  /** Called from native code. Returns null on failure. */
-  public static VirtualDisplay createNewDisplay(String name, int width, int height, int dpi) {
+  /**
+   * Called from native code. Returns null on failure. {@code decorations} decides whether the
+   * display gets Android's system decorations — taskbar and launcher, wanted for a desktop,
+   * clutter under a single app.
+   */
+  public static VirtualDisplay createNewDisplay(String name, int width, int height, int dpi,
+      boolean decorations) {
     int fullFlags = FLAG_PUBLIC | FLAG_OWN_CONTENT_ONLY | FLAG_SUPPORTS_TOUCH
-        | FLAG_ROTATES_WITH_CONTENT | FLAG_SHOULD_SHOW_SYSTEM_DECORATIONS | FLAG_TRUSTED
-        | FLAG_OWN_FOCUS;
+        | FLAG_ROTATES_WITH_CONTENT | FLAG_TRUSTED | FLAG_OWN_FOCUS
+        | (decorations ? FLAG_SHOULD_SHOW_SYSTEM_DECORATIONS : 0);
     // OWN_DISPLAY_GROUP and ALWAYS_UNLOCKED are deliberately NOT requested: with either, the
     // mirror capture of the display comes back solid black (a DisplayManager mirror lives in the
     // default group and cross-group content is withheld), and the SurfaceControl alternative

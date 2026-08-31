@@ -64,7 +64,7 @@ public:
 
   // rPlayHub additions (see PROVENANCE.md): standalone virtual displays, scrcpy's --new-display.
   // Creates the display and immediately streams it; the host follows the video packet headers.
-  static void CreateNewDisplay(int32_t width, int32_t height, int32_t dpi);
+  static void CreateNewDisplay(int32_t width, int32_t height, int32_t dpi, bool decorations);
   static void DestroyNewDisplay(int32_t display_id);
   // rPlayHub: whether this display was created by CreateNewDisplay — such displays start OFF and
   // the streamer waits for the launched app to wake them instead of ending the stream.

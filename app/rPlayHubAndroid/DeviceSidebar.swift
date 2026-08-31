@@ -16,6 +16,8 @@ final class DeviceSidebar: NSView {
     /// "Mirror" from the row's context menu or a double click.
     var onMirror: ((AdbDevice) -> Void)?
     var onStopMirror: (() -> Void)?
+    /// Desktop Mode on a specific device — the clicked row's, not necessarily the selected one.
+    var onDesktopMode: ((AdbDevice) -> Void)?
     /// Whether a mirror session is currently live — drives the toggle entry's title/behaviour.
     var isMirroring: (() -> Bool)?
 
@@ -139,6 +141,8 @@ final class DeviceSidebar: NSView {
         // One entry that toggles — its title is set in menuNeedsUpdate from the live state.
         menu.addItem(withTitle: "Start Screen Mirroring", action: #selector(toggleMirrorFromMenu),
                      keyEquivalent: "").target = self
+        menu.addItem(withTitle: "Desktop Mode", action: #selector(desktopModeFromMenu),
+                     keyEquivalent: "").target = self
         menu.addItem(.separator())
         menu.addItem(withTitle: "Copy Serial", action: #selector(copySerial), keyEquivalent: "")
             .target = self
@@ -257,6 +261,10 @@ final class DeviceSidebar: NSView {
     @objc private func rowDoubleClicked() {
         guard let device = device(at: tableView.clickedRow) else { return }
         onMirror?(device)
+    }
+
+    @objc private func desktopModeFromMenu() {
+        if let device = clickedOrSelected() { onDesktopMode?(device) }
     }
 
     @objc private func toggleMirrorFromMenu() {

@@ -179,12 +179,17 @@ enum ControlMessage {
 
     /// Our agent addition — scrcpy's --new-display: create a standalone virtual display and
     /// start streaming it. The new display's id shows up in the video packet headers.
-    static func createNewDisplay(width: Int32, height: Int32, dpi: Int32) -> Data {
+    static func createNewDisplay(width: Int32, height: Int32, dpi: Int32,
+                                 decorations: Bool) -> Data {
         var w = Base128Writer()
         w.writeInt32(Int32(typeCreateNewDisplay))
         w.writeInt32(width)
         w.writeInt32(height)
         w.writeInt32(dpi)
+        // Whether the display gets Android's system decorations (taskbar, launcher): yes for
+        // Desktop Mode — the shell IS the content — no for an app window, where the taskbar
+        // along the bottom is clutter.
+        w.writeInt32(decorations ? 1 : 0)
         return w.data
     }
 
