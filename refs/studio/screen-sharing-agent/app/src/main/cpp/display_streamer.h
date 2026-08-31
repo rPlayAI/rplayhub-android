@@ -49,6 +49,17 @@ public:
   // Stops the streamer. Waits for the streamer's thread to terminate.
   void Stop();
 
+  // rPlayHub addition (see PROVENANCE.md): stream an Agent-owned standalone virtual display
+  // instead of creating a mirror display. Call before Start; the display must outlive this
+  // streamer and is never released by it. The size is used to synthesize a DisplayInfo, since
+  // GetDisplayInfo returns 0x0 for such a display.
+  void UseExternalDisplay(VirtualDisplay* display, int32_t width, int32_t height, int32_t dpi) {
+    external_display_ = display;
+    external_width_ = width;
+    external_height_ = height;
+    external_dpi_ = dpi;
+  }
+
   // Sets orientation of the device display. The orientation parameter may have a negative value
   // equal to one of the OrientationReset values.
   void SetVideoOrientation(int32_t orientation);
@@ -105,6 +116,12 @@ private:
   int32_t bit_rate_;
   bool bit_rate_reduced_ = false;
   VirtualDisplay virtual_display_;
+  // rPlayHub addition (see PROVENANCE.md): a standalone virtual display owned by the Agent,
+  // adopted by this streamer instead of creating a mirror display. Never released here.
+  VirtualDisplay* external_display_ = nullptr;
+  int32_t external_width_ = 0;
+  int32_t external_height_ = 0;
+  int32_t external_dpi_ = 0;
   JObject display_token_;
 
   MediaCodec codec_;

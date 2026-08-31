@@ -301,6 +301,12 @@ void Agent::StartVideoStream(int32_t display_id, Size max_video_resolution) {
   if (!created) {
     display_streamer->SetMaxVideoResolution(max_video_resolution);
   }
+  // rPlayHub (see PROVENANCE.md): a display created by CreateNewDisplay is streamed by the
+  // GENERIC secondary-display path — the streamer mirrors it into its own capture display,
+  // exactly as it mirrors a physical secondary display. The earlier direct-attach experiment
+  // (UseExternalDisplay: render the encoder surface straight into the standalone display) sent
+  // the codec into a configure/-10000 restart loop and produced no frames; and WindowManager
+  // registers a standalone display's real DisplayInfo anyway, so the generic path can see it.
   display_streamer->Start();
 }
 
@@ -336,6 +342,54 @@ void Agent::SetMaxVideoResolution(int32_t display_id, Size max_video_resolution)
     DisplayStreamer& display_streamer = it->second;
     display_streamer.SetMaxVideoResolution(max_video_resolution);
   }
+}
+
+// rPlayHub addition (see PROVENANCE.md).
+void Agent::CreateNewDisplay(int32_t width, int32_t height, int32_t dpi) {
+  assert(this_thread::get_id() == main_thread_id_);
+  if (feature_level_ < 34) {
+    Log::W("New virtual displays need API 34+; this device reports %d", feature_level_);
+    return;
+  }
+  Jni jni = Jvm::GetJni();
+  VirtualDisplay created = DisplayManager::CreateNewDisplay(jni, "rplayhub.display", width, height, dpi);
+  // The explicit upcast avoids VirtualDisplay's deleted copy constructor winning overload
+  // resolution — the class is only constructible from JObject&&.
+  auto display = std::make_unique<VirtualDisplay>(static_cast<JObject&&>(created));
+  if (display->IsNull()) {
+    Log::W("Unable to create a %dx%d virtual display", width, height);
+    return;
+  }
+  display->MakeGlobal();
+  int32_t display_id = DisplayManager::GetVirtualDisplayId(jni, *display);
+  new_displays_.try_emplace(display_id, NewDisplay { std::move(display), width, height, dpi });
+  Log::I("Created virtual display %d (%dx%d @ %d dpi)", display_id, width, height, dpi);
+  // Stream it right away: attaching the encoder surface is also what turns the display on,
+  // and the host discovers the display id from the packet headers.
+  // The HOST launches the chosen app onto this display once it adopts the stream (it learns the
+  // id from the packet headers, then runs `am start --display N` over adb — in-process
+  // startActivity is denied to shell). RequestDisplayPower nudges the display towards its
+  // default power state on releases that support it.
+  DisplayManager::RequestDisplayPower(jni, display_id, DisplayInfo::STATE_UNKNOWN);
+  StartVideoStream(display_id, max_video_resolution_);
+}
+
+bool Agent::IsNewDisplay(int32_t display_id) {
+  return new_displays_.find(display_id) != new_displays_.end();
+}
+
+// rPlayHub addition (see PROVENANCE.md).
+void Agent::DestroyNewDisplay(int32_t display_id) {
+  assert(this_thread::get_id() == main_thread_id_);
+  auto it = new_displays_.find(display_id);
+  if (it == new_displays_.end()) {
+    Log::W("DestroyNewDisplay: %d is not a display created here", display_id);
+    return;
+  }
+  StopVideoStream(display_id);  // The streamer holds a pointer to the display; stop it first.
+  it->second.display->ReleaseDisplay(Jvm::GetJni());
+  new_displays_.erase(it);
+  Log::I("Destroyed virtual display %d", display_id);
 }
 
 void Agent::StartAudioStream() {
@@ -457,6 +511,7 @@ int32_t Agent::flags_(0);
 SocketWriter* Agent::video_socket_writer_(nullptr);
 SocketWriter* Agent::audio_socket_writer_(nullptr);
 SocketWriter* Agent::sensor_socket_writer_(nullptr);
+std::map<int32_t, Agent::NewDisplay> Agent::new_displays_;
 int Agent::control_socket_fd_(-1);
 map<int32_t, DisplayStreamer> Agent::display_streamers_;
 DisplayStreamer* Agent::primary_display_streamer_(nullptr);

@@ -99,6 +99,13 @@ unique_ptr<ControlMessage> ControlMessage::Deserialize(int32_t type, Base128Inpu
     case ResetUiSettingsRequest::TYPE:
       return unique_ptr<ControlMessage>(ResetUiSettingsRequest::Deserialize(stream));
 
+    // rPlayHub additions (see refs/studio/PROVENANCE.md).
+    case CreateNewDisplayMessage::TYPE:
+      return unique_ptr<ControlMessage>(CreateNewDisplayMessage::Deserialize(stream));
+
+    case DestroyNewDisplayMessage::TYPE:
+      return unique_ptr<ControlMessage>(DestroyNewDisplayMessage::Deserialize(stream));
+
     default:
       Log::Fatal(INVALID_CONTROL_MESSAGE, "Unexpected message type %d", type);
   }
@@ -291,6 +298,19 @@ UiSettingsChangeRequest* UiSettingsChangeRequest::Deserialize(Base128InputStream
 ResetUiSettingsRequest* ResetUiSettingsRequest::Deserialize(Base128InputStream& stream) {
   int32_t request_id = stream.ReadInt32();
   return new ResetUiSettingsRequest(request_id);
+}
+
+// rPlayHub additions (see refs/studio/PROVENANCE.md).
+
+CreateNewDisplayMessage* CreateNewDisplayMessage::Deserialize(Base128InputStream& stream) {
+  int32_t width = stream.ReadInt32();
+  int32_t height = stream.ReadInt32();
+  int32_t dpi = stream.ReadInt32();
+  return new CreateNewDisplayMessage(width, height, dpi);
+}
+
+DestroyNewDisplayMessage* DestroyNewDisplayMessage::Deserialize(Base128InputStream& stream) {
+  return new DestroyNewDisplayMessage(stream.ReadInt32());
 }
 
 void ErrorResponse::Serialize(Base128OutputStream& stream) const {

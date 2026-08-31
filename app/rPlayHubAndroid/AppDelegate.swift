@@ -153,7 +153,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                               (inspector as NSView, 320.0)] {
             pane.translatesAutoresizingMaskIntoConstraints = false
             let resting = pane.widthAnchor.constraint(equalToConstant: width)
-            resting.priority = NSLayoutConstraint.Priority(700)
+            // The stage's resting width is only a starting preference: resizing the window should
+            // pour all the new space into the picture, so its constraint must lose to everything.
+            resting.priority = NSLayoutConstraint.Priority(pane === middle ? 250 : 700)
             resting.isActive = true
             pane.widthAnchor.constraint(greaterThanOrEqualToConstant: width - 60).isActive = true
         }
@@ -222,6 +224,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         strip.onAction = { [weak self] action in self?.perform(action) }
         mirror.onCommand = { [weak self] command in self?.perform(command) }
         mirror.onFilesDropped = { [weak self] urls in self?.handleDroppedFiles(urls) }
+        inspector.apps.onFusion = { [weak self] package in self?.startFusion(package: package) }
         // The device commands move from the mirror pane to the device's row in the sidebar.
         if let commands = mirror.commandMenu { sidebar.appendDeviceCommands(from: commands) }
     }
@@ -349,6 +352,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             sessionReachedRunning = true
             attachStream()
             startHealthTimer()
+            // Fusion queued before the session was up: request the display now.
+            if let package = pendingFusionPackage, !fusionRequested, let control = session?.control {
+                fusionRequested = true
+                control.send(ControlMessage.stopVideoStream(displayId: currentDisplayId))
+                control.send(ControlMessage.createNewDisplay(width: 1920, height: 1080, dpi: 240))
+                AppBuild.log("fusion: requested a display for \(package)")
+            }
         case .failed(let reason):
             window.subtitle = "failed"
             strip.setSessionActive(false)
@@ -429,6 +439,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - virtual displays (scrcpy --new-display)
 
+    /// Fusion: create a virtual display and, once its frames arrive and the viewer adopts it,
+    /// launch the chosen app onto it (adoptDisplay performs the launch — the id is only known
+    /// from the packet headers). Starts a session first if none is running.
+    private var pendingFusionPackage: String?
+    private var fusionRequested = false
+
+    private func startFusion(package: String) {
+        pendingFusionPackage = package
+        if let control = session?.control {
+            control.send(ControlMessage.stopVideoStream(displayId: currentDisplayId))
+            control.send(ControlMessage.createNewDisplay(width: 1920, height: 1080, dpi: 240))
+            AppBuild.log("fusion: requested a display for \(package)")
+        } else if let device = sidebar.selected ?? sidebar.devices.first(where: { $0.isReady }) {
+            startSession(for: device, reveal: true)   // the .running hook fires the request
+        } else {
+            pendingFusionPackage = nil
+            present(message: "No device", detail: "Connect a device first, then try Fusion again.")
+        }
+    }
+
     @objc private func createVirtualDisplay(_ sender: NSMenuItem) {
         guard let dims = sender.representedObject as? [NSNumber], dims.count == 3,
               let session, let control = session.control else { return }
@@ -472,6 +502,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             session.control?.send(ControlMessage.displayConfigurationRequest())
         }
         AppBuild.log("now showing display \(id)")
+        // Fusion: the virtual display's frames arrived and the viewer adopted it — put the chosen
+        // app on it and pop the stage into its own resizable window.
+        if id != 0, let package = pendingFusionPackage, let serial = session?.serial {
+            pendingFusionPackage = nil
+            fusionRequested = false
+            AppBuild.log("fusion: launching \(package) on display \(id)")
+            DispatchQueue.global(qos: .userInitiated).async {
+                try? Adb.launch(serial, package: package, displayId: id)
+            }
+            if !screenWindow.isOpen { openScreenWindow() }
+        }
     }
 
     // MARK: - pause, and picking a display

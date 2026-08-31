@@ -142,6 +142,7 @@ final class AppsPanel: NSView, NSTableViewDataSource, NSTableViewDelegate {
     private func rowMenu() -> NSMenu {
         let menu = NSMenu()
         for (title, action) in [("Launch", #selector(launchSelected)),
+                                ("Open on Virtual Display", #selector(fusionSelected)),
                                 ("Force Stop", #selector(stopSelected)),
                                 ("Copy Package Name", #selector(copySelected)),
                                 ("Export APK…", #selector(exportApk)),
@@ -203,6 +204,16 @@ final class AppsPanel: NSView, NSTableViewDataSource, NSTableViewDelegate {
     /// Which device display Launch targets — follows the mirrored display, so with a virtual
     /// display up, Launch puts the app there.
     var launchDisplayId: Int32 = 0
+
+    /// Fusion: open the app on a NEW virtual display of its own — the app runs there beside
+    /// whatever the phone's screen is doing, and the viewer switches to it. Wired by the owner.
+    var onFusion: ((String) -> Void)?
+
+    @objc private func fusionSelected() {
+        guard let package = selectedPackage else { return }
+        status.stringValue = "Opening \(package.id) on a virtual display…"
+        onFusion?(package.id)
+    }
 
     @objc private func launchSelected() {
         guard let serial else { return }

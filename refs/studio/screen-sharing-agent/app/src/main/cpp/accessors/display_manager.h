@@ -49,6 +49,16 @@ public:
   // Requires API 34+.
   static VirtualDisplay CreateVirtualDisplay(
       Jni jni, const char* name, int32_t width, int32_t height, int32_t display_id, ANativeWindow* surface);
+
+  // rPlayHub addition (see PROVENANCE.md): a standalone virtual display of its own — not a
+  // mirror — for running apps on, scrcpy's --new-display. Null on failure.
+  static VirtualDisplay CreateNewDisplay(Jni jni, const char* name, int32_t width, int32_t height, int32_t dpi);
+  // rPlayHub addition: the display id of a VirtualDisplay.
+  static int32_t GetVirtualDisplayId(Jni jni, const VirtualDisplay& display);
+  // rPlayHub addition: launch a package's main activity onto a display, so a new virtual display
+  // has something to render (an empty one produces no frames). Returns 1 if started, else 0.
+  static int32_t LaunchApp(Jni jni, const char* package_name, int32_t display_id);
+
   // Checks if the display power control is supported by the Display Manager. Always returns false for API < 35.
   static bool DisplayPowerControlSupported(Jni jni);
   // Requests to power a display OFF or reset it to a power state it supposed to have. Requires API 35+.

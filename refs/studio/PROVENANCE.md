@@ -50,6 +50,22 @@ Recorded here so a resync can reapply them:
   display-off and stay-awake behaviour; our host sends no such message, so without this the flag
   silently did nothing.
 
+- **Standalone virtual displays / "Fusion" (new capability, ours):**
+  `VirtualDisplayFactory.java` (new file) creates a standalone virtual display — a display of its
+  own, not a mirror; scrcpy's `--new-display` — via `DisplayManagerGlobal` + a reflected
+  `VirtualDisplayConfig`, which is what makes the owner-uid check accept shell, and attaches a
+  consumed `ImageReader` keep-alive surface (a surfaceless virtual display's device stays OFF and
+  every activity on it is paused). Hooks: `control_messages.{h,cc}` + `controller.cc`
+  (`CreateNewDisplay`/`DestroyNewDisplay` messages), `agent.{h,cc}` (`new_displays_` ownership,
+  `IsNewDisplay`, `RequestDisplayPower` nudge, streaming starts on creation),
+  `display_manager.{h,cc}` (`CreateNewDisplay`/`GetVirtualDisplayId` JNI),
+  `virtual_display.{h,cc}` (JNI-explicit `Resize`/`SetSurface` — the adopted display is a global
+  reference, and the no-JNIEnv variants abort on it), and `display_streamer.{h,cc}` (stream such a
+  display via the ordinary mirror path even though it reports state OFF — its device follows the
+  phone's power group; do NOT attach the encoder directly to it, that loops the codec). The HOST
+  launches the chosen app onto the display (`am start --display N` over adb; in-process
+  startActivity is denied to shell). Not upstreamable; on a resync re-add the files and hooks.
+
 ## Refetch
 
     B=refs/heads/mirror-goog-studio-main

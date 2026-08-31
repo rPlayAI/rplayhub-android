@@ -405,6 +405,17 @@ void Controller::ProcessMessage(const ControlMessage& message) {
       ResetUiSettings((const ResetUiSettingsRequest&) message);
       break;
 
+    // rPlayHub additions (see refs/studio/PROVENANCE.md).
+    case CreateNewDisplayMessage::TYPE: {
+      const auto& m = (const CreateNewDisplayMessage&) message;
+      Agent::CreateNewDisplay(m.width(), m.height(), m.dpi());
+      break;
+    }
+
+    case DestroyNewDisplayMessage::TYPE:
+      Agent::DestroyNewDisplay(((const DestroyNewDisplayMessage&) message).display_id());
+      break;
+
     default:
       Log::Fatal(INVALID_CONTROL_MESSAGE, "Unexpected message type %d", message.type());
   }

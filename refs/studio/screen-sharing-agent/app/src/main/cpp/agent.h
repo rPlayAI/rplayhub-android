@@ -21,6 +21,7 @@
 #include <string>
 #include <vector>
 
+#include "accessors/virtual_display.h"
 #include "audio_streamer.h"
 #include "codec_info.h"
 #include "controller.h"
@@ -60,6 +61,14 @@ public:
   static void StopVideoStream(int32_t display_id);
   static void StartAudioStream();
   static void StopAudioStream();
+
+  // rPlayHub additions (see PROVENANCE.md): standalone virtual displays, scrcpy's --new-display.
+  // Creates the display and immediately streams it; the host follows the video packet headers.
+  static void CreateNewDisplay(int32_t width, int32_t height, int32_t dpi);
+  static void DestroyNewDisplay(int32_t display_id);
+  // rPlayHub: whether this display was created by CreateNewDisplay — such displays start OFF and
+  // the streamer waits for the launched app to wake them instead of ending the stream.
+  static bool IsNewDisplay(int32_t display_id);
 
   static void Shutdown();
   [[noreturn]] static void ErrorShutdown(int32_t exit_code);
@@ -113,6 +122,17 @@ private:
   static SocketWriter* sensor_socket_writer_;  // rPlayHub addition, see PROVENANCE.md.
   static int control_socket_fd_;
   static std::map<int32_t, DisplayStreamer> display_streamers_;
+  // rPlayHub addition: displays created by CreateNewDisplay, owned here; streamers only adopt
+  // raw pointers to these (VirtualDisplay is neither copyable nor movable, hence unique_ptr).
+  struct NewDisplay {
+    std::unique_ptr<VirtualDisplay> display;
+    int32_t width;
+    int32_t height;
+    int32_t dpi;
+  };
+  // The size each was made with lets the streamer synthesize a DisplayInfo — GetDisplayInfo
+  // returns 0x0 for a standalone own-content display.
+  static std::map<int32_t, NewDisplay> new_displays_;
   static DisplayStreamer* primary_display_streamer_;
   static AudioStreamer* audio_streamer_;
   static SensorStreamer* sensor_streamer_;  // rPlayHub addition, see PROVENANCE.md.

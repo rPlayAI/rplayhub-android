@@ -16,6 +16,8 @@
 
 #include "display_streamer.h"
 
+#include <thread>
+
 #include <algorithm>
 #include <cmath>
 
@@ -206,8 +208,21 @@ void DisplayStreamer::Run() {
   uint32_t frame_before_timeout = 0;
 
   while (stop_reason != FrameStreamStopReason::END_OF_STREAM && !thread_handle_.IsStopping() && !Agent::IsShuttingDown()) {
-    DisplayInfo display_info = DisplayManager::GetDisplayInfo(jni, display_id_);
-    if (!display_info.IsValid() || !display_info.IsOn()) {
+    // rPlayHub: a standalone display has no queryable DisplayInfo — GetDisplayInfo returns 0x0
+    // for it — so build one from the size it was created with. It is always "on"; the encoder
+    // surface is what makes it render.
+    DisplayInfo display_info = external_display_ != nullptr
+        ? DisplayInfo(external_width_, external_height_, external_dpi_, /* rotation */ 0,
+                      /* layer_stack */ display_id_, /* flags */ 0, DisplayInfo::TYPE_INTERNAL,
+                      DisplayInfo::STATE_ON)
+        : DisplayManager::GetDisplayInfo(jni, display_id_);
+    // rPlayHub: a display created by CreateNewDisplay reports state OFF (nothing wakes a bare
+    // virtual display — not content, not input, not RequestDisplayPower), but the MIRROR capture
+    // display this streamer creates below is its own powered display on the same layerstack, so
+    // streaming works regardless. Proceed past the power check for such displays instead of
+    // waiting or ending the stream.
+    if (external_display_ == nullptr && (!display_info.IsValid() || !display_info.IsOn())
+        && !(display_info.IsValid() && Agent::IsNewDisplay(display_id_))) {
       Log::I("Display %d: turned off", display_id_);
       if (display_id_ != PRIMARY_DISPLAY_ID) {
         DisplayManager::OnDisplayRemoved(jni, display_id_);
@@ -225,7 +240,8 @@ void DisplayStreamer::Run() {
     }
     Log::D("Display %d: stop_reason=%d, frame_number_=%u frame_before_timeout=%u frame_timeout_=%lld ms",
            display_id_, stop_reason, frame_number_, frame_before_timeout, frame_timeout_.count());
-    if (virtual_display_.IsNull() && display_token_.IsNull()) {
+    // rPlayHub: an adopted standalone display already exists — skip creating a mirror display.
+    if (external_display_ == nullptr && virtual_display_.IsNull() && display_token_.IsNull()) {
       {
         unique_lock lock(mutex_);
         if (codec_stop_pending_) {
@@ -270,7 +286,12 @@ void DisplayStreamer::Run() {
       if (status != AMEDIA_OK) {
         Log::Fatal(INPUT_SURFACE_CREATION_ERROR, "Display %d: AMediaCodec_createInputSurface returned %d", display_id_, status);
       }
-      if (Agent::feature_level() >= 34) {
+      if (external_display_ != nullptr) {
+        // rPlayHub: a standalone display keeps its own size; the encoder just renders it. Use the
+        // jni-explicit calls — this display is a global reference (see VirtualDisplay).
+        external_display_->Resize(jni, video_size.width, video_size.height, display_info_.logical_density_dpi);
+        external_display_->SetSurface(jni, surface);
+      } else if (Agent::feature_level() >= 34) {
         virtual_display_.Resize(video_size.width, video_size.height, display_info_.logical_density_dpi);
         virtual_display_.SetSurface(surface);
       } else {
@@ -296,7 +317,9 @@ void DisplayStreamer::Run() {
     Log::D("Display %d: ProcessFramesUntilCodecStopped returned %d", display_id_, stop_reason);
     StopCodec();
     DeleteCodec();
-    if (virtual_display_.IsNotNull()) {
+    if (external_display_ != nullptr) {
+      external_display_->SetSurface(jni, nullptr);
+    } else if (virtual_display_.IsNotNull()) {
       virtual_display_.SetSurface(nullptr);
     } else {
       SurfaceControl::SetSurface(jni, display_token_, nullptr);
@@ -532,6 +555,11 @@ bool DisplayStreamer::ReduceBitRate() {
 }
 
 void DisplayStreamer::ReleaseVirtualDisplay(Jni jni) {
+  // rPlayHub: an adopted standalone display belongs to the Agent and outlives this streamer —
+  // apps are running on it. Only mirror displays this streamer created are released here.
+  if (external_display_ != nullptr) {
+    return;
+  }
   virtual_display_.ReleaseDisplay(jni);
   if (display_token_.IsNotNull()) {
     SurfaceControl::DestroyDisplay(jni, display_token_.Release());

@@ -65,6 +65,15 @@ void VirtualDisplay::SetSurface(ANativeWindow* surface) {
   CallVoidMethod(set_surface_method_, SurfaceToJava(GetJni(), surface).ref());
 }
 
+// rPlayHub: JNI-explicit variants for a global-reference display (see header).
+void VirtualDisplay::Resize(Jni jni, int32_t width, int32_t height, int32_t density_dpi) {
+  CallVoidMethod(jni, resize_method_, width, height, density_dpi);
+}
+
+void VirtualDisplay::SetSurface(Jni jni, ANativeWindow* surface) {
+  CallVoidMethod(jni, set_surface_method_, SurfaceToJava(jni, surface).ref());
+}
+
 jmethodID VirtualDisplay::set_surface_method_ = nullptr;
 jmethodID VirtualDisplay::resize_method_ = nullptr;
 jmethodID VirtualDisplay::release_method_ = nullptr;

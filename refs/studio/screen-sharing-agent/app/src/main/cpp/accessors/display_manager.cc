@@ -214,6 +214,25 @@ VirtualDisplay DisplayManager::CreateVirtualDisplay(
       jni, create_virtual_display_method_, JString(jni, name).ref(), width, height, display_id, SurfaceToJava(jni, surface).ref()));
 }
 
+VirtualDisplay DisplayManager::CreateNewDisplay(Jni jni, const char* name, int32_t width, int32_t height, int32_t dpi) {
+  JClass factory_class = jni.GetClass("com/android/tools/screensharing/VirtualDisplayFactory");
+  jmethodID method = factory_class.GetStaticMethod(
+      "createNewDisplay", "(Ljava/lang/String;III)Landroid/hardware/display/VirtualDisplay;");
+  return VirtualDisplay(factory_class.CallStaticObjectMethod(jni, method, JString(jni, name).ref(), width, height, dpi));
+}
+
+int32_t DisplayManager::GetVirtualDisplayId(Jni jni, const VirtualDisplay& display) {
+  JClass factory_class = jni.GetClass("com/android/tools/screensharing/VirtualDisplayFactory");
+  jmethodID method = factory_class.GetStaticMethod("displayId", "(Landroid/hardware/display/VirtualDisplay;)I");
+  return factory_class.CallStaticIntMethod(jni, method, display.ref());
+}
+
+int32_t DisplayManager::LaunchApp(Jni jni, const char* package_name, int32_t display_id) {
+  JClass factory_class = jni.GetClass("com/android/tools/screensharing/VirtualDisplayFactory");
+  jmethodID method = factory_class.GetStaticMethod("launchApp", "(Ljava/lang/String;I)I");
+  return factory_class.CallStaticIntMethod(jni, method, JString(jni, package_name).ref(), display_id);
+}
+
 bool DisplayManager::RequestDisplayPower(Jni jni, int32_t display_id, int state) {
   InitializeStatics(jni);
   if (request_display_power_method_ == nullptr) {

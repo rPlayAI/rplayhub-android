@@ -1195,4 +1195,59 @@ private:
   DISALLOW_COPY_AND_ASSIGN(ResetUiSettingsRequest);
 };
 
+// rPlayHub additions below (see refs/studio/PROVENANCE.md). Type numbers far above upstream's.
+
+// Creates a standalone virtual display — scrcpy's --new-display — and starts streaming it. The
+// host learns the new display's id from the video packet headers that follow.
+class CreateNewDisplayMessage : ControlMessage {
+public:
+  CreateNewDisplayMessage(int32_t width, int32_t height, int32_t dpi)
+      : ControlMessage(TYPE),
+        width_(width),
+        height_(height),
+        dpi_(dpi) {
+  }
+  ~CreateNewDisplayMessage() override = default;
+
+  [[nodiscard]] int32_t width() const { return width_; }
+  [[nodiscard]] int32_t height() const { return height_; }
+  [[nodiscard]] int32_t dpi() const { return dpi_; }
+
+  static constexpr int TYPE = 120;
+
+private:
+  friend class ControlMessage;
+
+  static CreateNewDisplayMessage* Deserialize(Base128InputStream& stream);
+
+  int32_t width_;
+  int32_t height_;
+  int32_t dpi_;
+
+  DISALLOW_COPY_AND_ASSIGN(CreateNewDisplayMessage);
+};
+
+// Stops streaming and destroys a display created by CreateNewDisplayMessage.
+class DestroyNewDisplayMessage : ControlMessage {
+public:
+  explicit DestroyNewDisplayMessage(int32_t display_id)
+      : ControlMessage(TYPE),
+        display_id_(display_id) {
+  }
+  ~DestroyNewDisplayMessage() override = default;
+
+  [[nodiscard]] int32_t display_id() const { return display_id_; }
+
+  static constexpr int TYPE = 121;
+
+private:
+  friend class ControlMessage;
+
+  static DestroyNewDisplayMessage* Deserialize(Base128InputStream& stream);
+
+  int32_t display_id_;
+
+  DISALLOW_COPY_AND_ASSIGN(DestroyNewDisplayMessage);
+};
+
 }  // namespace screensharing

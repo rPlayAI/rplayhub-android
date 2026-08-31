@@ -34,6 +34,10 @@ public:
 
   void Resize(int32_t width, int32_t height, int32_t density_dpi);
   void SetSurface(ANativeWindow* surface);
+  // rPlayHub: JNI-explicit variants — a display adopted from the Agent is a GLOBAL reference
+  // (jni_env_ is null), so it must be used with the current thread's JNIEnv, not GetJni().
+  void Resize(Jni jni, int32_t width, int32_t height, int32_t density_dpi);
+  void SetSurface(Jni jni, ANativeWindow* surface);
   void ReleaseDisplay();
   void ReleaseDisplay(Jni jni);
 
