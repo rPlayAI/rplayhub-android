@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>rPlayHub Android Help</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Sora:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root{
+  --ground:#f5f7f9; --surface:#ffffff; --surface-2:#eef1f5;
+  --ink:#171a21; --muted:#565f6d; --faint:#828c9b; --line:#e2e7ee;
+  --accent:#1668d6; --accent-ink:#0f4fa8; --live:#0c8a99;
+  --warn:#9c6400; --warn-bg:#faf0da; --warn-line:#ecd39a;
+  --note-bg:#e9f2fd; --note-line:#c8ddf7;
+  --kbd:#f2f4f8; --kbd-line:#d3dae4;
+  --shadow:0 1px 2px rgba(20,28,40,.05),0 8px 28px rgba(20,28,40,.06);
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --ground:#0e1116; --surface:#161b22; --surface-2:#1b222b;
+  --ink:#e7ecf3; --muted:#9aa4b3; --faint:#68727f; --line:#252d38;
+  --accent:#4c9bff; --accent-ink:#84b8ff; --live:#2fbecd;
+  --warn:#e0a44e; --warn-bg:#241d12; --warn-line:#4a3c22;
+  --note-bg:#12212f; --note-line:#26405a;
+  --kbd:#1d242d; --kbd-line:#303a46;
+  --shadow:0 1px 2px rgba(0,0,0,.3),0 10px 30px rgba(0,0,0,.35);
+}}
+:root[data-theme="dark"]{
+  --ground:#0e1116; --surface:#161b22; --surface-2:#1b222b;
+  --ink:#e7ecf3; --muted:#9aa4b3; --faint:#68727f; --line:#252d38;
+  --accent:#4c9bff; --accent-ink:#84b8ff; --live:#2fbecd;
+  --warn:#e0a44e; --warn-bg:#241d12; --warn-line:#4a3c22;
+  --note-bg:#12212f; --note-line:#26405a;
+  --kbd:#1d242d; --kbd-line:#303a46;
+  --shadow:0 1px 2px rgba(0,0,0,.3),0 10px 30px rgba(0,0,0,.35);
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+body{
+  margin:0; background:var(--ground); color:var(--ink);
+  font-family:"IBM Plex Sans",system-ui,-apple-system,sans-serif;
+  font-size:15px; line-height:1.6; -webkit-font-smoothing:antialiased;
+}
+code,kbd,.mono{font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace}
+.wrap{max-width:1100px; margin:0 auto; padding:0 24px}
+.layout{display:grid; grid-template-columns:236px minmax(0,1fr); gap:48px; align-items:start}
+header.top{border-bottom:1px solid var(--line); background:var(--surface); position:sticky; top:0; z-index:20}
+header.top .wrap{display:flex; align-items:center; gap:14px; padding-top:16px; padding-bottom:16px}
+.glyph{width:34px; height:34px; border-radius:9px; flex:none; position:relative;
+  background:linear-gradient(160deg,#3ddc84,var(--accent)); box-shadow:var(--shadow)}
+.glyph::after{content:""; position:absolute; inset:9px 11px; border-radius:3px; border:1.5px solid rgba(255,255,255,.92)}
+.brand{display:flex; flex-direction:column; line-height:1.2}
+.brand b{font-family:"Sora",sans-serif; font-weight:700; font-size:16px; letter-spacing:-.01em}
+.brand span{font-size:12.5px; color:var(--muted)}
+.top .spacer{flex:1}
+.top a.gh{font-size:13px; color:var(--accent-ink); text-decoration:none}
+.top a.gh:hover{text-decoration:underline}
+nav.toc{position:sticky; top:82px; padding:26px 0 40px; font-size:13.5px}
+nav.toc .grp{font-family:"Sora",sans-serif; font-weight:600; font-size:11px; letter-spacing:.08em;
+  text-transform:uppercase; color:var(--faint); margin:18px 0 8px}
+nav.toc .grp:first-child{margin-top:0}
+nav.toc a{display:block; color:var(--muted); text-decoration:none; padding:4px 10px; border-radius:7px}
+nav.toc a:hover{color:var(--ink); background:var(--surface-2)}
+main{padding:30px 0 80px; min-width:0}
+h1{font-family:"Sora",sans-serif; font-size:28px; letter-spacing:-.02em; margin:6px 0 8px}
+.lede{color:var(--muted); font-size:16px; max-width:64ch; margin:0 0 8px}
+section{margin-top:44px}
+h2{font-family:"Sora",sans-serif; font-size:20px; letter-spacing:-.01em; margin:0 0 4px;
+  padding-top:18px; border-top:1px solid var(--line)}
+section:first-of-type h2{border-top:none; padding-top:0}
+h3{font-family:"Sora",sans-serif; font-size:15.5px; margin:26px 0 6px}
+p{max-width:70ch}
+p,ul,ol{color:var(--ink)}
+ul,ol{padding-left:22px; max-width:68ch}
+li{margin:5px 0}
+li::marker{color:var(--faint)}
+a{color:var(--accent-ink)}
+kbd{display:inline-block; min-width:20px; text-align:center; background:var(--kbd);
+  border:1px solid var(--kbd-line); border-bottom-width:2px; border-radius:6px;
+  padding:1px 6px; font-size:12px; color:var(--ink)}
+code{background:var(--surface-2); border:1px solid var(--line); border-radius:5px;
+  padding:1px 5px; font-size:12.5px}
+.callout{border-radius:11px; padding:14px 16px; margin:18px 0; font-size:14px; border:1px solid; max-width:74ch}
+.callout .lbl{font-family:"Sora",sans-serif; font-weight:600; font-size:11.5px;
+  letter-spacing:.06em; text-transform:uppercase; display:block; margin-bottom:3px}
+.callout.note{background:var(--note-bg); border-color:var(--note-line)}
+.callout.note .lbl{color:var(--accent-ink)}
+.callout.warn{background:var(--warn-bg); border-color:var(--warn-line)}
+.callout.warn .lbl{color:var(--warn)}
+.callout p{margin:5px 0 0}
+.callout p:first-of-type{margin-top:0}
+.kv{border:1px solid var(--line); border-radius:11px; overflow:hidden; margin:18px 0; background:var(--surface); max-width:74ch}
+.kv .row{display:grid; grid-template-columns:200px minmax(0,1fr); gap:16px;
+  padding:11px 16px; border-top:1px solid var(--line); align-items:baseline}
+.kv .row:first-child{border-top:none}
+.kv .row .k{font-weight:600; font-size:13.5px}
+.kv .row .v{color:var(--muted); font-size:13.5px}
+.kv .row:nth-child(even){background:var(--surface-2)}
+footer{border-top:1px solid var(--line); color:var(--faint); font-size:12.5px;
+  padding:18px 0 40px; margin-top:60px}
+@media (max-width:840px){.layout{grid-template-columns:1fr}nav.toc{position:static; padding-bottom:0}}
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap">
+    <div class="glyph" aria-hidden="true"></div>
+    <div class="brand"><b>rPlayHub Android</b><span>Help &amp; user guide</span></div>
+    <div class="spacer"></div>
+    <a class="gh" href="https://github.com/rPlayAI/rplayhub-android">GitHub&nbsp;→</a>
+  </div>
+</header>
+
+<div class="wrap layout">
+<nav class="toc" aria-label="Contents">
+  <div class="grp">Basics</div>
+  <a href="#start">Getting started</a>
+  <a href="#window">The window</a>
+  <a href="#mirror">Screen mirroring</a>
+  <div class="grp">Features</div>
+  <a href="#device">Device features</a>
+  <a href="#displays">Virtual displays</a>
+  <a href="#twin">3D Device Twin</a>
+  <a href="#panels">Inspector panels</a>
+  <div class="grp">Reference</div>
+  <a href="#shortcuts">Shortcuts</a>
+  <a href="#trouble">Troubleshooting</a>
+</nav>
+
+<main>
+<h1>rPlayHub Android Help</h1>
+<p class="lede">Mirror and control your Android phone from the Mac — screen, touch, audio and
+clipboard — with a gyroscope-tracked 3D twin and app windows on virtual displays. Nothing is
+installed on the phone: a small agent runs over adb for the session and leaves with it.</p>
+
+<section id="start">
+<h2>Getting started</h2>
+<ol>
+  <li><b>Enable debugging on the phone.</b> Settings ▸ System ▸ Developer options ▸ turn on
+      <b>USB debugging</b> (and <b>Wireless debugging</b> for cable-free use). If Developer
+      options is hidden, tap Settings ▸ About phone ▸ <i>Build number</i> seven times.</li>
+  <li><b>Connect.</b> Plug in a USB cable, or pair once over Wi-Fi
+      (<code>adb pair</code> with the code shown under Wireless debugging, then
+      <code>adb connect &lt;phone-ip&gt;:5555</code>). The device appears in the sidebar.</li>
+  <li><b>Select the device.</b> The session is prepared in the background the moment a ready
+      device is selected, so the mirror opens instantly when you ask for it.</li>
+  <li><b>View Screen.</b> Click the <b>View Screen</b> button (or Device ▸ Start Screen
+      Mirroring, <kbd>⌘M</kbd>) and the live picture appears.</li>
+</ol>
+<div class="callout note"><span class="lbl">Note</span>
+<p>The first device may show an <b>Allow USB debugging?</b> prompt on the phone — accept it
+(check “Always allow from this computer” to skip it next time).</p></div>
+</section>
+
+<section id="window">
+<h2>The window</h2>
+<p>Three panes, like Device Hub on iPhone:</p>
+<div class="kv">
+  <div class="row"><div class="k">Devices (left)</div><div class="v">Every phone adb can see, with
+    its state. Right-click a device for Start/Stop Screen Mirroring, Copy Serial, Disconnect.</div></div>
+  <div class="row"><div class="k">Stage (middle)</div><div class="v">The live mirror in a real
+    device bezel — or the 3D twin when that mode is on. The control strip underneath holds
+    Back / Home / Recents, volume, power, rotate, screenshot and screen recording.</div></div>
+  <div class="row"><div class="k">Inspector (right)</div><div class="v">Info (device properties and
+    live stream health), Apps (launch, force-stop, install, export), and Files.</div></div>
+</div>
+<p>View ▸ <b>Open Screen in New Window</b> (<kbd>⌘N</kbd>) pops the stage into its own window —
+handy for recording a clean demo.</p>
+</section>
+
+<section id="mirror">
+<h2>Screen mirroring</h2>
+<ul>
+  <li><b>Touch:</b> click taps, drag swipes and scrolls, and flings and long-presses behave like a
+      finger — the phone’s own gesture recognition does the interpreting.</li>
+  <li><b>Type</b> on the Mac keyboard and it lands on the phone.</li>
+  <li><b>Scroll</b> with the trackpad or wheel anywhere on the picture.</li>
+  <li><b>Drag &amp; drop:</b> drop an <code>.apk</code> to install it; drop any other file and it
+      lands in the phone’s <code>Download</code> folder.</li>
+  <li><b>Clipboard</b> syncs both ways while mirroring.</li>
+  <li><b>Audio</b> from the phone plays through the Mac (Android 12+).</li>
+  <li><b>Screenshot and screen recording</b> buttons save what the phone shows.</li>
+</ul>
+<h3>Rotation</h3>
+<p>The mirror follows the phone: rotate the phone (with auto-rotate on) and the picture and bezel
+follow. The toolbar’s <b>Rotate</b> button instead <i>forces</i> the next orientation — the agent
+locks the phone’s auto-rotate while a forced orientation is active. Device ▸
+<b>Follow Device Rotation</b> hands control back to the phone’s sensor and restores the
+auto-rotate setting (ending the session restores it too).</p>
+<div class="callout note"><span class="lbl">Tip</span>
+<p>The Android home screen itself doesn’t rotate unless the launcher’s “Allow Home screen
+rotation” setting is on — apps rotate regardless.</p></div>
+</section>
+
+<section id="device">
+<h2>Device features</h2>
+<div class="kv">
+  <div class="row"><div class="k">Turn Screen Off While Mirroring</div><div class="v">Blanks the
+    phone’s panel while the mirror stays live — scrcpy’s classic privacy/battery trick. The panel
+    is restored when the session ends.</div></div>
+  <div class="row"><div class="k">Synchronize Clipboard</div><div class="v">Two-way clipboard sync
+    toggle.</div></div>
+  <div class="row"><div class="k">Forward Audio</div><div class="v">Phone audio through the Mac’s
+    output.</div></div>
+  <div class="row"><div class="k">Pause Display</div><div class="v">Freezes the stream without
+    ending the session.</div></div>
+  <div class="row"><div class="k">Mirror Display</div><div class="v">Pick which of the phone’s
+    displays to mirror when it has more than one.</div></div>
+  <div class="row"><div class="k">Follow Device Rotation</div><div class="v">Returns orientation
+    control to the phone after the Rotate button froze it.</div></div>
+</div>
+</section>
+
+<section id="displays">
+<h2>Virtual displays <span style="font-size:12px;color:var(--faint);font-family:'IBM Plex Sans'">experimental</span></h2>
+<p>Device ▸ <b>New Virtual Display</b> creates a standalone Android display — phone, tablet or
+desktop sized — that exists only for the Mac: the viewer switches to it, and apps launched there
+run <i>beside</i> whatever the phone’s own screen is doing, like scrcpy’s
+<code>--new-display</code>. Click and type in the viewer to drive it. Device ▸
+<b>Close Virtual Display</b> tears it down and returns to the phone’s screen.</p>
+<div class="callout warn"><span class="lbl">Limitations</span>
+<p>The feature is experimental. The virtual display shares the phone’s power state, so the phone’s
+screen must stay awake for apps on the virtual display to run; some apps decline to move displays
+while already running.</p></div>
+</section>
+
+<section id="twin">
+<h2>3D Device Twin</h2>
+<p>The signature trick: a 3D model of the phone in the stage, showing the live mirror on its
+screen and <b>tracking the real phone’s orientation from its gyroscope</b>. Turn the phone in
+your hand and the model turns with it.</p>
+<ul>
+  <li>Enable the mode from the View menu, with a live session running.</li>
+  <li>Hold the phone facing you and press <b>Set Facing Me</b> (<kbd>R</kbd>) once — that pose
+      becomes “facing you” and is remembered for later sessions.</li>
+  <li>The twin’s screen is touchable: click it to tap the phone, drag to scroll.</li>
+  <li>Drag empty space to orbit the camera; scroll to dolly.</li>
+  <li>View ▸ <b>Set 3D Back Image…</b> skins the model’s back with your own picture; without one,
+      a procedural Pixel-style back (camera bar and G) is drawn.</li>
+  <li>View ▸ <b>Show 3D Demo</b> plays a scripted rotation reel — nice for videos.</li>
+</ul>
+</section>
+
+<section id="panels">
+<h2>Inspector panels</h2>
+<div class="kv">
+  <div class="row"><div class="k">Info</div><div class="v">Device identity (model, Android
+    version, ABI, build) and live stream counters — packets, decoded/shown frames, resolution,
+    rotation, bitrate, gyro and audio flow.</div></div>
+  <div class="row"><div class="k">Apps</div><div class="v">Everything installed. Double-click or
+    right-click to Launch (onto the mirrored display), Force Stop, Copy Package Name,
+    <b>Export APK…</b> to the Mac, or Uninstall. Install APK… installs from the Mac.</div></div>
+  <div class="row"><div class="k">Files</div><div class="v">Browse the phone’s storage and pull
+    files to the Mac.</div></div>
+</div>
+</section>
+
+<section id="shortcuts">
+<h2>Shortcuts</h2>
+<div class="kv">
+  <div class="row"><div class="k"><kbd>⌘M</kbd></div><div class="v">Start / Stop Screen Mirroring</div></div>
+  <div class="row"><div class="k"><kbd>⌘N</kbd></div><div class="v">Open the screen in its own window</div></div>
+  <div class="row"><div class="k"><kbd>R</kbd></div><div class="v">Set Facing Me (in the 3D twin)</div></div>
+  <div class="row"><div class="k"><kbd>⌘?</kbd></div><div class="v">This help page</div></div>
+</div>
+</section>
+
+<section id="trouble">
+<h2>Troubleshooting</h2>
+<h3>The device shows “unauthorized”</h3>
+<p>Unlock the phone and accept the <i>Allow USB debugging?</i> prompt, then select the device
+again.</p>
+<h3>The device shows “offline”</h3>
+<p>Reseat the cable, or for Wi-Fi devices reconnect with
+<code>adb connect &lt;phone-ip&gt;:5555</code>. Toggling Wireless debugging off and on resets a
+stale connection.</p>
+<h3>The picture stutters or the session drops over Wi-Fi</h3>
+<p>The stream competes for airtime with everything else on the network. Moving closer to the
+router, using 5&nbsp;GHz, or plugging in USB gives the smoothest picture. A dropped session
+reconnects automatically.</p>
+<h3>The phone’s auto-rotate tile turned itself off</h3>
+<p>The toolbar’s Rotate button did that — a forced orientation requires it. Device ▸
+<b>Follow Device Rotation</b> restores it, and so does ending the session.</p>
+<h3>The mirror doesn’t rotate on the home screen</h3>
+<p>That’s the launcher: most Android home screens stay portrait unless “Allow Home screen
+rotation” is enabled in the launcher’s settings. Open any app that rotates and the mirror follows
+it.</p>
+</section>
+
+<footer class="wrap" style="padding-left:0;padding-right:0">
+  rPlayHub Android · <a href="https://github.com/rPlayAI/rplayhub-android">github.com/rPlayAI/rplayhub-android</a>
+</footer>
+</main>
+</div>
+</body>
+</html>

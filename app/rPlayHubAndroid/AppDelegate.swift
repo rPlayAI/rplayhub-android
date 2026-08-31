@@ -1210,6 +1210,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         viewItem.submenu = viewMenu
         main.addItem(viewItem)
 
+        let helpItem = NSMenuItem()
+        main.addItem(helpItem)
+        let helpMenu = NSMenu(title: "Help")
+        let help = helpMenu.addItem(withTitle: "rPlayHub Android Help", action: #selector(openHelp),
+                                    keyEquivalent: "?")   // ⌘? is the standard Help shortcut
+        help.target = self
+        helpMenu.addItem(.separator())
+        let gh = helpMenu.addItem(withTitle: "rPlayHub Android on GitHub",
+                                  action: #selector(openGitHub), keyEquivalent: "")
+        gh.target = self
+        helpItem.submenu = helpMenu
+        NSApp.helpMenu = helpMenu   // routes the Help-menu search field and ⌘? here
+
         NSApp.mainMenu = main
     }
 
@@ -1222,6 +1235,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func mirrorSelected() {
         guard let device = sidebar.selected else { return }
         revealMirror(for: device)
+    }
+
+    /// Where the Help menu points: docs/help.html on main, served by GitHub Pages so it renders
+    /// as a real page rather than as source.
+    private static let helpURL = "https://rplayai.github.io/rplayhub-android/help.html"
+    private static let repoURL = "https://github.com/rPlayAI/rplayhub-android"
+
+    @objc private func openHelp() {
+        if let url = URL(string: Self.helpURL) { NSWorkspace.shared.open(url) }
+    }
+
+    @objc private func openGitHub() {
+        if let url = URL(string: Self.repoURL) { NSWorkspace.shared.open(url) }
     }
 
     @objc private func followDeviceRotation() {

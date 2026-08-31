@@ -373,9 +373,13 @@ final class MirrorView: NSView, NSMenuItemValidation {
             let landscape = orientationCorrection % 2 == 1
                 ? videoSize.height > videoSize.width
                 : videoSize.width > videoSize.height
-            return landscape
-                ? CGSize(width: displaySize.height, height: displaySize.width)
-                : displaySize
+            // Orient displaySize to MATCH the frame — never blind-swap: a phone's canonical size
+            // is portrait, but a virtual display's is landscape-native, and swapping that drew a
+            // portrait bezel around a 1920x1080 stream.
+            let displayLandscape = displaySize.width > displaySize.height
+            return landscape == displayLandscape
+                ? displaySize
+                : CGSize(width: displaySize.height, height: displaySize.width)
         }
         return presentedQuadrants % 2 == 1
             ? CGSize(width: displaySize.height, height: displaySize.width)
