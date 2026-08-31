@@ -96,6 +96,9 @@ final class AppsPanel: NSView, NSTableViewDataSource, NSTableViewDelegate {
         table.menu = rowMenu()
         table.target = self
         table.doubleAction = #selector(launchSelected)
+        // Drag a row out to Finder (or any app, or a fusion window) and its APK is pulled there —
+        // the phone→Mac direction, on demand. .copy so the original stays on the device.
+        table.setDraggingSourceOperationMask(.copy, forLocal: false)
 
         scroll.documentView = table
         scroll.hasVerticalScroller = true
@@ -317,6 +320,20 @@ final class AppsPanel: NSView, NSTableViewDataSource, NSTableViewDelegate {
         }
     }
 
+    // MARK: - Drag out (APK to the Mac via a file promise)
+
+    /// Off-main work queue for promise fulfilment, so a big APK pull doesn't stall the drag.
+    private let promiseQueue = OperationQueue()
+
+    func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> NSPasteboardWriting? {
+        guard row >= 0, row < filtered.count else { return nil }
+        let provider = NSFilePromiseProvider(fileType: UTType(filenameExtension: "apk")?.identifier
+                                             ?? "public.data", delegate: self)
+        // The row's package, carried so the promise knows what to pull when it lands.
+        provider.userInfo = filtered[row].id
+        return provider
+    }
+
     @objc private func installApk() {
         guard let serial else { return }
         let panel = NSOpenPanel()
@@ -391,5 +408,37 @@ final class AppsPanel: NSView, NSTableViewDataSource, NSTableViewDelegate {
             }
         }
         return cell
+    }
+}
+
+extension AppsPanel: NSFilePromiseProviderDelegate {
+    func filePromiseProvider(_ filePromiseProvider: NSFilePromiseProvider,
+                             fileNameForType fileType: String) -> String {
+        let package = filePromiseProvider.userInfo as? String ?? "app"
+        return "\(package).apk"
+    }
+
+    func filePromiseProvider(_ filePromiseProvider: NSFilePromiseProvider,
+                             writePromiseTo url: URL,
+                             completionHandler: @escaping (Error?) -> Void) {
+        guard let serial, let package = filePromiseProvider.userInfo as? String else {
+            completionHandler(CocoaError(.fileNoSuchFile)); return
+        }
+        // Pull the APK straight into the drop destination the promise handed us.
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            do {
+                let remote = try Adb.apkPath(serial, package: package)
+                try Adb.pull(serial, remotePath: remote, localPath: url.path)
+                completionHandler(nil)
+            } catch {
+                AppBuild.log("APK drag-out failed for \(package): \(error)")
+                completionHandler(error)
+            }
+            DispatchQueue.main.async { self?.status.stringValue = "Dragged \(package).apk" }
+        }
+    }
+
+    func operationQueue(for filePromiseProvider: NSFilePromiseProvider) -> OperationQueue {
+        promiseQueue
     }
 }

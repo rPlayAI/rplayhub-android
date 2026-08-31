@@ -227,16 +227,30 @@ final class MirrorView: NSView, NSMenuItemValidation {
         guard control != nil,
               sender.draggingPasteboard.canReadObject(forClasses: [NSURL.self], options: nil)
         else { return [] }
+        setDropHighlight(true)   // show the picture is a drop target
         return .copy
     }
 
+    override func draggingExited(_ sender: NSDraggingInfo?) {
+        setDropHighlight(false)
+    }
+
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        setDropHighlight(false)
         guard control != nil,
               let urls = sender.draggingPasteboard.readObjects(forClasses: [NSURL.self],
                                                                options: nil) as? [URL],
               !urls.isEmpty else { return false }
         onFilesDropped?(urls)
         return true
+    }
+
+    /// A glowing accent ring around the picture while a file hovers, so the drop target reads. The
+    /// bezel's own border is restored by the next layout(); a manual layout() call repaints it.
+    private func setDropHighlight(_ on: Bool) {
+        clipLayer.borderColor = on ? NSColor.controlAccentColor.cgColor : NSColor.black.cgColor
+        clipLayer.borderWidth = on ? max(3, Self.bezelWidth) : (borderless ? 0 : Self.bezelWidth)
+        if !on { needsLayout = true }
     }
 
     private func setUpLayers() {

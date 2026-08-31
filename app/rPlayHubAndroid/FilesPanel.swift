@@ -9,6 +9,7 @@
 //
 
 import AppKit
+import UniformTypeIdentifiers
 
 final class FilesPanel: NSView, NSTableViewDataSource, NSTableViewDelegate {
     var serial: String? {
@@ -82,6 +83,8 @@ final class FilesPanel: NSView, NSTableViewDataSource, NSTableViewDelegate {
         table.target = self
         table.doubleAction = #selector(openSelected)
         table.menu = rowMenu()
+        // Drag a file row out to Finder (or any app) and it is pulled there — phone→Mac on demand.
+        table.setDraggingSourceOperationMask(.copy, forLocal: false)
 
         scroll.documentView = table
         scroll.hasVerticalScroller = true
@@ -162,6 +165,22 @@ final class FilesPanel: NSView, NSTableViewDataSource, NSTableViewDelegate {
 
     private func fullPath(_ entry: Adb.DirEntry) -> String {
         path.hasSuffix("/") ? path + entry.name : path + "/" + entry.name
+    }
+
+    // MARK: - Drag out (pull a file to the Mac via a file promise)
+
+    private let promiseQueue = OperationQueue()
+
+    func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> NSPasteboardWriting? {
+        guard row >= 0, row < entries.count else { return nil }
+        let entry = entries[row]
+        guard !entry.isDirectory, !entry.isLink else { return nil }   // only plain files pull cleanly
+        let ext = (entry.name as NSString).pathExtension
+        let type = UTType(filenameExtension: ext)?.identifier ?? "public.data"
+        let provider = NSFilePromiseProvider(fileType: type, delegate: self)
+        // Carry both the on-device path (to pull) and the display name (the file's name on the Mac).
+        provider.userInfo = ["remote": fullPath(entry), "name": entry.name]
+        return provider
     }
 
     @objc private func openSelected() {
@@ -246,5 +265,36 @@ final class FilesPanel: NSView, NSTableViewDataSource, NSTableViewDelegate {
             size.widthAnchor.constraint(greaterThanOrEqualToConstant: 56),
         ])
         return cell
+    }
+}
+
+extension FilesPanel: NSFilePromiseProviderDelegate {
+    func filePromiseProvider(_ filePromiseProvider: NSFilePromiseProvider,
+                             fileNameForType fileType: String) -> String {
+        let info = filePromiseProvider.userInfo as? [String: String]
+        return info?["name"] ?? "file"
+    }
+
+    func filePromiseProvider(_ filePromiseProvider: NSFilePromiseProvider,
+                             writePromiseTo url: URL,
+                             completionHandler: @escaping (Error?) -> Void) {
+        guard let serial, let info = filePromiseProvider.userInfo as? [String: String],
+              let remote = info["remote"] else {
+            completionHandler(CocoaError(.fileNoSuchFile)); return
+        }
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            do {
+                try Adb.pull(serial, remotePath: remote, localPath: url.path)
+                completionHandler(nil)
+                DispatchQueue.main.async { self?.status.stringValue = "Dragged \(info["name"] ?? "file")" }
+            } catch {
+                AppBuild.log("file drag-out failed for \(remote): \(error)")
+                completionHandler(error)
+            }
+        }
+    }
+
+    func operationQueue(for filePromiseProvider: NSFilePromiseProvider) -> OperationQueue {
+        promiseQueue
     }
 }
