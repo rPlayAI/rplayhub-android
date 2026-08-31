@@ -28,6 +28,8 @@
 		1A0000000000000000001026 /* LogcatPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001025 /* LogcatPanel.swift */; };
 		1A0000000000000000001028 /* LogcatWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001027 /* LogcatWindow.swift */; };
 		1A000000000000000000102A /* MirrorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001029 /* MirrorView.swift */; };
+		1A000000000000000000103C /* FusionTitlebar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000000000000000000103B /* FusionTitlebar.swift */; };
+		1A000000000000000000103E /* FrameRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000000000000000000103D /* FrameRecorder.swift */; };
 		1A000000000000000000102C /* Palette.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000000000000000000102B /* Palette.swift */; };
 		1A000000000000000000102E /* ScreenWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000000000000000000102D /* ScreenWindow.swift */; };
 		1A0000000000000000001030 /* SettingsPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000000000000000000102F /* SettingsPanel.swift */; };
@@ -64,6 +66,8 @@
 		1A0000000000000000001025 /* LogcatPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogcatPanel.swift; sourceTree = "<group>"; };
 		1A0000000000000000001027 /* LogcatWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogcatWindow.swift; sourceTree = "<group>"; };
 		1A0000000000000000001029 /* MirrorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MirrorView.swift; sourceTree = "<group>"; };
+		1A000000000000000000103B /* FusionTitlebar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FusionTitlebar.swift; sourceTree = "<group>"; };
+		1A000000000000000000103D /* FrameRecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FrameRecorder.swift; sourceTree = "<group>"; };
 		1A000000000000000000102B /* Palette.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Palette.swift; sourceTree = "<group>"; };
 		1A000000000000000000102D /* ScreenWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenWindow.swift; sourceTree = "<group>"; };
 		1A000000000000000000102F /* SettingsPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsPanel.swift; sourceTree = "<group>"; };
@@ -124,6 +128,8 @@
 				1A0000000000000000001025 /* LogcatPanel.swift */,
 				1A0000000000000000001027 /* LogcatWindow.swift */,
 				1A0000000000000000001029 /* MirrorView.swift */,
+				1A000000000000000000103B /* FusionTitlebar.swift */,
+				1A000000000000000000103D /* FrameRecorder.swift */,
 				1A000000000000000000102B /* Palette.swift */,
 				1A000000000000000000102D /* ScreenWindow.swift */,
 				1A000000000000000000102F /* SettingsPanel.swift */,
@@ -240,6 +246,8 @@
 				1A0000000000000000001026 /* LogcatPanel.swift in Sources */,
 				1A0000000000000000001028 /* LogcatWindow.swift in Sources */,
 				1A000000000000000000102A /* MirrorView.swift in Sources */,
+				1A000000000000000000103C /* FusionTitlebar.swift in Sources */,
+				1A000000000000000000103E /* FrameRecorder.swift in Sources */,
 				1A000000000000000000102C /* Palette.swift in Sources */,
 				1A000000000000000000102E /* ScreenWindow.swift in Sources */,
 				1A0000000000000000001030 /* SettingsPanel.swift in Sources */,

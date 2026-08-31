@@ -240,6 +240,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         screenWindow.onClose = { [weak self] in
             guard let self else { return }
             self.strip.isHidden = false
+            self.removeFusionTitlebar()
             self.mirror.borderless = false   // the main stage gets its device bezel back
             self.stageTopPad?.constant = 16
             self.stageLeadPad?.constant = 12
@@ -356,6 +357,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self else { return }
             self.mirror.displayLayer.present(picture)
             self.twin?.present(picture)   // one lock and out when the mode is off
+            if self.fusionRecorder.isRecording { self.fusionRecorder.append(picture) }
         }
         s.start(maxVideoSize: maxVideoSize)
     }
@@ -474,6 +476,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Desktop Mode: fusion without an app — the 1920×1080 display's own desktop shell (wallpaper,
     /// taskbar, launcher) IS the content, in a chromeless window titled "Desktop".
     private var desktopModeRequested = false
+    /// The fusion window's title-bar controls (Wake / Screenshot / Record), attached while a
+    /// fusion window is up so a chromeless app window still has those actions.
+    private var fusionTitlebar: FusionTitlebar?
+    /// Host-side recorder for the fusion display (Android's screenrecord can't capture a virtual
+    /// display). Fed the decoded frames while active.
+    private let fusionRecorder = FrameRecorder()
     // The stage's padding around the picture and the strip's reserved height — collapsed to zero
     // while a fusion window is up, restored when it closes.
     private var stageTopPad: NSLayoutConstraint?
@@ -491,6 +499,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         startFusion(package: package)
+    }
+
+    /// Wake the device and dismiss a (non-secured) keyguard — the fusion display shares the
+    /// phone's power/lock state, so this brings a dozing or locked phone back without the shell.
+    /// A real PIN/pattern is not bypassed; the credential prompt just appears for the user.
+    @objc private func wakeDevice() {
+        guard let serial = session?.serial else { return }
+        DispatchQueue.global(qos: .userInitiated).async {
+            _ = try? Adb.shell(serial, "input keyevent KEYCODE_WAKEUP")
+            _ = try? Adb.shell(serial, "wm dismiss-keyguard")
+        }
+    }
+
+    /// Record the fusion display to an .mp4 on the Mac, host-side (screenrecord can't capture a
+    /// virtual display). Toggles: first press asks where to save and starts; second stops.
+    private func toggleFusionRecording() {
+        if fusionRecorder.isRecording {
+            fusionTitlebar?.setRecording(false)
+            fusionRecorder.stop { [weak self] url in
+                self?.window.subtitle = url != nil ? "recording saved" : "recording failed"
+                AppBuild.log(url != nil ? "fusion recording saved to \(url!.path)" : "fusion recording failed")
+            }
+            return
+        }
+        let panel = NSSavePanel()
+        // No .mp4 here — allowedContentTypes appends it, and a name that already carries the
+        // extension would double it.
+        panel.nameFieldStringValue = screenWindow.window?.title ?? "recording"
+        panel.allowedContentTypes = [.mpeg4Movie]
+        let host: NSWindow = screenWindow.window ?? window
+        panel.beginSheetModal(for: host) { [weak self] response in
+            guard let self, response == .OK, let url = panel.url else { return }
+            let size = self.mirror.videoSize
+            let w = size.width > 0 ? Int(size.width) : 1920
+            let h = size.height > 0 ? Int(size.height) : 1080
+            self.fusionRecorder.start(to: url, width: w, height: h)
+            self.fusionTitlebar?.setRecording(true)
+            self.window.subtitle = "recording"
+        }
     }
 
     @objc private func startDesktopMode() { requestDesktopMode(on: nil) }
@@ -570,6 +617,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // against it below; only the content area keeps the 16:9 aspect.
         w.contentAspectRatio = NSSize(width: 16, height: 9)
         w.setContentSize(NSSize(width: 1152, height: 648))
+        // Title-bar controls for the chromeless window: Wake, Screenshot, Record — the actions a
+        // fused app still needs without the main control strip. Rebuilt each time so it never
+        // stacks; recording state seeds from whether a recording is live.
+        if let existing = fusionTitlebar { w.removeTitlebarAccessoryViewController(at: existing.position) }
+        let bar = FusionTitlebar(
+            onWake: { [weak self] in self?.wakeDevice() },
+            onScreenshot: { [weak self] in self?.saveScreenshot() },
+            onRecord: { [weak self] in self?.toggleFusionRecording() })
+        bar.setRecording(fusionRecorder.isRecording)
+        w.addTitlebarAccessoryViewController(bar)
+        bar.position = (w.titlebarAccessoryViewControllers.count - 1)
+        fusionTitlebar = bar
+    }
+
+    private func removeFusionTitlebar() {
+        guard let bar = fusionTitlebar, let w = screenWindow.window,
+              bar.position < w.titlebarAccessoryViewControllers.count else { fusionTitlebar = nil; return }
+        w.removeTitlebarAccessoryViewController(at: bar.position)
+        fusionTitlebar = nil
     }
 
     private func startFusion(package: String) {
@@ -1189,7 +1255,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             DispatchQueue.global(qos: .userInitiated).async {
                 do {
                     let remote = "/data/local/tmp/rplayhub-screenshot.png"
-                    _ = try Adb.shell(serial, "screencap -p \(remote)")
+                    // Capture the display the viewer is showing. `screencap -d` wants a PHYSICAL
+                    // SurfaceFlinger id, not the logical one the app tracks, so for the fusion
+                    // virtual display resolve it by name; display 0 needs no -d.
+                    let cmd: String
+                    if self.currentDisplayId != 0 {
+                        cmd = "phys=$(dumpsys SurfaceFlinger --display-id | grep rplayhub.display"
+                            + " | tail -1 | grep -oE '^Display [0-9]+' | grep -oE '[0-9]+');"
+                            + " screencap ${phys:+-d $phys} -p \(remote)"
+                    } else {
+                        cmd = "screencap -p \(remote)"
+                    }
+                    _ = try Adb.shell(serial, cmd)
                     // Pulled over sync:, not `cat` through exec:. Adb.shell decodes its output
                     // as UTF-8, which silently mangles every non-text byte — a PNG does not
                     // survive the round trip.
@@ -1221,6 +1298,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         recordingSerial = serial
         strip.setRecording(true)
         mirror.setRecording(true)
+        fusionTitlebar?.setRecording(true)
         AppBuild.log("recording started")
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let socket = try? Adb.shellStream(
@@ -1241,6 +1319,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         recordingSerial = nil
         strip.setRecording(false)
         mirror.setRecording(false)
+        fusionTitlebar?.setRecording(false)
         let socket = recordingSocket
         recordingSocket = nil
 
