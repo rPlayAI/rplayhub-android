@@ -522,8 +522,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let cmd = "CLASSPATH=\(AgentSession.devicePathBase)/\(AgentSession.jarName)"
                 + " app_process / com.android.tools.screensharing.AppLabel \(package) 2>/dev/null"
             guard let out = try? Adb.shell(serial, cmd) else { return }
-            let label = out.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
-                .last(where: { !$0.isEmpty }) ?? ""
+            // AppLabel prints "label<TAB>base64png"; take the label field only, or the icon blob
+            // ends up in the title. The last non-empty line is the answer (any warnings precede it).
+            let line = out.split(separator: "\n").last(where: {
+                !$0.trimmingCharacters(in: .whitespaces).isEmpty
+            }) ?? ""
+            let label = line.components(separatedBy: "\t").first?
+                .trimmingCharacters(in: .whitespaces) ?? ""
             guard !label.isEmpty, label != package else { return }
             DispatchQueue.main.async { self?.screenWindow.window?.title = label }
         }
