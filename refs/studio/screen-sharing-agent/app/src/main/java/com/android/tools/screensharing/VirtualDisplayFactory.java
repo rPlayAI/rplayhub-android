@@ -42,6 +42,11 @@ public final class VirtualDisplayFactory {
   private static final int FLAG_ROTATES_WITH_CONTENT = 1 << 7;
   private static final int FLAG_SHOULD_SHOW_SYSTEM_DECORATIONS = 1 << 9;
   private static final int FLAG_TRUSTED = 1 << 10;
+  // Its own power/lock world: without OWN_DISPLAY_GROUP the display joins the DEFAULT group and
+  // sleeps when the phone does — every activity on it gets paused the moment the phone's screen
+  // turns off. ALWAYS_UNLOCKED keeps the keyguard off it too.
+  private static final int FLAG_OWN_DISPLAY_GROUP = 1 << 11;
+  private static final int FLAG_ALWAYS_UNLOCKED = 1 << 12;
   private static final int FLAG_OWN_FOCUS = 1 << 14;
 
   private VirtualDisplayFactory() {}
@@ -54,7 +59,17 @@ public final class VirtualDisplayFactory {
     int fullFlags = FLAG_PUBLIC | FLAG_OWN_CONTENT_ONLY | FLAG_SUPPORTS_TOUCH
         | FLAG_ROTATES_WITH_CONTENT | FLAG_SHOULD_SHOW_SYSTEM_DECORATIONS | FLAG_TRUSTED
         | FLAG_OWN_FOCUS;
-    VirtualDisplay display = create(name, width, height, dpi, fullFlags);
+    // Best case first: a display in its own power/lock world, so apps on it keep running while
+    // the phone's screen is off. The extra flags need permissions that vary by release, so fall
+    // back progressively rather than losing the display altogether.
+    VirtualDisplay display =
+        create(name, width, height, dpi, fullFlags | FLAG_OWN_DISPLAY_GROUP | FLAG_ALWAYS_UNLOCKED);
+    if (display == null) {
+      display = create(name, width, height, dpi, fullFlags | FLAG_OWN_DISPLAY_GROUP);
+    }
+    if (display == null) {
+      display = create(name, width, height, dpi, fullFlags);
+    }
     if (display == null) {
       // Privileged flags vary by release; retry with the tamest still-usable set.
       display = create(name, width, height, dpi,
@@ -67,8 +82,11 @@ public final class VirtualDisplayFactory {
       // attaching a surface does. Give it a consumed ImageReader as a keep-alive surface; the
       // streamer captures the layerstack through its own mirror display, unaffected.
       try {
+        // Quarter resolution: the surface exists only to keep the display device powered, so
+        // there is no reason to have SurfaceFlinger compose a full-size frame nobody reads.
         keepAlive = android.media.ImageReader.newInstance(
-            width, height, android.graphics.PixelFormat.RGBA_8888, 2);
+            Math.max(width / 4, 1), Math.max(height / 4, 1),
+            android.graphics.PixelFormat.RGBA_8888, 2);
         keepAlive.setOnImageAvailableListener(reader -> {
           android.media.Image image = reader.acquireLatestImage();
           if (image != null) {
