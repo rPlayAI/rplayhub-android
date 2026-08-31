@@ -29,6 +29,10 @@ final class AppsPanel: NSView, NSTableViewDataSource, NSTableViewDelegate {
     private var loaded = false
     private var showSystem = false
 
+    /// Real launcher icons resolved by the agent (PackageManager), keyed by package. Populated a
+    /// beat after the list renders; cleared when the device or list changes.
+    private var resolvedIcons: [String: NSImage] = [:]
+
     /// Shown until (or unless) a real launcher icon is fetched, so the list never has blank slots.
     private static let placeholderIcon: NSImage? = {
         let img = NSImage(systemSymbolName: "app.dashed", accessibilityDescription: "App")
@@ -163,6 +167,7 @@ final class AppsPanel: NSView, NSTableViewDataSource, NSTableViewDelegate {
             DispatchQueue.main.async { [weak self] in
                 guard let self, self.serial == serial else { return }
                 self.packages = result
+                self.resolvedIcons = [:]   // a fresh list; icons arrive from fetchLabels below
                 self.loaded = true
                 self.applyFilter()
                 self.status.stringValue = "\(result.count) package\(result.count == 1 ? "" : "s")"
@@ -181,18 +186,30 @@ final class AppsPanel: NSView, NSTableViewDataSource, NSTableViewDelegate {
                 + " app_process / com.android.tools.screensharing.AppLabel "
                 + ids.joined(separator: " ") + " 2>/dev/null"
             guard let out = try? Adb.shell(serial, cmd) else { return }
-            let labels = out.components(separatedBy: "\n")
-                .map { $0.trimmingCharacters(in: .whitespaces) }
-                .filter { !$0.isEmpty }
-            guard labels.count == ids.count else { return }
+            // One line per package, in order: "label<TAB>base64png". Do NOT trim or drop empties —
+            // a base64 field is long and a label can be blank; only the final newline's empty tail
+            // is dropped, so the line count still matches the request.
+            var lines = out.components(separatedBy: "\n")
+            if lines.last == "" { lines.removeLast() }
+            guard lines.count == ids.count else { return }
+            var labelById = [String: String]()
+            var iconById = [String: NSImage]()
+            for (id, line) in zip(ids, lines) {
+                let parts = line.components(separatedBy: "\t")
+                let label = parts.first ?? ""
+                if !label.isEmpty, label != id { labelById[id] = label }
+                if parts.count > 1, let data = Data(base64Encoded: parts[1]), !data.isEmpty,
+                   let img = NSImage(data: data) {
+                    iconById[id] = img
+                }
+            }
             DispatchQueue.main.async {
                 guard let self, self.serial == serial else { return }
-                var byId = [String: String]()
-                for (id, label) in zip(ids, labels) where label != id { byId[id] = label }
                 for i in self.packages.indices {
-                    self.packages[i].label = byId[self.packages[i].id]
+                    self.packages[i].label = labelById[self.packages[i].id]
                 }
-                self.applyFilter()
+                self.resolvedIcons = iconById
+                self.applyFilter()   // reloads the table, so rows pick up the real icons
             }
         }
     }
@@ -333,13 +350,17 @@ final class AppsPanel: NSView, NSTableViewDataSource, NSTableViewDelegate {
         label.lineBreakMode = .byTruncatingMiddle
         label.translatesAutoresizingMaskIntoConstraints = false
 
-        // The APK may not yield an icon at all (see AppIcons — Google's own apps ship obfuscated
-        // resource names). Show a generic placeholder so the column never has blank slots, and let
-        // a real icon replace it if one is found.
+        // The agent renders the real launcher icon (PackageManager, so adaptive and obfuscated
+        // icons work too), arriving with the labels; until then a generic placeholder keeps the
+        // column from having blank slots, with the APK-unzip fetcher as a secondary fallback.
         let icon = NSImageView()
         icon.imageScaling = .scaleProportionallyUpOrDown
-        icon.image = Self.placeholderIcon
-        icon.contentTintColor = .tertiaryLabelColor
+        if let resolved = resolvedIcons[package.id] {
+            icon.image = resolved
+        } else {
+            icon.image = Self.placeholderIcon
+            icon.contentTintColor = .tertiaryLabelColor
+        }
         icon.translatesAutoresizingMaskIntoConstraints = false
         cell.imageView = icon
 
@@ -355,7 +376,7 @@ final class AppsPanel: NSView, NSTableViewDataSource, NSTableViewDelegate {
             label.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
         ])
 
-        if let serial {
+        if let serial, resolvedIcons[package.id] == nil {
             let wanted = package.id
             AppIcons.icon(serial: serial, package: wanted) { [weak icon, weak self] image in
                 // The cell is reused as the list scrolls, so only paint if this view is still
