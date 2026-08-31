@@ -101,6 +101,10 @@ final class MirrorView: NSView, NSMenuItemValidation {
     /// prepared behind the View Screen gate until the user asks. Set true to show it instantly.
     var autoReveal = true
 
+    /// Fusion windows want the raw picture: no bezel ring, no rounded corners — the video runs
+    /// to the window's edge. The main stage keeps its device bezel.
+    var borderless = false { didSet { if borderless != oldValue { needsLayout = true } } }
+
     /// The view is deliberately flipped. AppKit flips the backing layer's geometry for a
     /// non-flipped view, which flips manually added sublayers' content too and renders the video
     /// upside down; flipping the view fixes that and gives a top-left origin matching the
@@ -447,11 +451,11 @@ final class MirrorView: NSView, NSMenuItemValidation {
         CATransaction.setDisableActions(true)     // no interpolation: this resizes with the pane
 
         clipLayer.frame = rect
-        clipLayer.cornerRadius = cornerRadius(for: rect)
+        clipLayer.cornerRadius = borderless ? 0 : cornerRadius(for: rect)
         // Device Hub keeps a black bezel around the live screen, not a hairline — it is what
         // makes the picture read as a phone rather than as a rectangle of video. The idle
         // mockup's bezel stays proportional to its own small size.
-        clipLayer.borderWidth = isGated ? max(1, rect.width * 0.05) : Self.bezelWidth
+        clipLayer.borderWidth = borderless ? 0 : (isGated ? max(1, rect.width * 0.05) : Self.bezelWidth)
         placeholderLayer.frame = clipLayer.bounds
         placeholderLayer.isHidden = !isGated
         placeholderLayer.cornerRadius = clipLayer.cornerRadius

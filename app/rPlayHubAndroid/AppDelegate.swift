@@ -119,15 +119,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let middle = NSView()
         middle.addSubview(mirror)
         middle.addSubview(strip)
+        // Kept as properties so a fusion window can collapse them: the picture there should run
+        // to the window's edge, with no stage padding and no reserved strip height.
+        stageTopPad = mirror.topAnchor.constraint(equalTo: middle.topAnchor, constant: 16)
+        stageLeadPad = mirror.leadingAnchor.constraint(equalTo: middle.leadingAnchor, constant: 12)
+        stageTrailPad = mirror.trailingAnchor.constraint(equalTo: middle.trailingAnchor, constant: -12)
+        stripMinHeight = strip.heightAnchor.constraint(greaterThanOrEqualToConstant: 50)
+        // A hidden strip still reports its intrinsic height; only a required zero-height cap
+        // actually removes the band it reserves. Activated by fusion, deactivated on close.
+        stripZeroHeight = strip.heightAnchor.constraint(equalToConstant: 0)
         NSLayoutConstraint.activate([
-            mirror.topAnchor.constraint(equalTo: middle.topAnchor, constant: 16),
-            mirror.leadingAnchor.constraint(equalTo: middle.leadingAnchor, constant: 12),
-            mirror.trailingAnchor.constraint(equalTo: middle.trailingAnchor, constant: -12),
+            stageTopPad!, stageLeadPad!, stageTrailPad!,
             strip.topAnchor.constraint(equalTo: mirror.bottomAnchor),
             strip.leadingAnchor.constraint(equalTo: middle.leadingAnchor),
             strip.trailingAnchor.constraint(equalTo: middle.trailingAnchor),
             strip.bottomAnchor.constraint(equalTo: middle.bottomAnchor),
-            strip.heightAnchor.constraint(greaterThanOrEqualToConstant: 50),
+            stripMinHeight!,
         ])
         stage = middle
 
@@ -226,8 +233,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         mirror.onFilesDropped = { [weak self] urls in self?.handleDroppedFiles(urls) }
         inspector.apps.onFusion = { [weak self] package in self?.startFusion(package: package) }
         // A fusion window hides the control strip (it drives the phone, not the app window);
-        // whatever closed the window, the strip belongs back in the main stage.
-        screenWindow.onClose = { [weak self] in self?.strip.isHidden = false }
+        // whatever closed the window, the strip belongs back in the main stage. And closing the
+        // window is closing the feature: tear the virtual display down too, or it keeps streaming
+        // invisibly (and each Fusion click would leak another display on the device).
+        screenWindow.onClose = { [weak self] in
+            guard let self else { return }
+            self.strip.isHidden = false
+            self.mirror.borderless = false   // the main stage gets its device bezel back
+            self.stageTopPad?.constant = 16
+            self.stageLeadPad?.constant = 12
+            self.stageTrailPad?.constant = -12
+            self.stripMinHeight?.constant = 50
+            self.stripZeroHeight?.isActive = false
+            if self.currentDisplayId != 0, self.createdDisplayIds.contains(self.currentDisplayId) {
+                self.closeVirtualDisplay()
+            }
+        }
         // The device commands move from the mirror pane to the device's row in the sidebar.
         if let commands = mirror.commandMenu { sidebar.appendDeviceCommands(from: commands) }
     }
@@ -355,12 +376,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             sessionReachedRunning = true
             attachStream()
             startHealthTimer()
-            // Fusion queued before the session was up: request the display now.
-            if let package = pendingFusionPackage, !fusionRequested, let control = session?.control {
+            // Fusion or Desktop Mode queued before the session was up: request the display now.
+            if pendingFusionPackage != nil || desktopModeRequested, !fusionRequested,
+               let control = session?.control {
                 fusionRequested = true
                 control.send(ControlMessage.stopVideoStream(displayId: currentDisplayId))
                 control.send(ControlMessage.createNewDisplay(width: 1920, height: 1080, dpi: 240))
-                AppBuild.log("fusion: requested a display for \(package)")
+                AppBuild.log("fusion: requested a display for \(pendingFusionPackage ?? "desktop mode")")
             }
         case .failed(let reason):
             window.subtitle = "failed"
@@ -447,8 +469,81 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// from the packet headers). Starts a session first if none is running.
     private var pendingFusionPackage: String?
     private var fusionRequested = false
+    /// Desktop Mode: fusion without an app — the 1920×1080 display's own desktop shell (wallpaper,
+    /// taskbar, launcher) IS the content, in a chromeless window titled "Desktop".
+    private var desktopModeRequested = false
+    // The stage's padding around the picture and the strip's reserved height — collapsed to zero
+    // while a fusion window is up, restored when it closes.
+    private var stageTopPad: NSLayoutConstraint?
+    private var stageLeadPad: NSLayoutConstraint?
+    private var stageTrailPad: NSLayoutConstraint?
+    private var stripMinHeight: NSLayoutConstraint?
+    private var stripZeroHeight: NSLayoutConstraint?
+
+    @objc private func startDesktopMode() {
+        desktopModeRequested = true
+        if let control = session?.control {
+            control.send(ControlMessage.stopVideoStream(displayId: currentDisplayId))
+            control.send(ControlMessage.createNewDisplay(width: 1920, height: 1080, dpi: 240))
+            AppBuild.log("fusion: requested a desktop-mode display")
+        } else if let device = sidebar.selected ?? sidebar.devices.first(where: { $0.isReady }) {
+            startSession(for: device, reveal: true)   // the .running hook fires the request
+        } else {
+            desktopModeRequested = false
+            present(message: "No device", detail: "Connect a device first, then try Desktop Mode again.")
+        }
+    }
+
+    /// "com.google.android.youtube" → "Youtube": the last segment stands in for the real label,
+    /// which lives in APK resources the host cannot cheaply read.
+    private func fusionTitle(for package: String) -> String {
+        guard let segment = package.split(separator: ".").last else { return package }
+        return segment.prefix(1).uppercased() + segment.dropFirst()
+    }
+
+    /// The fusion window treatment: chromeless (no control strip — it drives the phone), named
+    /// for what it shows, and sized snugly around the 16:9 picture rather than inheriting the
+    /// stage's tall frame with fat empty margins. Resizes keep the aspect, so it stays snug.
+    private func dressFusionWindow(title: String) {
+        if !screenWindow.isOpen { openScreenWindow() }
+        strip.isHidden = true
+        mirror.borderless = true            // raw picture, no device bezel
+        stageTopPad?.constant = 0           // and no stage padding or strip space around it
+        stageLeadPad?.constant = 0
+        stageTrailPad?.constant = 0
+        stripMinHeight?.constant = 0
+        stripZeroHeight?.isActive = true
+        // The fusion display mirrors the phone's keyguard when the phone sits locked — a clock
+        // over wallpaper you cannot enter. The phone has adb access, so dismiss it.
+        if let serial = session?.serial {
+            DispatchQueue.global(qos: .userInitiated).async {
+                _ = try? Adb.shell(serial, "wm dismiss-keyguard")
+            }
+        }
+        guard let w = screenWindow.window else { return }
+        w.title = title
+        // The title bar floats transparently over the video — borderless to the eye, but the
+        // traffic lights and drag remain.
+        w.titlebarAppearsTransparent = true
+        w.styleMask.insert(.fullSizeContentView)
+        w.contentAspectRatio = NSSize(width: 16, height: 9)
+        w.setContentSize(NSSize(width: 1152, height: 648))
+    }
 
     private func startFusion(package: String) {
+        // Already showing a fusion display: reuse it. Launching onto the existing display is
+        // instant, while a second create-while-streaming can bounce the agent (it recovers via
+        // the queued request, but that costs ~15 seconds and leaks the first display).
+        if currentDisplayId != 0, createdDisplayIds.contains(currentDisplayId),
+           let serial = session?.serial {
+            let id = currentDisplayId
+            AppBuild.log("fusion: reusing display \(id) for \(package)")
+            DispatchQueue.global(qos: .userInitiated).async {
+                try? Adb.launch(serial, package: package, displayId: id)
+            }
+            dressFusionWindow(title: fusionTitle(for: package))
+            return
+        }
         pendingFusionPackage = package
         if let control = session?.control {
             control.send(ControlMessage.stopVideoStream(displayId: currentDisplayId))
@@ -515,13 +610,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             DispatchQueue.global(qos: .userInitiated).async {
                 try? Adb.launch(serial, package: package, displayId: id)
             }
-            if !screenWindow.isOpen { openScreenWindow() }
-            // "com.google.android.youtube" → "Youtube": the last segment stands in for the real
-            // label, which lives in APK resources the host cannot cheaply read.
-            if let segment = package.split(separator: ".").last {
-                screenWindow.window?.title = segment.prefix(1).uppercased() + segment.dropFirst()
-            }
-            strip.isHidden = true
+            dressFusionWindow(title: fusionTitle(for: package))
+        } else if id != 0, desktopModeRequested {
+            // Desktop Mode: nothing to launch — the display's own desktop shell is the content.
+            desktopModeRequested = false
+            fusionRequested = false
+            dressFusionWindow(title: "Desktop")
         }
     }
 
@@ -1198,6 +1292,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let displaySub = NSMenu(title: "Mirror Display")
         displayPicker.submenu = displaySub
         displaysMenu = displaySub
+        deviceMenu.addItem(withTitle: "Desktop Mode", action: #selector(startDesktopMode),
+                           keyEquivalent: "d").target = self
         let newDisplay = deviceMenu.addItem(withTitle: "New Virtual Display", action: nil,
                                             keyEquivalent: "")
         let newDisplaySub = NSMenu(title: "New Virtual Display")

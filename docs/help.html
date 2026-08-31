@@ -216,11 +216,16 @@ rotation” setting is on — apps rotate regardless.</p></div>
 
 <section id="displays">
 <h2>Virtual displays <span style="font-size:12px;color:var(--faint);font-family:'IBM Plex Sans'">experimental</span></h2>
-<p>Device ▸ <b>New Virtual Display</b> creates a standalone Android display — phone, tablet or
-desktop sized — that exists only for the Mac: the viewer switches to it, and apps launched there
-run <i>beside</i> whatever the phone’s own screen is doing, like scrcpy’s
-<code>--new-display</code>. Click and type in the viewer to drive it. Device ▸
-<b>Close Virtual Display</b> tears it down and returns to the phone’s screen.</p>
+<p>Device ▸ <b>Desktop Mode</b> (<kbd>⌘D</kbd>) is the one-click version: a 1920×1080 display
+opens in its own window showing Android’s desktop shell — wallpaper, taskbar, launcher — and
+whatever you start there runs <i>beside</i> the phone’s own screen. Or pick any app directly:
+right-click it in the <b>Apps</b> tab ▸ <b>Open on Virtual Display</b>, and it opens in a clean
+window titled with the app’s name.</p>
+<p>Device ▸ <b>New Virtual Display</b> creates the display without the window treatment — phone,
+tablet or desktop sized — like scrcpy’s <code>--new-display</code>. Click and type in the viewer
+to drive any of them. Closing the app window (or Device ▸ <b>Close Virtual Display</b>) tears the
+display down and returns to the phone’s screen. The phone is kept awake automatically while a
+virtual display exists.</p>
 <div class="callout warn"><span class="lbl">Limitations</span>
 <p>The feature is experimental. The virtual display shares the phone’s power state, so the phone’s
 screen must stay awake for apps on the virtual display to run; some apps decline to move displays
@@ -262,6 +267,7 @@ your hand and the model turns with it.</p>
 <h2>Shortcuts</h2>
 <div class="kv">
   <div class="row"><div class="k"><kbd>⌘M</kbd></div><div class="v">Start / Stop Screen Mirroring</div></div>
+  <div class="row"><div class="k"><kbd>⌘D</kbd></div><div class="v">Desktop Mode</div></div>
   <div class="row"><div class="k"><kbd>⌘N</kbd></div><div class="v">Open the screen in its own window</div></div>
   <div class="row"><div class="k"><kbd>R</kbd></div><div class="v">Set Facing Me (in the 3D twin)</div></div>
   <div class="row"><div class="k"><kbd>⌘?</kbd></div><div class="v">This help page</div></div>
