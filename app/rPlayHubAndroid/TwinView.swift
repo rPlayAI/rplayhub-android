@@ -30,6 +30,11 @@ import simd
 final class TwinView: NSView, SCNSceneRendererDelegate {
     /// Pulled once per rendered frame on the render thread; returns the newest device quaternion.
     var orientationSource: (() -> simd_quatf?)?
+    /// A touch on the phone's screen, already mapped to device pixels, with a MotionAction. Wired to
+    /// the same injection path the flat viewer uses, so tapping the 3D screen taps the device.
+    var onMotion: ((CGPoint, Int32) -> Void)?
+    /// The device's canonical (portrait) pixel size — set on activate, used to map a screen hit.
+    private var deviceSize: CGSize = .zero
 
     private var scnView: TwinSCNView!
     private var phoneNode: SCNNode?
@@ -76,6 +81,7 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
         view.antialiasingMode = .multisampling4X
         view.delegate = self
         view.onRecenter = { [weak self] in self?.recenter() }
+        view.onPanelTouch = { [weak self] uv, action in self?.handlePanelTouch(uv, action) }
         view.translatesAutoresizingMaskIntoConstraints = false
         addSubview(view)
         NSLayoutConstraint.activate([
@@ -146,6 +152,7 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
     /// `displaySize` is the display in its canonical (portrait) orientation; it sets the body's
     /// proportions — rebuilt on each activation because a different device may be mirrored now.
     func activate(displaySize: CGSize) {
+        deviceSize = displaySize
         scnView.scene = buildScene(displaySize: displaySize)
         scnView.rendersContinuously = true       // orientation changes without scene mutations
         // Prefer the saved "facing me" calibration as the default; only capture a fresh one from
@@ -200,6 +207,18 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
         recenterRequested = true
     }
 
+    /// Map a screen-plane hit (texture UV, origin bottom-left) to a canonical device pixel and
+    /// forward it. The panel geometry is the physical glass, so this holds at any rotation: touch
+    /// coordinates live in the canonical portrait frame regardless of what the screen is showing.
+    private func handlePanelTouch(_ uv: CGPoint, _ action: Int32) {
+        guard deviceSize.width > 0, deviceSize.height > 0 else { return }
+        // The panel's texture UV is top-left origin (v=0 at the top), matching the device's own
+        // top-left pixel origin — so both axes map straight through, no flip.
+        let x = (uv.x * deviceSize.width).rounded()
+        let y = (uv.y * deviceSize.height).rounded()
+        onMotion?(CGPoint(x: x, y: y), action)
+    }
+
     @objc private func recenterPressed() {
         recenter()
     }
@@ -208,6 +227,7 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
 
     private func buildScene(displaySize: CGSize) -> SCNScene {
         let scene = SCNScene()
+        scene.background.contents = Self.studioBackdrop()   // a soft spotlight, premium on camera
 
         let aspect = displaySize.width > 0 && displaySize.height > 0
             ? displaySize.width / displaySize.height
@@ -235,6 +255,7 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
         screen.isDoubleSided = false
         panel.materials = [screen]
         let panelNode = SCNNode(geometry: panel)
+        panelNode.name = "panel"           // hit-tested for touch input (TwinSCNView)
         panelNode.position = SCNVector3(0, 0, bodyDepth / 2 + 0.002)
         phone.addChildNode(panelNode)
         screenMaterial = screen
@@ -324,6 +345,23 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
         phoneNode = phone
         addCameraAndLights(scene)
         return scene
+    }
+
+    /// A radial studio backdrop — a pool of light behind the phone fading to near-black at the
+    /// edges. Reads as an intentional stage on camera instead of a flat dark box, and stays dark
+    /// (a flat white ground washed the phone out).
+    private static func studioBackdrop() -> NSImage {
+        let size = NSSize(width: 640, height: 640)
+        let img = NSImage(size: size)
+        img.lockFocus()
+        NSColor(calibratedWhite: 0.05, alpha: 1).setFill()
+        NSRect(origin: .zero, size: size).fill()
+        let gradient = NSGradient(colors: [NSColor(calibratedWhite: 0.18, alpha: 1),
+                                           NSColor(calibratedWhite: 0.05, alpha: 1)])
+        gradient?.draw(in: NSRect(origin: .zero, size: size),
+                       relativeCenterPosition: NSPoint(x: 0, y: 0.12))
+        img.unlockFocus()
+        return img
     }
 
     private func addCameraAndLights(_ scene: SCNScene) {
@@ -587,9 +625,15 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
     }
 }
 
-/// An SCNView that treats R as "re-centre" and hands everything else to the camera controller.
+/// An SCNView that treats R as "re-centre", turns a click on the phone's screen into a touch, and
+/// hands everything else (a drag on empty space) to the camera controller to orbit.
 private final class TwinSCNView: SCNView {
     var onRecenter: (() -> Void)?
+    /// (texture UV, MotionAction) when the click lands on the screen; nil-hit falls through to orbit.
+    var onPanelTouch: ((CGPoint, Int32) -> Void)?
+
+    private var touching = false
+    private var lastUV: CGPoint?
 
     override var acceptsFirstResponder: Bool { true }
 
@@ -599,5 +643,42 @@ private final class TwinSCNView: SCNView {
         } else {
             super.keyDown(with: event)
         }
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        if let uv = panelUV(for: event) {
+            touching = true
+            lastUV = uv
+            onPanelTouch?(uv, MotionAction.down)
+        } else {
+            touching = false
+            super.mouseDown(with: event)          // empty space — orbit the camera
+        }
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard touching else { super.mouseDragged(with: event); return }
+        if let uv = panelUV(for: event) {
+            lastUV = uv
+            onPanelTouch?(uv, MotionAction.move)
+        }
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        guard touching else { super.mouseUp(with: event); return }
+        if let uv = panelUV(for: event) ?? lastUV {
+            onPanelTouch?(uv, MotionAction.up)     // a drag off the screen still has to release
+        }
+        touching = false
+    }
+
+    /// The screen plane's texture UV under the pointer, or nil if the screen is not the nearest
+    /// surface there — so you can only tap the screen while it faces you, and a click on the body
+    /// or the empty stage orbits instead.
+    private func panelUV(for event: NSEvent) -> CGPoint? {
+        let p = convert(event.locationInWindow, from: nil)
+        guard let hit = hitTest(p, options: nil).first, hit.node.name == "panel" else { return nil }
+        let tc = hit.textureCoordinates(withMappingChannel: 0)
+        return CGPoint(x: tc.x, y: tc.y)
     }
 }

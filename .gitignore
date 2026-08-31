@@ -23,3 +23,8 @@ app/rPlayHubAndroid/AppIcon.iconset/
 # Session working notes — carry device addresses and machine-local details; never publish.
 doc/HANDOFF.md
 doc/NEXT-PROMPT.txt
+
+# Demo recordings — large, and camera captures can carry GPS/EXIF. Keep them out of the repo.
+doc/*.mov
+doc/*.MOV
+doc/*.mp4

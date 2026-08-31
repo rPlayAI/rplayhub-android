@@ -38,8 +38,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// stable instance (gated inside by its own `isActive` lock) keeps that access race-free.
     private var twin: TwinView?
     private var twinActive = false
+    private var twinDemo = false
     private var twinGateItem: NSMenuItem?
     private var twinOpenItem: NSMenuItem?
+    private var twinDemoItem: NSMenuItem?
+    private var twinBackImageItem: NSMenuItem?
+    private var twinFacingMeItem: NSMenuItem?
     private var screenOffItem: NSMenuItem?
 
     /// Clipboard sync, scrcpy-style: device changes land on the Mac clipboard automatically,
@@ -67,6 +71,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// touch, since MotionEvents carry a display id.
     private var pauseItem: NSMenuItem?
     private var displaysMenu: NSMenu?
+    private var createdDisplayIds: Set<Int32> = []
+    private var closeDisplayItem: NSMenuItem?
+    private var mirrorToggleItem: NSMenuItem?
+    /// Whether the picture is actually shown. A prepared session (agent pushed + started on device
+    /// select) runs with this false, hidden behind the View Screen gate, until the user reveals it.
+    private var mirrorRevealed = false
     private var displayPaused = false
     private var currentDisplayId: Int32 = 0
 
@@ -139,7 +149,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // line. setPosition() alone does not survive layout, because a pane with no intrinsic
         // width has nothing to hold on to. Resting width at a middling priority, plus a hard
         // minimum, is what ~/rplay-hub arrived at for the same failure.
-        for (pane, width) in [(sidebar as NSView, 210.0), (middle as NSView, 429.0),
+        for (pane, width) in [(sidebar as NSView, 210.0), (middle as NSView, 520.0),
                               (inspector as NSView, 320.0)] {
             pane.translatesAutoresizingMaskIntoConstraints = false
             let resting = pane.widthAnchor.constraint(equalToConstant: width)
@@ -161,7 +171,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         window.contentView = splitView
-        window.setContentSize(NSSize(width: 1000, height: 760))
+        window.setContentSize(NSSize(width: 1090, height: 760))
 
         buildToolbar()
 
@@ -193,6 +203,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func wireUp() {
         sidebar.onSelect = { [weak self] device in self?.selectionChanged(device) }
         sidebar.onMirror = { [weak self] device in self?.startSession(for: device) }
+        sidebar.onStopMirror = { [weak self] in self?.stopMirroring() }
+        sidebar.isMirroring = { [weak self] in self?.mirrorRevealed ?? false }
         mirror.onViewScreen = { [weak self] in
             guard let self else { return }
             // Fall back to the only device there is. Requiring a selection when there is
@@ -205,7 +217,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                  : "Pick one of the \(ready.count) devices in the sidebar first.")
                 return
             }
-            self.startSession(for: device)
+            self.revealMirror(for: device)
         }
         strip.onAction = { [weak self] action in self?.perform(action) }
         mirror.onCommand = { [weak self] command in self?.perform(command) }
@@ -268,7 +280,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard device.isReady, propertiesForSerial != device.serial else { return }
         propertiesForSerial = device.serial
         loadAndroidVersion(device)
+        // Prepare on select: push and start the agent so the stream is live and buffering, but keep
+        // it behind the View Screen gate. The user still clicks View Screen (or Start Screen
+        // Mirroring) to reveal it — which is then instant, with the app_process cold start already paid.
+        startSession(for: device, reveal: false)
     }
+
 
     /// Just for the label under the idle mockup; the Info tab loads the rest itself.
     private func loadAndroidVersion(_ device: AdbDevice) {
@@ -284,7 +301,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - session
 
-    private func startSession(for device: AdbDevice) {
+    /// `reveal: false` prepares the session — pushes and starts the agent so the stream is live —
+    /// but leaves the picture behind the View Screen gate until the user reveals it.
+    private func startSession(for device: AdbDevice, reveal: Bool = true) {
         guard device.isReady else {
             present(message: "\(device.displayName) is \(device.state)",
                     detail: device.state == "unauthorized"
@@ -295,11 +314,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if twinActive { exitTwin() }   // the new session's decoder starts back in native output
         session?.stop()
         mirror.reset()
+        mirror.autoReveal = reveal          // reset() set it true; a prepared session stays gated
         strip.setSessionActive(false)
         sessionReachedRunning = false
 
         let s = AgentSession(serial: device.serial)
         session = s
+        mirrorRevealed = reveal
+        refreshMirrorToggle()
         s.onState = { [weak self] state in self?.sessionStateChanged(state) }
         s.onAgentLog = { line in AppBuild.log("agent: \(line)") }
         s.decoder.onFrame = { [weak self] picture in
@@ -320,8 +342,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .deploying(let step):
             window.subtitle = step
         case .running:
-            window.subtitle = "mirroring"
-            strip.setSessionActive(true)
+            // A prepared (unrevealed) session is live but hidden — don't announce it as mirroring
+            // or light the control strip until the user reveals it.
+            window.subtitle = mirrorRevealed ? "mirroring" : "ready"
+            strip.setSessionActive(mirrorRevealed)
             sessionReachedRunning = true
             attachStream()
             startHealthTimer()
@@ -371,6 +395,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         loadDisplayShape(session.serial)
         video.onFormat = { [weak self] size in self?.mirror.videoSize = size }
         video.onGeometry = { [weak self] header in
+            self?.adoptDisplay(header.displayId)
             self?.mirror.apply(header: header)
             self?.twin?.apply(header: header)
         }
@@ -393,10 +418,60 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         pauseItem?.title = "Pause Display"
         currentDisplayId = 0
         mirror.displayId = 0
+        createdDisplayIds = []           // virtual displays die with the previous agent
+        closeDisplayItem?.isHidden = true
+        inspector.apps.launchDisplayId = 0
         session.control?.onDisplays = { [weak self] displays in
             self?.rebuildDisplaysMenu(displays)
         }
         session.control?.send(ControlMessage.displayConfigurationRequest())
+    }
+
+    // MARK: - virtual displays (scrcpy --new-display)
+
+    @objc private func createVirtualDisplay(_ sender: NSMenuItem) {
+        guard let dims = sender.representedObject as? [NSNumber], dims.count == 3,
+              let session, let control = session.control else { return }
+        // Stop the current stream; the agent starts streaming the new display on its own, and
+        // adoptDisplay() follows the id change when its packets arrive.
+        control.send(ControlMessage.stopVideoStream(displayId: currentDisplayId))
+        control.send(ControlMessage.createNewDisplay(width: dims[0].int32Value,
+                                                     height: dims[1].int32Value,
+                                                     dpi: dims[2].int32Value))
+        AppBuild.log("requested a \(dims[0])×\(dims[1]) virtual display")
+    }
+
+    @objc private func closeVirtualDisplay() {
+        guard let session, let control = session.control,
+              createdDisplayIds.contains(currentDisplayId) else { return }
+        control.send(ControlMessage.destroyNewDisplay(displayId: currentDisplayId))
+        createdDisplayIds.remove(currentDisplayId)
+        adoptDisplay(0)
+        control.send(ControlMessage.startVideoStream(displayId: 0,
+                                                     width: Int32(maxVideoSize.width),
+                                                     height: Int32(maxVideoSize.height)))
+    }
+
+    /// The stream told us which display it carries. Called from onGeometry when the id in the
+    /// packet headers differs from the one we thought we were showing — which is how a freshly
+    /// created virtual display announces itself.
+    private func adoptDisplay(_ id: Int32) {
+        guard id != currentDisplayId else { return }
+        let known = displaysMenu?.items.contains {
+            ($0.representedObject as? NSNumber)?.int32Value == id } ?? false
+        if id != 0 && !known { createdDisplayIds.insert(id) }
+        currentDisplayId = id
+        mirror.displayId = id
+        inspector.apps.launchDisplayId = id
+        closeDisplayItem?.isHidden = !createdDisplayIds.contains(id)
+        displaysMenu?.items.forEach {
+            $0.state = ($0.representedObject as? NSNumber)?.int32Value == id ? .on : .off
+        }
+        if let session {
+            if id == 0 { loadDisplayShape(session.serial) } else { mirror.displayShape = nil }
+            session.control?.send(ControlMessage.displayConfigurationRequest())
+        }
+        AppBuild.log("now showing display \(id)")
     }
 
     // MARK: - pause, and picking a display
@@ -435,19 +510,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let id = (sender.representedObject as? NSNumber)?.int32Value,
               let session, let control = session.control, id != currentDisplayId else { return }
         control.send(ControlMessage.stopVideoStream(displayId: currentDisplayId))
-        currentDisplayId = id
-        mirror.displayId = id
         displayPaused = false
         pauseItem?.title = "Pause Display"
+        adoptDisplay(id)
         control.send(ControlMessage.startVideoStream(displayId: id,
                                                      width: Int32(maxVideoSize.width),
                                                      height: Int32(maxVideoSize.height)))
-        displaysMenu?.items.forEach {
-            $0.state = ($0.representedObject as? NSNumber)?.int32Value == id ? .on : .off
-        }
-        // The bezel outline describes the built-in panel; a secondary display has none.
-        if id == 0 { loadDisplayShape(session.serial) } else { mirror.displayShape = nil }
-        AppBuild.log("mirroring display \(id)")
     }
 
     @objc private func toggleAudio() {
@@ -575,6 +643,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         toggleTwin()
     }
 
+    /// Menu twin to the "Set Facing Me" button in the 3D view: capture the phone's current pose
+    /// as face-on. Only meaningful while the 3D view is up.
+    @objc private func setTwinFacingMe() {
+        guard twinActive else {
+            present(message: "Open the 3D view first",
+                    detail: "Choose View ▸ View Screen in 3D, then Set Facing Me.")
+            return
+        }
+        twin?.recenter()
+    }
+
+    /// Pick an image to wear on the 3D twin's back — a real device back, for any brand. Clearing
+    /// the selection (Cancel with the field emptied, or choosing again) restores the Pixel look.
+    @objc private func chooseTwinBackImage() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.png, .jpeg, .image]
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Use as Back"
+        panel.message = "Choose a device back image for the 3D twin (Cancel to reset to Pixel)."
+        let response = panel.runModal()
+        if response == .OK, let url = panel.url {
+            UserDefaults.standard.set(url.path, forKey: TwinView.backImageKey)
+            AppBuild.log("twin: back image set to \(url.lastPathComponent)")
+        } else {
+            UserDefaults.standard.removeObject(forKey: TwinView.backImageKey)
+            AppBuild.log("twin: back image reset to the default")
+        }
+        // Rebuild the scene if the twin is showing, so the change is immediate.
+        if twinActive, let session, let video = session.video {
+            twin?.activate(displaySize: video.lastHeader?.displaySize ?? CGSize(width: 1080, height: 2400))
+        }
+    }
+
     /// scrcpy's --turn-screen-off. The agent applies it at session start (and restores the panel
     /// when the session ends), so flipping it mid-session restarts the session with the new flag.
     @objc private func toggleScreenOff() {
@@ -594,6 +695,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let enabled = AppBuild.twinEnabled
         twinGateItem?.state = enabled ? .on : .off
         twinOpenItem?.isHidden = !enabled
+        twinDemoItem?.isHidden = !enabled
+        twinFacingMeItem?.isHidden = !enabled
+        twinBackImageItem?.isHidden = !enabled
         mirror.setTwinVisible(enabled)
         if !enabled, twinActive { exitTwin() }
         AppBuild.log("3D device twin \(enabled ? "enabled" : "disabled")")
@@ -602,10 +706,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// One-click demo: enter 3D, drive the orientation through all poses on a loop, and walk the
+    /// device through some nice live content (a website, then a video) so the rotating twin shows
+    /// a real screen. For recording a demo reel.
+    @objc private func showTwinDemo() {
+        guard AppBuild.twinEnabled else { return }
+        guard let serial = session?.serial else {
+            present(message: "No live session", detail: "Start mirroring first, then Show 3D Demo.")
+            return
+        }
+        if !twinActive { toggleTwin(demo: true) } else { twinDemo = true; startTwinDemoGyro() }
+        // Walk the device through content while the twin turns: a website, then a video that we
+        // rotate to landscape so it fills the screen — which also shows the twin handling a
+        // landscape panel. Best-effort; failures are cosmetic. Auto-rotate is restored on exit.
+        DispatchQueue.global(qos: .userInitiated).async {
+            _ = try? Adb.shell(serial, "am start -a android.intent.action.VIEW -d "
+                               + Adb.shellQuote("https://www.google.com/search?q=pixel+9a"))
+            Thread.sleep(forTimeInterval: 10)
+            _ = try? Adb.shell(serial, "am start -a android.intent.action.VIEW -d "
+                               + Adb.shellQuote("https://www.youtube.com/watch?v=aqz-KE-bpKQ"))
+            Thread.sleep(forTimeInterval: 9)
+            // Force landscape: YouTube goes fullscreen, and the twin's panel counter-rotates.
+            _ = try? Adb.shell(serial, "settings put system accelerometer_rotation 0")
+            _ = try? Adb.shell(serial, "settings put system user_rotation 1")
+        }
+        AppBuild.log("twin: demo started")
+    }
+
+    private func startTwinDemoGyro() {
+        let start = Date()
+        twin?.orientationSource = { Self.fakeGyro(Float(Date().timeIntervalSince(start)), sweep: "all") }
+        // The demo needs a reference to show deltas against; the choreography holds its base pose
+        // for the first seconds, so calibrating now anchors face-on to it.
+        twin?.recenter()
+    }
+
     /// Not a second viewer — a display mode. The 3D view takes the mirror's place in the middle
     /// pane; exiting puts the flat view back. One stream, one picture on screen.
-    private func toggleTwin() {
+    private func toggleTwin(demo: Bool = false) {
         if twinActive { exitTwin(); return }
+        twinDemo = demo
         guard AppBuild.twinEnabled else { return }
         guard let session, let video = session.video else {
             present(message: "No live session", detail: "Start mirroring first, then View in 3D.")
@@ -619,19 +759,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let tv = twin ?? {
             let created = TwinView()
             created.translatesAutoresizingMaskIntoConstraints = false
+            // Tapping the 3D screen injects a touch through the flat viewer's same send path.
+            created.onMotion = { [weak self] point, action in
+                self?.mirror.injectMotion(point, action: action)
+            }
             twin = created
             return created
         }()
-        if ProcessInfo.processInfo.environment["RPLAYHUB_FAKE_GYRO"] == "1" {
-            // Scripted poses instead of the device, to verify the orientation math without a
-            // hand on the phone: face-on, yaw left, tilt top toward the viewer, roll
-            // counterclockwise, face-on again. 4 seconds each.
-            let start = Date()
-            tv.orientationSource = { Self.fakeGyro(Float(Date().timeIntervalSince(start))) }
-            AppBuild.log("twin: using the fake scripted gyro")
-        } else {
-            tv.orientationSource = { [weak self] in self?.session?.sensor?.latest }
-        }
         if tv.superview == nil {
             stage.addSubview(tv)
             NSLayoutConstraint.activate([
@@ -645,6 +779,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         mirror.isHidden = true
         tv.activate(displaySize: video.lastHeader?.displaySize ?? CGSize(width: 1080, height: 2400))
         if let header = video.lastHeader { tv.apply(header: header) }
+
+        // Choose the orientation source AFTER activate(), which resets the reference — otherwise
+        // the demo's own reference (its base pose) would be overwritten and the choreography would
+        // play against the wrong baseline, leaving the twin stuck at an offset angle.
+        let fake = ProcessInfo.processInfo.environment["RPLAYHUB_FAKE_GYRO"]
+        if twinDemo {
+            twin = tv
+            startTwinDemoGyro()
+        } else if fake == "1" || fake?.hasPrefix("sweep:") == true {
+            let start = Date()
+            let axis = fake?.hasPrefix("sweep:") == true ? String(fake!.dropFirst(6)) : ""
+            tv.orientationSource = { Self.fakeGyro(Float(Date().timeIntervalSince(start)), sweep: axis) }
+            // Anchor the reference to the fake gyro's base pose (its t≈0 output), so the body-frame
+            // delta cancels the base out and a sweep about one axis stays on that axis.
+            tv.recenter()
+            AppBuild.log("twin: using the fake gyro\(axis.isEmpty ? " (scripted)" : " (sweep:\(axis))")")
+        } else {
+            tv.orientationSource = { [weak self] in self?.session?.sensor?.latest }
+        }
         twinActive = true
         mirror.setTwinActive(true)
         twinOpenItem?.title = "Exit 3D View"
@@ -653,30 +806,64 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// The scripted test poses, in Android's East-North-Up convention. Base pose: upright, screen
-    /// normal pointing South (at a viewer looking North). Each phase applies one world-frame
-    /// rotation whose expected on-screen effect is written beside it.
-    private static func fakeGyro(_ elapsed: Float) -> simd_quatf {
-        let upright = simd_quatf(angle: .pi / 2, axis: simd_float3(1, 0, 0))  // flat → facing South
-        let phase = Int(elapsed / 4) % 5
-        switch phase {
-        case 1:   // yaw +35° about Up — the twin should turn to the viewer's left
-            return simd_quatf(angle: 35 * .pi / 180, axis: simd_float3(0, 0, 1)) * upright
-        case 2:   // pitch +25° about East — the top should tilt toward the viewer
-            return simd_quatf(angle: 25 * .pi / 180, axis: simd_float3(1, 0, 0)) * upright
-        case 3:   // roll +30° about South (the facing axis) — counterclockwise on screen
-            return simd_quatf(angle: 30 * .pi / 180, axis: simd_float3(0, -1, 0)) * upright
-        default:  // face-on
-            return upright
+    /// Fake gyro for verifying the orientation math without a hand on the phone. The base pose
+    /// is the REAL rotation vector measured on the Pixel 9a standing vertically — so the test
+    /// starts where the device actually sits, and "Set Facing Me" against it mirrors reality.
+    ///
+    /// Rotations are applied in the phone's OWN body frame (base · rot), matching how the twin now
+    /// resolves real motion (ref⁻¹ · q). Because the demo calibrates its reference to `base`, the
+    /// body delta cancels the base out cleanly, so a body axis maps straight onto a screen axis:
+    /// y is the turntable (yaw), x is the nod (pitch), z is the in-plane spin (roll). A `sweep` of
+    /// pitch therefore stays pure pitch — the check for the axis-coupling this replaced.
+    private static func fakeGyro(_ elapsed: Float, sweep: String) -> simd_quatf {
+        let base = simd_normalize(simd_quatf(ix: 0.59, iy: -0.39, iz: -0.39, r: 0.59))
+        let angle = elapsed * (30 * .pi / 180)   // 30°/s
+        func rot(_ a: Float, _ x: Float, _ y: Float, _ z: Float) -> simd_quatf {
+            simd_quatf(angle: a, axis: simd_float3(x, y, z))
+        }
+        switch sweep {
+        case "yaw":   return base * rot(angle, 0, 1, 0)   // body up → turntable
+        case "pitch": return base * rot(angle, 1, 0, 0)   // body right → nod toward/away
+        case "roll":  return base * rot(angle, 0, 0, 1)   // body forward → in-plane spin
+        case "all":
+            // A looping demo reel: hold face-on, turn to the back and hold there so the engraved
+            // G reads on camera, finish the turn, then a pitch nod and a roll. Eased throughout.
+            let period: Float = 28
+            let t = elapsed.truncatingRemainder(dividingBy: period)
+            func ease(_ p: Float) -> Float { p * p * (3 - 2 * p) }   // smoothstep
+            func seg(_ start: Float, _ len: Float) -> Float { ease(max(0, min(1, (t - start) / len))) }
+            let half = Float.pi
+            if t < 3 {           return base }                                    // hold face-on
+            else if t < 7 {      return base * rot(seg(3, 4) * half, 0, 1, 0) }   // turn to the back
+            else if t < 10 {     return base * rot(half, 0, 1, 0) }               // HOLD on the back (G)
+            else if t < 14 {     return base * rot(half + seg(10, 4) * half, 0, 1, 0) }  // finish the turn
+            else if t < 19 {     return base * rot(seg(14, 5) * (50 * .pi / 180) - (25 * .pi / 180), 1, 0, 0) }  // pitch ±25°
+            else if t < 24 {     return base * rot(seg(19, 5) * (60 * .pi / 180) - (30 * .pi / 180), 0, 0, 1) }  // roll ±30°
+            else {               return base }                                    // settle face-on
+        default:      break
+        }
+        switch Int(elapsed / 4) % 5 {
+        case 1:   return base * rot(35 * .pi / 180, 0, 1, 0)   // yaw
+        case 2:   return base * rot(25 * .pi / 180, 1, 0, 0)   // pitch
+        case 3:   return base * rot(30 * .pi / 180, 0, 0, 1)   // roll
+        default:  return base
         }
     }
 
     private func exitTwin() {
         guard twinActive, let tv = twin else { return }
+        if twinDemo, let serial = session?.serial {
+            // Undo the demo's forced landscape.
+            DispatchQueue.global(qos: .utility).async {
+                _ = try? Adb.shell(serial, "settings put system user_rotation 0")
+                _ = try? Adb.shell(serial, "settings put system accelerometer_rotation 1")
+            }
+        }
         tv.deactivate()
         tv.isHidden = true
         mirror.isHidden = false
         twinActive = false
+        twinDemo = false
         mirror.setTwinActive(false)
         twinOpenItem?.title = "View Screen in 3D"
         if let session {
@@ -921,10 +1108,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let deviceItem = NSMenuItem()
         let deviceMenu = NSMenu(title: "Device")
-        deviceMenu.addItem(withTitle: "Mirror Selected", action: #selector(mirrorSelected),
-                           keyEquivalent: "m").target = self
-        deviceMenu.addItem(withTitle: "Stop Mirroring", action: #selector(stopMirroring),
-                           keyEquivalent: ".").target = self
+        // One toggle entry — its title flips to match whether a session runs (set both in
+        // validateMenuItem and directly on state change, so it is right even if the menu never
+        // opened to trigger validation).
+        let mirrorToggle = deviceMenu.addItem(withTitle: "Start Screen Mirroring",
+                                              action: #selector(toggleMirroring), keyEquivalent: "m")
+        mirrorToggle.target = self
+        mirrorToggleItem = mirrorToggle
         deviceMenu.addItem(.separator())
         let screenOff = deviceMenu.addItem(withTitle: "Turn Screen Off While Mirroring",
                                            action: #selector(toggleScreenOff), keyEquivalent: "")
@@ -952,6 +1142,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let displaySub = NSMenu(title: "Mirror Display")
         displayPicker.submenu = displaySub
         displaysMenu = displaySub
+        let newDisplay = deviceMenu.addItem(withTitle: "New Virtual Display", action: nil,
+                                            keyEquivalent: "")
+        let newDisplaySub = NSMenu(title: "New Virtual Display")
+        for (title, w, h, dpi) in [("Phone  1080×2340", Int32(1080), Int32(2340), Int32(420)),
+                                   ("Tablet  1280×800", 1280, 800, 213),
+                                   ("Desktop  1920×1080", 1920, 1080, 240)] {
+            let item = newDisplaySub.addItem(withTitle: title,
+                                             action: #selector(createVirtualDisplay(_:)),
+                                             keyEquivalent: "")
+            item.target = self
+            item.representedObject = [w, h, dpi] as [NSNumber]
+        }
+        newDisplay.submenu = newDisplaySub
+        let closeDisplay = deviceMenu.addItem(withTitle: "Close Virtual Display",
+                                              action: #selector(closeVirtualDisplay),
+                                              keyEquivalent: "")
+        closeDisplay.target = self
+        closeDisplay.isHidden = true
+        closeDisplayItem = closeDisplay
         deviceMenu.addItem(.separator())
         deviceMenu.addItem(withTitle: "Refresh Devices", action: #selector(refreshFromMenu),
                            keyEquivalent: "r").target = self
@@ -973,6 +1182,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         twinOpen.target = self
         twinOpen.isHidden = !AppBuild.twinEnabled
         twinOpenItem = twinOpen
+        let facingMe = viewMenu.addItem(withTitle: "Set Facing Me",
+                                        action: #selector(setTwinFacingMe), keyEquivalent: "")
+        facingMe.target = self
+        facingMe.isHidden = !AppBuild.twinEnabled
+        twinFacingMeItem = facingMe
+        let twinDemoMenu = viewMenu.addItem(withTitle: "Show 3D Demo",
+                                            action: #selector(showTwinDemo), keyEquivalent: "")
+        twinDemoMenu.target = self
+        twinDemoMenu.isHidden = !AppBuild.twinEnabled
+        twinDemoItem = twinDemoMenu
+        let backImage = viewMenu.addItem(withTitle: "Set 3D Back Image…",
+                                         action: #selector(chooseTwinBackImage), keyEquivalent: "")
+        backImage.target = self
+        backImage.isHidden = !AppBuild.twinEnabled
+        twinBackImageItem = backImage
         let twinToggle = viewMenu.addItem(withTitle: "3D Device Twin (Experimental)",
                                           action: #selector(toggleTwinGate), keyEquivalent: "")
         twinToggle.target = self
@@ -992,16 +1216,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func mirrorSelected() {
         guard let device = sidebar.selected else { return }
-        startSession(for: device)
+        revealMirror(for: device)
+    }
+
+    @objc private func toggleMirroring() {
+        if mirrorRevealed { stopMirroring() } else { mirrorSelected() }
+    }
+
+    /// Reveal a prepared session instantly, or start one if none is prepared for this device.
+    private func revealMirror(for device: AdbDevice) {
+        if let session, session.serial == device.serial {
+            mirror.reveal()              // agent already running — show the buffered stream now
+            mirrorRevealed = true
+            strip.setSessionActive(true)
+            window.subtitle = "mirroring"
+            refreshMirrorToggle()
+        } else {
+            startSession(for: device, reveal: true)
+        }
+    }
+
+    /// Keep the single Start/Stop toggle's title in step with what the user sees (revealed = Stop).
+    private func refreshMirrorToggle() {
+        mirrorToggleItem?.title = mirrorRevealed ? "Stop Screen Mirroring" : "Start Screen Mirroring"
+    }
+
+    /// Retitle the single Start/Stop toggle to match the live state; leave every other item alone.
+    func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        if item.action == #selector(toggleMirroring) {
+            item.title = mirrorRevealed ? "Stop Screen Mirroring" : "Start Screen Mirroring"
+        }
+        return true
     }
 
     @objc private func stopMirroring() {
+        if twinActive { exitTwin() }
         session?.stop()
         session = nil
+        mirrorRevealed = false
         healthTimer?.invalidate()
         mirror.reset()
         strip.setSessionActive(false)
         window.subtitle = ""
+        refreshMirrorToggle()
     }
 
     @objc private func refreshFromMenu() { refreshDevices() }

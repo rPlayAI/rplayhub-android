@@ -97,6 +97,9 @@ final class MirrorView: NSView, NSMenuItemValidation {
 
     /// True before the first frame — draws the mockup instead of a black rectangle.
     private var isGated = true { didSet { if isGated != oldValue { needsLayout = true } } }
+    /// When false, an arriving video header does NOT auto-reveal the picture — the session runs
+    /// prepared behind the View Screen gate until the user asks. Set true to show it instantly.
+    var autoReveal = true
 
     /// The view is deliberately flipped. AppKit flips the backing layer's geometry for a
     /// non-flipped view, which flips manually added sublayers' content too and renders the video
@@ -317,11 +320,18 @@ final class MirrorView: NSView, NSMenuItemValidation {
         displayOrientation = Int(header.displayOrientation)
         orientationCorrection = Int(header.displayOrientationCorrection)
         isRoundDisplay = header.isDisplayRound && header.displayWidth == header.displayHeight
+        if isGated, autoReveal { isGated = false }
+    }
+
+    /// Show a prepared session's picture now — the user pressed View Screen / Start Mirroring.
+    func reveal() {
+        autoReveal = true
         if isGated { isGated = false }
     }
 
     func reset() {
         isGated = true
+        autoReveal = true
         videoSize = .zero
         displaySize = .zero
         displayOrientation = 0
@@ -576,6 +586,12 @@ final class MirrorView: NSView, NSMenuItemValidation {
         let y = Int32(max(0, min(displaySize.height - 1, point.y)))
         control.send(ControlMessage.motionEvent(pointers: [.init(x: x, y: y)], action: action,
                                                 displayId: displayId))
+    }
+
+    /// Inject a motion event from an already-mapped device point — used by the 3D twin, which does
+    /// its own hit-test-to-device mapping but sends through this same path (control, clamp, id).
+    func injectMotion(_ point: CGPoint, action: Int32) {
+        sendMotion(point, action: action)
     }
 
     override var acceptsFirstResponder: Bool { true }

@@ -15,6 +15,9 @@ final class DeviceSidebar: NSView {
     var onSelect: ((AdbDevice?) -> Void)?
     /// "Mirror" from the row's context menu or a double click.
     var onMirror: ((AdbDevice) -> Void)?
+    var onStopMirror: (() -> Void)?
+    /// Whether a mirror session is currently live — drives the toggle entry's title/behaviour.
+    var isMirroring: (() -> Bool)?
 
     /// How the list is ordered. Device Hub offers the same choice from its toolbar.
     enum Sort: String, CaseIterable {
@@ -131,9 +134,11 @@ final class DeviceSidebar: NSView {
 
     private func rowMenu() -> NSMenu {
         let menu = rowContextMenu
+        menu.delegate = self          // retitle the toggle just before the menu opens
         menu.removeAllItems()
-        menu.addItem(withTitle: "Mirror", action: #selector(mirrorFromMenu), keyEquivalent: "")
-            .target = self
+        // One entry that toggles — its title is set in menuNeedsUpdate from the live state.
+        menu.addItem(withTitle: "Start Screen Mirroring", action: #selector(toggleMirrorFromMenu),
+                     keyEquivalent: "").target = self
         menu.addItem(.separator())
         menu.addItem(withTitle: "Copy Serial", action: #selector(copySerial), keyEquivalent: "")
             .target = self
@@ -254,6 +259,24 @@ final class DeviceSidebar: NSView {
         onMirror?(device)
     }
 
+    @objc private func toggleMirrorFromMenu() {
+        if isMirroring?() == true {
+            onStopMirror?()
+        } else if let device = clickedOrSelected() {
+            onMirror?(device)
+        }
+    }
+
+    /// Retitle the one toggle entry to match the live state, just before the menu shows. Done via
+    /// the menu delegate (menuNeedsUpdate) rather than validateMenuItem — the latter is not reliably
+    /// called for a table's context menu, which is why the title looked stuck on "Start".
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        let live = isMirroring?() == true
+        for item in menu.items where item.action == #selector(toggleMirrorFromMenu) {
+            item.title = live ? "Stop Screen Mirroring" : "Start Screen Mirroring"
+        }
+    }
+
     @objc private func mirrorFromMenu() {
         guard let device = clickedOrSelected() else { return }
         onMirror?(device)
@@ -275,6 +298,8 @@ final class DeviceSidebar: NSView {
         NSPasteboard.general.setString(device.serial, forType: .string)
     }
 }
+
+extension DeviceSidebar: NSMenuDelegate {}
 
 extension DeviceSidebar: NSTableViewDataSource, NSTableViewDelegate {
     func numberOfRows(in tableView: NSTableView) -> Int { rows.count }

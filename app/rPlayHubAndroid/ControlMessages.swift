@@ -27,6 +27,9 @@ enum ControlMessage {
     static let typeStartClipboardSync = 10
     static let typeStopClipboardSync = 11
     static let typeDisplayConfigurationRequest = 20
+    // Our agent additions (see refs/studio/PROVENANCE.md).
+    static let typeCreateNewDisplay = 120
+    static let typeDestroyNewDisplay = 121
 
     // Device → host. Parsed by ControlSender's reader; nothing is length-prefixed, so every
     // type the agent can send unprompted has to be decodable or the channel desynchronises.
@@ -171,6 +174,25 @@ enum ControlMessage {
         var w = Base128Writer()
         w.writeInt32(Int32(typeDisplayConfigurationRequest))
         w.writeInt32(requestId)
+        return w.data
+    }
+
+    /// Our agent addition — scrcpy's --new-display: create a standalone virtual display and
+    /// start streaming it. The new display's id shows up in the video packet headers.
+    static func createNewDisplay(width: Int32, height: Int32, dpi: Int32) -> Data {
+        var w = Base128Writer()
+        w.writeInt32(Int32(typeCreateNewDisplay))
+        w.writeInt32(width)
+        w.writeInt32(height)
+        w.writeInt32(dpi)
+        return w.data
+    }
+
+    /// Our agent addition: stop streaming and destroy a display made by createNewDisplay.
+    static func destroyNewDisplay(displayId: Int32) -> Data {
+        var w = Base128Writer()
+        w.writeInt32(Int32(typeDestroyNewDisplay))
+        w.writeInt32(displayId)
         return w.data
     }
 }
