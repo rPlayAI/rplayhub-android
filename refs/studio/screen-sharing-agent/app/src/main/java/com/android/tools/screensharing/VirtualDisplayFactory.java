@@ -59,17 +59,12 @@ public final class VirtualDisplayFactory {
     int fullFlags = FLAG_PUBLIC | FLAG_OWN_CONTENT_ONLY | FLAG_SUPPORTS_TOUCH
         | FLAG_ROTATES_WITH_CONTENT | FLAG_SHOULD_SHOW_SYSTEM_DECORATIONS | FLAG_TRUSTED
         | FLAG_OWN_FOCUS;
-    // Best case first: a display in its own power/lock world, so apps on it keep running while
-    // the phone's screen is off. The extra flags need permissions that vary by release, so fall
-    // back progressively rather than losing the display altogether.
-    VirtualDisplay display =
-        create(name, width, height, dpi, fullFlags | FLAG_OWN_DISPLAY_GROUP | FLAG_ALWAYS_UNLOCKED);
-    if (display == null) {
-      display = create(name, width, height, dpi, fullFlags | FLAG_OWN_DISPLAY_GROUP);
-    }
-    if (display == null) {
-      display = create(name, width, height, dpi, fullFlags);
-    }
+    // OWN_DISPLAY_GROUP and ALWAYS_UNLOCKED are deliberately NOT requested: with either, the
+    // mirror capture of the display comes back solid black (a DisplayManager mirror lives in the
+    // default group and cross-group content is withheld), and the SurfaceControl alternative
+    // aborts on API 34+. So the display shares the phone's power group, and the agent keeps the
+    // phone awake while the display exists instead.
+    VirtualDisplay display = create(name, width, height, dpi, fullFlags);
     if (display == null) {
       // Privileged flags vary by release; retry with the tamest still-usable set.
       display = create(name, width, height, dpi,

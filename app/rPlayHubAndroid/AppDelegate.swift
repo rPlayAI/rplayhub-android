@@ -225,6 +225,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         mirror.onCommand = { [weak self] command in self?.perform(command) }
         mirror.onFilesDropped = { [weak self] urls in self?.handleDroppedFiles(urls) }
         inspector.apps.onFusion = { [weak self] package in self?.startFusion(package: package) }
+        // A fusion window hides the control strip (it drives the phone, not the app window);
+        // whatever closed the window, the strip belongs back in the main stage.
+        screenWindow.onClose = { [weak self] in self?.strip.isHidden = false }
         // The device commands move from the mirror pane to the device's row in the sidebar.
         if let commands = mirror.commandMenu { sidebar.appendDeviceCommands(from: commands) }
     }
@@ -503,7 +506,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         AppBuild.log("now showing display \(id)")
         // Fusion: the virtual display's frames arrived and the viewer adopted it — put the chosen
-        // app on it and pop the stage into its own resizable window.
+        // app on it and pop the stage into its own resizable window: chromeless (no control
+        // strip — that strip drives the PHONE, and this window is the app), titled with the app.
         if id != 0, let package = pendingFusionPackage, let serial = session?.serial {
             pendingFusionPackage = nil
             fusionRequested = false
@@ -512,6 +516,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 try? Adb.launch(serial, package: package, displayId: id)
             }
             if !screenWindow.isOpen { openScreenWindow() }
+            // "com.google.android.youtube" → "Youtube": the last segment stands in for the real
+            // label, which lives in APK resources the host cannot cheaply read.
+            if let segment = package.split(separator: ".").last {
+                screenWindow.window?.title = segment.prefix(1).uppercased() + segment.dropFirst()
+            }
+            strip.isHidden = true
         }
     }
 

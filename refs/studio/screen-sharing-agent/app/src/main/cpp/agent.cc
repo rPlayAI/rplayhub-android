@@ -371,12 +371,15 @@ void Agent::CreateNewDisplay(int32_t width, int32_t height, int32_t dpi) {
   // startActivity is denied to shell). RequestDisplayPower nudges the display towards its
   // default power state on releases that support it.
   DisplayManager::RequestDisplayPower(jni, display_id, DisplayInfo::STATE_UNKNOWN);
-  // The display sits in its OWN power group (see VirtualDisplayFactory) but that group starts —
-  // and after a global sleep, ends up — asleep. A wake key targeted at the display lights just
-  // this group; the phone's own screen can stay off. Delayed a beat: registration is async.
-  char wake_cmd[96];
+  // The display shares the phone's power group (an own-group display captures black — see
+  // VirtualDisplayFactory), so apps on it pause whenever the phone sleeps. Keep the phone awake
+  // with a wake-key ticker for as long as the agent lives; each wake also resets the screen
+  // timeout. The loop watches this process and dies with the agent.
+  char wake_cmd[144];
   snprintf(wake_cmd, sizeof(wake_cmd),
-           "(sleep 1; input -d %d keyevent 224) >/dev/null 2>&1 &", display_id);
+           "(sleep 1; while kill -0 %d 2>/dev/null; do input keyevent 224; sleep 15; done)"
+           " >/dev/null 2>&1 &",
+           getpid());
   system(wake_cmd);
   StartVideoStream(display_id, max_video_resolution_);
 }
