@@ -494,11 +494,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// "com.google.android.youtube" → "Youtube": the last segment stands in for the real label,
-    /// which lives in APK resources the host cannot cheaply read.
+    /// "com.google.android.youtube" → "Youtube": the last segment stands in for the real label
+    /// until fetchAppLabel replaces it with the launcher's own name.
     private func fusionTitle(for package: String) -> String {
         guard let segment = package.split(separator: ".").last else { return package }
         return segment.prefix(1).uppercased() + segment.dropFirst()
+    }
+
+    /// The real app name, the one the launcher shows. Labels live in APK resources nothing in the
+    /// adb shell can resolve, so a tiny entry in the agent jar (AppLabel, run via app_process —
+    /// already on the device) resolves it the way the launcher does; the window is retitled when
+    /// the answer arrives, a beat after the placeholder.
+    private func fetchAppLabel(package: String) {
+        guard let serial = session?.serial else { return }
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let cmd = "CLASSPATH=\(AgentSession.devicePathBase)/\(AgentSession.jarName)"
+                + " app_process / com.android.tools.screensharing.AppLabel \(package) 2>/dev/null"
+            guard let out = try? Adb.shell(serial, cmd) else { return }
+            let label = out.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
+                .last(where: { !$0.isEmpty }) ?? ""
+            guard !label.isEmpty, label != package else { return }
+            DispatchQueue.main.async { self?.screenWindow.window?.title = label }
+        }
     }
 
     /// The fusion window treatment: chromeless (no control strip — it drives the phone), named
@@ -540,6 +557,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 try? Adb.launch(serial, package: package, displayId: id)
             }
             dressFusionWindow(title: fusionTitle(for: package))
+            fetchAppLabel(package: package)
             return
         }
         pendingFusionPackage = package
@@ -609,6 +627,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 try? Adb.launch(serial, package: package, displayId: id)
             }
             dressFusionWindow(title: fusionTitle(for: package))
+            fetchAppLabel(package: package)
         } else if id != 0, desktopModeRequested {
             // Desktop Mode: nothing to launch — the display's own desktop shell is the content.
             desktopModeRequested = false

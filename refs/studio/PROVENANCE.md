@@ -66,6 +66,11 @@ Recorded here so a resync can reapply them:
   launches the chosen app onto the display (`am start --display N` over adb; in-process
   startActivity is denied to shell). Not upstreamable; on a resync re-add the files and hooks.
 
+- **App labels (new, ours):** `AppLabel.java` — a standalone `main` run via app_process with the
+  agent jar on the CLASSPATH; prints each argument package's launcher label (system context via
+  ActivityThread reflection, scrcpy-style). The host titles fusion windows with it. No agent
+  runtime involvement; on a resync, re-add the file.
+
 ## Refetch
 
     B=refs/heads/mirror-goog-studio-main
