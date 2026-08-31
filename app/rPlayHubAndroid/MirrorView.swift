@@ -469,10 +469,23 @@ final class MirrorView: NSView, NSMenuItemValidation {
         // Scale the coded frame so its live band exactly fills clipLayer, and push the top black
         // strip up out of the clip.
         let band = liveBand
-        let scale = rect.width / videoSize.width
-        displayLayer.frame = CGRect(x: 0, y: -band.startY * scale,
-                                    width: videoSize.width * scale,
-                                    height: videoSize.height * scale)
+        if orientationCorrection % 2 == 1 {
+            // The sublayerTransform above turns the coded frame 90°/270° about clipLayer's centre,
+            // so size the layer in the CODED frame's own axes — its height becomes the presented
+            // width — and centre it; a centred rect rotates onto the clip exactly. Sizing this in
+            // presented axes (the even-case formula) is what showed one magnified corner plus a
+            // white strip whenever the device turned 90°.
+            let scale = rect.width / videoSize.height
+            let w = videoSize.width * scale
+            let h = videoSize.height * scale
+            displayLayer.frame = CGRect(x: (rect.width - w) / 2, y: (rect.height - h) / 2,
+                                        width: w, height: h)
+        } else {
+            let scale = rect.width / videoSize.width
+            displayLayer.frame = CGRect(x: 0, y: -band.startY * scale,
+                                        width: videoSize.width * scale,
+                                        height: videoSize.height * scale)
+        }
         CATransaction.commit()
     }
 
