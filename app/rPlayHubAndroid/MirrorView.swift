@@ -674,6 +674,7 @@ enum AndroidKeyMap {
 /// from ~/rplay-hub, where the behaviour was worked out against the real Device Hub.
 final class HoverButton: NSButton {
     var isFocusedPanel = false { didSet { if isFocusedPanel != oldValue { apply() } } }
+    private var isPressed = false { didSet { if isPressed != oldValue { apply() } } }
     private var observers: [NSObjectProtocol] = []
 
     static let resting = NSColor(srgbRed: 0xDC / 255, green: 0xDC / 255, blue: 0xDC / 255, alpha: 1)
@@ -692,6 +693,10 @@ final class HoverButton: NSButton {
     }
 
     override var intrinsicContentSize: NSSize { NSSize(width: 127, height: 29) }
+
+    // Fire on the first click even when the window is not key, so "View Screen" starts on one
+    // click from an unfocused window instead of the click being spent just activating it.
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     override func layout() {
         super.layout()
@@ -713,12 +718,25 @@ final class HoverButton: NSButton {
 
     deinit { for o in observers { NotificationCenter.default.removeObserver(o) } }
 
+    // Show the active colour the instant the button is pressed — immediate feedback while the
+    // session deploys, before the mirror replaces this view. super.mouseDown runs the tracking
+    // loop and returns once the click completes, so the pressed state brackets exactly the click.
+    override func mouseDown(with event: NSEvent) {
+        isPressed = true
+        super.mouseDown(with: event)
+        isPressed = false
+    }
+
     private func apply() {
         let lit = isFocusedPanel && (window?.isKeyWindow ?? false)
-        layer?.backgroundColor = (lit ? Self.active : Self.resting).cgColor
-        contentTintColor = lit ? .white : .labelColor
+        let active = lit || isPressed
+        var bg = active ? Self.active : Self.resting
+        if isPressed { bg = bg.blended(withFraction: 0.18, of: .black) ?? bg }   // a pressed dip
+        layer?.backgroundColor = bg.cgColor
+        let fg: NSColor = active ? .white : .labelColor
+        contentTintColor = fg
         attributedTitle = NSAttributedString(string: title, attributes: [
-            .foregroundColor: lit ? NSColor.white : NSColor.labelColor,
+            .foregroundColor: fg,
             .font: font ?? NSFont.systemFont(ofSize: NSFont.systemFontSize),
         ])
     }

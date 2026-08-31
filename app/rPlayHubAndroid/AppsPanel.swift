@@ -29,6 +29,13 @@ final class AppsPanel: NSView, NSTableViewDataSource, NSTableViewDelegate {
     private var loaded = false
     private var showSystem = false
 
+    /// Shown until (or unless) a real launcher icon is fetched, so the list never has blank slots.
+    private static let placeholderIcon: NSImage? = {
+        let img = NSImage(systemSymbolName: "app.dashed", accessibilityDescription: "App")
+        img?.isTemplate = true
+        return img
+    }()
+
     private let table = NSTableView()
     private let scroll = NSScrollView()
     private let search = NSSearchField()
@@ -137,6 +144,7 @@ final class AppsPanel: NSView, NSTableViewDataSource, NSTableViewDelegate {
         for (title, action) in [("Launch", #selector(launchSelected)),
                                 ("Force Stop", #selector(stopSelected)),
                                 ("Copy Package Name", #selector(copySelected)),
+                                ("Export APK…", #selector(exportApk)),
                                 ("Uninstall…", #selector(uninstallSelected))] {
             menu.addItem(withTitle: title, action: action, keyEquivalent: "").target = self
         }
@@ -192,9 +200,14 @@ final class AppsPanel: NSView, NSTableViewDataSource, NSTableViewDelegate {
         }
     }
 
+    /// Which device display Launch targets — follows the mirrored display, so with a virtual
+    /// display up, Launch puts the app there.
+    var launchDisplayId: Int32 = 0
+
     @objc private func launchSelected() {
         guard let serial else { return }
-        run("Launched") { try Adb.launch(serial, package: $0) }
+        let displayId = launchDisplayId
+        run("Launched") { try Adb.launch(serial, package: $0, displayId: displayId) }
     }
 
     @objc private func stopSelected() {
@@ -225,6 +238,25 @@ final class AppsPanel: NSView, NSTableViewDataSource, NSTableViewDelegate {
                 self?.status.stringValue = message
                 self?.refresh()
             }
+        }
+    }
+
+    /// Pull the selected app's APK back to the Mac. `base.apk` for a split app — enough to inspect
+    /// or reinstall the primary. Big apps stream through the pull, so it runs off the main queue.
+    @objc private func exportApk() {
+        guard let serial, let package = selectedPackage else { return }
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [UTType(filenameExtension: "apk") ?? .data]
+        panel.nameFieldStringValue = "\(package.id).apk"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        status.stringValue = "Exporting \(package.id)…"
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            var message = "Exported \(url.lastPathComponent)"
+            do {
+                let remote = try Adb.apkPath(serial, package: package.id)
+                try Adb.pull(serial, remotePath: remote, localPath: url.path)
+            } catch { message = "\(error)" }
+            DispatchQueue.main.async { self?.status.stringValue = message }
         }
     }
 
@@ -259,10 +291,13 @@ final class AppsPanel: NSView, NSTableViewDataSource, NSTableViewDelegate {
         label.lineBreakMode = .byTruncatingMiddle
         label.translatesAutoresizingMaskIntoConstraints = false
 
-        // The APK may not yield an icon at all (see AppIcons), so the slot keeps its width
-        // either way and the names stay aligned down the column.
+        // The APK may not yield an icon at all (see AppIcons — Google's own apps ship obfuscated
+        // resource names). Show a generic placeholder so the column never has blank slots, and let
+        // a real icon replace it if one is found.
         let icon = NSImageView()
         icon.imageScaling = .scaleProportionallyUpOrDown
+        icon.image = Self.placeholderIcon
+        icon.contentTintColor = .tertiaryLabelColor
         icon.translatesAutoresizingMaskIntoConstraints = false
         cell.imageView = icon
 
@@ -286,7 +321,10 @@ final class AppsPanel: NSView, NSTableViewDataSource, NSTableViewDelegate {
                 guard let icon, let self else { return }
                 let r = self.table.row(for: icon)
                 guard r >= 0, r < self.filtered.count, self.filtered[r].id == wanted else { return }
-                icon.image = image
+                if let image {
+                    icon.image = image
+                    icon.contentTintColor = nil     // a real icon, not the template placeholder
+                }
             }
         }
         return cell

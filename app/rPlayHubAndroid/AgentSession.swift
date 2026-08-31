@@ -20,6 +20,7 @@
 //
 
 import Foundation
+import CryptoKit
 
 final class AgentSession {
     enum State: Equatable {
@@ -137,6 +138,53 @@ final class AgentSession {
         }
     }
 
+    /// Push the agent jar + native lib, skipping the transfer when the device already holds
+    /// byte-identical copies. Safe to call speculatively: when a ready device is selected we run
+    /// this in the background so a later View Screen click finds the files already in place and
+    /// pays only for app_process start-up, not the push. Idempotent and cheap on a warm device
+    /// (two md5 checks), a full push on a cold one.
+    static func predeploy(serial: String) throws {
+        guard let agentDir = agentDirectory() else {
+            throw AdbError.failed("no built agent found — run tools/build-agent.sh, or set RPLAYHUB_AGENT_DIR")
+        }
+        let abi = try Adb.getprop(serial, "ro.product.cpu.abi")
+        try deployBinaries(serial: serial, agentDir: agentDir, abi: abi)
+    }
+
+    static func deployBinaries(serial: String, agentDir: String, abi: String) throws {
+        let jarLocal = "\(agentDir)/\(jarName)"
+        let soLocal = "\(agentDir)/\(abi)/\(soName)"
+        guard FileManager.default.fileExists(atPath: soLocal) else {
+            throw AdbError.failed("no \(soName) built for \(abi) in \(agentDir)")
+        }
+        let jarRemote = "\(devicePathBase)/\(jarName)"
+        let soRemote = "\(devicePathBase)/\(soName)"
+        if deployedMatches(serial: serial, pairs: [(jarLocal, jarRemote), (soLocal, soRemote)]) {
+            return
+        }
+        // chown so the agent can be launched as shell even when adb is running as root — a rooted
+        // push lands as root and app_process then cannot read it.
+        _ = try? Adb.shell(serial, "mkdir -p \(devicePathBase)")
+        try Adb.push(serial, localPath: jarLocal, remotePath: jarRemote, mode: 0o644)
+        try Adb.push(serial, localPath: soLocal, remotePath: soRemote, mode: 0o755)
+        _ = try? Adb.shell(serial, "chown shell:shell \(devicePathBase) \(devicePathBase)/*")
+    }
+
+    /// True only when every remote file's md5 matches its local source, so a skip is safe even if
+    /// a previous push was interrupted or the artifacts were rebuilt. Any failure (no `md5sum`,
+    /// missing file) reads as "not matched" and falls through to a normal push.
+    private static func deployedMatches(serial: String, pairs: [(local: String, remote: String)]) -> Bool {
+        for (local, remote) in pairs {
+            guard let data = try? Data(contentsOf: URL(fileURLWithPath: local)) else { return false }
+            let localMD5 = Insecure.MD5.hash(data: data).map { String(format: "%02x", $0) }.joined()
+            guard let out = try? Adb.shell(serial, "md5sum \(Adb.shellQuote(remote)) 2>/dev/null"),
+                  let remoteMD5 = out.split(whereSeparator: { $0 == " " || $0 == "\n" }).first
+                      .map(String.init),
+                  remoteMD5 == localMD5 else { return false }
+        }
+        return true
+    }
+
     private func bringUp(maxVideoSize: CGSize) throws {
         guard let agentDir = Self.agentDirectory() else {
             throw AdbError.failed(
@@ -150,20 +198,11 @@ final class AgentSession {
             throw AdbError.failed("the agent needs API 26 or newer; this device reports \(sdk)")
         }
 
-        let soPath = "\(agentDir)/\(abi)/\(Self.soName)"
-        guard FileManager.default.fileExists(atPath: soPath) else {
-            throw AdbError.failed("no \(Self.soName) built for \(abi) in \(agentDir)")
-        }
-
         state = .deploying("pushing the agent")
-        // chown so the agent can be launched as shell even when adb is running as root — a rooted
-        // push lands as root and app_process then cannot read it.
-        _ = try? Adb.shell(serial, "mkdir -p \(Self.devicePathBase)")
-        try Adb.push(serial, localPath: "\(agentDir)/\(Self.jarName)",
-                     remotePath: "\(Self.devicePathBase)/\(Self.jarName)", mode: 0o644)
-        try Adb.push(serial, localPath: soPath,
-                     remotePath: "\(Self.devicePathBase)/\(Self.soName)", mode: 0o755)
-        _ = try? Adb.shell(serial, "chown shell:shell \(Self.devicePathBase) \(Self.devicePathBase)/*")
+        // Idempotent: skips the transfer when the device already holds these exact files — which
+        // it does whenever the selection pre-warmed it (see deployBinaries). The push is the slow
+        // part over wifi, so this is usually where the click's latency disappears.
+        try Self.deployBinaries(serial: serial, agentDir: agentDir, abi: abi)
 
         state = .deploying("opening the tunnel")
         let listener = TCPListener()

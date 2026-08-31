@@ -77,17 +77,23 @@ enum AppIcons {
         return nil
     }
 
-    /// Choose the launcher icon among an APK's entries: raster only, `ic_launcher`-named,
-    /// mipmap before drawable, densest first.
+    /// Choose the launcher icon among an APK's entries: raster only, mipmap before drawable,
+    /// densest first. Prefers an `ic_launcher`-named file, but falls back to any raster in a
+    /// `mipmap` directory — Android reserves those folders for launcher icons, so this catches
+    /// the many apps whose icon resource was renamed by R8 and no longer says "ic_launcher".
     static func pick(from entries: [String]) -> String? {
-        let candidates = entries.filter { name in
-            let lower = name.lowercased()
-            guard lower.hasSuffix(".png") || lower.hasSuffix(".webp") else { return false }
-            guard lower.contains("ic_launcher") || lower.contains("ic_app_icon") else { return false }
-            // The two halves of an adaptive icon are not the icon; the background alone is a
-            // coloured square. Keep foreground only as a last resort, handled by the sort.
-            return !lower.contains("_background")
+        func rasters(where matches: (String) -> Bool) -> [String] {
+            entries.filter { name in
+                let lower = name.lowercased()
+                guard lower.hasSuffix(".png") || lower.hasSuffix(".webp") else { return false }
+                // The two halves of an adaptive icon are not the icon; the background alone is a
+                // coloured square. Keep foreground only as a last resort, handled by the sort.
+                guard !lower.contains("_background") else { return false }
+                return matches(lower)
+            }
         }
+        var candidates = rasters { $0.contains("ic_launcher") || $0.contains("ic_app_icon") }
+        if candidates.isEmpty { candidates = rasters { $0.contains("/mipmap") } }
         guard !candidates.isEmpty else { return nil }
 
         func score(_ name: String) -> Int {

@@ -156,6 +156,33 @@ extension Adb {
                       "monkey -p \(shellQuote(package)) -c android.intent.category.LAUNCHER 1")
     }
 
+    /// Launch onto a specific display — monkey cannot target one, so resolve the launcher
+    /// activity and use `am start --display`. Display 0 falls back to the plain launch.
+    static func launch(_ serial: String, package: String, displayId: Int32) throws {
+        guard displayId != 0 else { return try launch(serial, package: package) }
+        let out = try shell(serial, "cmd package resolve-activity --brief -c android.intent.category.LAUNCHER "
+                            + shellQuote(package) + " | tail -1")
+        let component = out.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard component.contains("/") else {
+            throw AdbError.failed("no launcher activity found for \(package)")
+        }
+        _ = try shell(serial, "am start --display \(displayId) -n \(shellQuote(component))")
+    }
+
+    /// The on-device path of a package's APK — the base split, preferred over config splits — for
+    /// pulling it back to the Mac. `pm path` lists one `package:/path` line per split.
+    static func apkPath(_ serial: String, package: String) throws -> String {
+        let out = try shell(serial, "pm path \(shellQuote(package))")
+        let paths = out.components(separatedBy: "\n")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { $0.hasPrefix("package:") }
+            .map { String($0.dropFirst("package:".count)) }
+        guard let base = paths.first(where: { $0.hasSuffix("base.apk") }) ?? paths.first else {
+            throw AdbError.failed("no APK path for \(package)")
+        }
+        return base
+    }
+
     static func forceStop(_ serial: String, package: String) throws {
         _ = try shell(serial, "am force-stop \(shellQuote(package))")
     }

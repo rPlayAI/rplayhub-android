@@ -5,6 +5,9 @@
 //  Properties are read once per device rather than on a timer — they cannot change while it is
 //  plugged in, and each one is a round trip. Stream health is pushed in by AppDelegate.
 //
+//  Laid out as name/value rows — the name column bold on the left, values beside it — matching
+//  how Device Hub sets its info panes, rather than one monospaced block.
+//
 
 import AppKit
 
@@ -12,13 +15,18 @@ final class DeviceInfoPanel: NSView {
     var serial: String? {
         didSet {
             guard serial != oldValue else { return }
-            propertiesLabel.stringValue = serial == nil ? "No device selected" : "Loading…"
             healthLabel.stringValue = ""
-            if serial != nil { loadProperties() }
+            if serial == nil {
+                setStatus("No device selected")
+            } else {
+                setStatus("Loading…")
+                loadProperties()
+            }
         }
     }
 
-    private let propertiesLabel = NSTextField(labelWithString: "No device selected")
+    /// The Device section's rows are rebuilt here whenever properties arrive.
+    private let rows = NSStackView()
     private let healthLabel = NSTextField(labelWithString: "")
 
     override init(frame frameRect: NSRect) {
@@ -31,26 +39,30 @@ final class DeviceInfoPanel: NSView {
         build()
     }
 
-    private func build() {
-        func header(_ title: String) -> NSTextField {
-            let l = NSTextField(labelWithString: title)
-            l.font = .systemFont(ofSize: 11, weight: .semibold)
-            l.textColor = .secondaryLabelColor
-            return l
-        }
-        for label in [propertiesLabel, healthLabel] {
-            label.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
-            label.lineBreakMode = .byWordWrapping
-            label.maximumNumberOfLines = 24
-            label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        }
-        healthLabel.textColor = .secondaryLabelColor
+    private func header(_ title: String) -> NSTextField {
+        let l = NSTextField(labelWithString: title)
+        l.font = .systemFont(ofSize: 11, weight: .semibold)
+        l.textColor = .secondaryLabelColor
+        return l
+    }
 
-        let stack = NSStackView(views: [header("Device"), propertiesLabel,
-                                        header("Stream"), healthLabel])
+    private func build() {
+        rows.orientation = .vertical
+        rows.alignment = .leading
+        rows.spacing = 5
+
+        healthLabel.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+        healthLabel.textColor = .secondaryLabelColor
+        healthLabel.lineBreakMode = .byWordWrapping
+        healthLabel.maximumNumberOfLines = 12
+        healthLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        setStatus("No device selected")
+
+        let stack = NSStackView(views: [header("Device"), rows, header("Stream"), healthLabel])
         stack.orientation = .vertical
         stack.alignment = .leading
-        stack.spacing = 8
+        stack.spacing = 10
         stack.edgeInsets = NSEdgeInsets(top: 14, left: 14, bottom: 14, right: 14)
         stack.translatesAutoresizingMaskIntoConstraints = false
         addSubview(stack)
@@ -59,14 +71,57 @@ final class DeviceInfoPanel: NSView {
             stack.leadingAnchor.constraint(equalTo: leadingAnchor),
             stack.trailingAnchor.constraint(equalTo: trailingAnchor),
         ])
-        // Activated only now: until the stack is installed these labels and `self` share no
-        // common ancestor, and a constraint across that gap throws at launch.
-        for label in [propertiesLabel, healthLabel] {
-            label.widthAnchor.constraint(equalTo: widthAnchor, constant: -28).isActive = true
-        }
+        healthLabel.widthAnchor.constraint(equalTo: widthAnchor, constant: -28).isActive = true
+        // Now in the hierarchy: give the rows column the panel width so values wrap within it.
+        rows.widthAnchor.constraint(equalTo: widthAnchor, constant: -28).isActive = true
     }
 
     func setHealth(_ text: String) { healthLabel.stringValue = text }
+
+    // MARK: - rows
+
+    /// One "Name  value" line: the name bold in a fixed-width left column, the value regular and
+    /// free to wrap. Fonts and colours follow Device Hub — bold label, muted value.
+    private func makeRow(name: String, value: String) -> NSView {
+        let n = NSTextField(labelWithString: name)
+        n.font = .systemFont(ofSize: 11, weight: .bold)
+        n.textColor = .labelColor
+        n.setContentHuggingPriority(.required, for: .horizontal)
+        n.setContentCompressionResistancePriority(.required, for: .horizontal)
+        n.widthAnchor.constraint(equalToConstant: 62).isActive = true
+
+        let v = NSTextField(labelWithString: value)
+        v.font = .systemFont(ofSize: 11, weight: .regular)
+        v.textColor = .secondaryLabelColor
+        v.lineBreakMode = .byCharWrapping
+        v.maximumNumberOfLines = 3
+        v.isSelectable = true
+        v.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        let row = NSStackView(views: [n, v])
+        row.orientation = .horizontal
+        row.alignment = .firstBaseline
+        row.spacing = 8
+        return row
+    }
+
+    private func setStatus(_ text: String) {
+        rows.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        let l = NSTextField(labelWithString: text)
+        l.font = .systemFont(ofSize: 11, weight: .regular)
+        l.textColor = .secondaryLabelColor
+        rows.addArrangedSubview(l)
+    }
+
+    private func setRows(_ pairs: [(String, String)]) {
+        rows.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        for (name, value) in pairs {
+            let row = makeRow(name: name, value: value)
+            rows.addArrangedSubview(row)
+            // Safe to pin now — the row shares `rows` as an ancestor. Full width so values wrap.
+            row.widthAnchor.constraint(equalTo: rows.widthAnchor).isActive = true
+        }
+    }
 
     private func loadProperties() {
         guard let serial else { return }
@@ -79,15 +134,13 @@ final class DeviceInfoPanel: NSView {
             let values = ((try? Adb.shell(serial, query)) ?? "")
                 .components(separatedBy: "\n")
                 .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            var lines = ["Serial   \(serial)"]
+            var pairs = [("Serial", serial)]
             for (index, entry) in wanted.enumerated() where index < values.count {
-                lines.append(entry.0.padding(toLength: 9, withPad: " ", startingAt: 0)
-                             + values[index])
+                pairs.append((entry.0, values[index]))
             }
-            let text = lines.joined(separator: "\n")
             DispatchQueue.main.async { [weak self] in
                 guard let self, self.serial == serial else { return }
-                self.propertiesLabel.stringValue = text
+                self.setRows(pairs)
             }
         }
     }
