@@ -10,6 +10,17 @@
 import AppKit
 
 final class ControlStrip: NSView {
+    private static let buttonWidth: CGFloat = 30
+    private static let buttonSpacing: CGFloat = 14
+
+    /// The width the toolbar actually needs: every button, the gaps between them, and a margin.
+    /// A window showing this strip should be at least this wide or the buttons get cramped.
+    var minimumContentWidth: CGFloat {
+        let n = CGFloat(buttons.count)
+        guard n > 0 else { return 0 }
+        return n * Self.buttonWidth + (n - 1) * Self.buttonSpacing + 28
+    }
+
     enum Action {
         case back, home, overview, power, volumeUp, volumeDown, rotate, screenshot, record
     }
@@ -53,7 +64,7 @@ final class ControlStrip: NSView {
             // A square hit target rather than whatever the glyph happens to measure — the
             // navigation buttons are the ones people aim at repeatedly.
             b.translatesAutoresizingMaskIntoConstraints = false
-            b.widthAnchor.constraint(equalToConstant: 30).isActive = true
+            b.widthAnchor.constraint(equalToConstant: Self.buttonWidth).isActive = true
             b.heightAnchor.constraint(equalToConstant: 26).isActive = true
             b.toolTip = item.2
             b.target = self
@@ -67,7 +78,7 @@ final class ControlStrip: NSView {
 
         let stack = NSStackView(views: views)
         stack.orientation = .horizontal
-        stack.spacing = 14
+        stack.spacing = Self.buttonSpacing
         stack.alignment = .centerY
         stack.translatesAutoresizingMaskIntoConstraints = false
         addSubview(stack)

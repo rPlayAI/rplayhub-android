@@ -778,8 +778,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// phone's width when it goes. Anchored at the top-left so the window doesn't wander.
     private func widenForStrip(_ w: NSWindow, visible: Bool) {
         guard nakedPictureSize.width > 0 else { return }
+        // Wide enough for every toolbar button plus breathing room — and never narrower than the
+        // main window's stage, which is the width this toolbar was designed at.
         let wanted = visible
-            ? max(nakedPictureSize.width, strip.fittingSize.width + 24)
+            ? max(nakedPictureSize.width, strip.minimumContentWidth, 520)
             : nakedPictureSize.width
         guard abs(w.frame.width - wanted) > 1 else { return }
         let top = w.frame.maxY, left = w.frame.minX
