@@ -770,8 +770,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let f = w.frame
         let inX = mouse.x >= f.minX - 4 && mouse.x <= f.maxX + 4
         let band: CGFloat = fusionChromeShown ? 90 : 64
-        let nearTop = inX && mouse.y <= f.maxY + 8 && mouse.y >= f.maxY - band
-        setFusionChrome(visible: nearTop)
+        // Either edge brings the normal window back: the title bar lives at the top, the control
+        // strip at the bottom, so approaching either one should reveal the chrome.
+        let nearTop = mouse.y <= f.maxY + 8 && mouse.y >= f.maxY - band
+        let nearBottom = mouse.y >= f.minY - 8 && mouse.y <= f.minY + band
+        setFusionChrome(visible: inX && (nearTop || nearBottom))
     }
 
     private func removeFusionTitlebar() {
