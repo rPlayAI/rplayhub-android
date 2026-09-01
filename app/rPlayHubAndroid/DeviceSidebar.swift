@@ -18,6 +18,8 @@ final class DeviceSidebar: NSView {
     var onStopMirror: (() -> Void)?
     /// Desktop Mode on a specific device — the clicked row's, not necessarily the selected one.
     var onDesktopMode: ((AdbDevice) -> Void)?
+    /// Open the device's storage in Finder.
+    var onShowInFinder: ((AdbDevice) -> Void)?
     /// Whether a mirror session is currently live — drives the toggle entry's title/behaviour.
     var isMirroring: (() -> Bool)?
 
@@ -143,6 +145,8 @@ final class DeviceSidebar: NSView {
                      keyEquivalent: "").target = self
         menu.addItem(withTitle: "Desktop Mode", action: #selector(desktopModeFromMenu),
                      keyEquivalent: "").target = self
+        menu.addItem(withTitle: "Show Files in Finder", action: #selector(showInFinderFromMenu),
+                     keyEquivalent: "").target = self
         menu.addItem(.separator())
         menu.addItem(withTitle: "Copy Serial", action: #selector(copySerial), keyEquivalent: "")
             .target = self
@@ -261,6 +265,10 @@ final class DeviceSidebar: NSView {
     @objc private func rowDoubleClicked() {
         guard let device = device(at: tableView.clickedRow) else { return }
         onMirror?(device)
+    }
+
+    @objc private func showInFinderFromMenu() {
+        if let device = clickedOrSelected() { onShowInFinder?(device) }
     }
 
     @objc private func desktopModeFromMenu() {

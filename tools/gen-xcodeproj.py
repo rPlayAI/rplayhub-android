@@ -2,9 +2,11 @@
 """
 Regenerate app/rPlayHubAndroid.xcodeproj from whatever .swift files are in the source directory.
 
-The project has no per-file settings and no build phases beyond the default three, so it is
-entirely derived from the file list. Generating it means adding a source file never involves
-editing a pbxproj by hand, and never silently fails to compile because it was forgotten.
+The project has no per-file settings, so it is entirely derived from the file lists: every
+.swift in rPlayHubAndroid/ goes into the app, every .swift in FinderMount/ (plus the SHARED adb
+client files) into the File Provider extension, which the app embeds. Generating it means adding
+a source file never involves editing a pbxproj by hand, and never silently fails to compile
+because it was forgotten.
 
     python3 tools/gen-xcodeproj.py
 """
@@ -12,8 +14,15 @@ import os
 
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'app')
 SRC = 'rPlayHubAndroid'
+EXT = 'FinderMount'
+
+# Files the File Provider extension compiles too. It is a separate process with its own module,
+# so sharing means compiling the same sources into both targets — these three are pure
+# Foundation/Darwin (the adb client), which is exactly what the extension needs and all it needs.
+SHARED = ['Adb.swift', 'AdbFiles.swift', 'TCPSocket.swift']
 
 files = sorted(f for f in os.listdir(os.path.join(ROOT, SRC)) if f.endswith('.swift'))
+ext_files = sorted(f for f in os.listdir(os.path.join(ROOT, EXT)) if f.endswith('.swift'))
 
 def oid(n):
     return "1A%022X" % n
@@ -27,6 +36,26 @@ for f in files:
     builds.append(f'\t\t{bf} /* {f} in Sources */ = {{isa = PBXBuildFile; fileRef = {fr} /* {f} */; }};')
     entries.append((f, fr, bf))
 
+# The extension's own sources, plus a second build file for each shared source (one PBXBuildFile
+# per target — the file reference itself is reused).
+ext_refs, ext_builds, ext_entries, ext_group = [], [], [], []
+n = 0x8000
+for f in ext_files:
+    n += 1; fr = oid(n)
+    n += 1; bf = oid(n)
+    ext_refs.append(f'\t\t{fr} /* {f} */ = {{isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = {f}; sourceTree = "<group>"; }};')
+    ext_builds.append(f'\t\t{bf} /* {f} in Sources */ = {{isa = PBXBuildFile; fileRef = {fr} /* {f} */; }};')
+    ext_entries.append((f, bf))
+    ext_group.append((f, fr))
+shared_missing = [f for f in SHARED if f not in files]
+if shared_missing:
+    raise SystemExit(f"shared sources not found in {SRC}: {shared_missing}")
+for f in SHARED:
+    fr = next(r for name, r, _ in entries if name == f)
+    n += 1; bf = oid(n)
+    ext_builds.append(f'\t\t{bf} /* {f} in Sources */ = {{isa = PBXBuildFile; fileRef = {fr} /* {f} */; }};')
+    ext_entries.append((f, bf))
+
 PLIST_REF, ENT_REF, ICON_REF = oid(0x2001), oid(0x2002), oid(0x2003)
 ICON_BUILD = oid(0x2004)
 PRODUCT, TARGET, PROJECT = oid(0x3001), oid(0x3002), oid(0x3003)
@@ -35,8 +64,20 @@ PH_SOURCES, PH_FRAMEWORKS, PH_RESOURCES = oid(0x5001), oid(0x5002), oid(0x5003)
 CFG_LIST_PROJ, CFG_LIST_TGT = oid(0x6001), oid(0x6002)
 CFG_PD, CFG_PR, CFG_TD, CFG_TR = oid(0x6003), oid(0x6004), oid(0x6005), oid(0x6006)
 
+# The File Provider extension target and everything that hangs off it: its own product, group,
+# phases and configurations, plus the app-side Embed phase, dependency and proxy that put the
+# built .appex into the app's PlugIns and sign it there.
+EXT_PLIST_REF, EXT_ENT_REF = oid(0x7001), oid(0x7002)
+EXT_PRODUCT, EXT_TARGET = oid(0x7003), oid(0x7004)
+GRP_EXT = oid(0x7005)
+PH_EXT_SOURCES, PH_EXT_FRAMEWORKS, PH_EMBED = oid(0x7006), oid(0x7007), oid(0x7008)
+CFG_LIST_EXT, CFG_XD, CFG_XR = oid(0x7009), oid(0x700A), oid(0x700B)
+EXT_DEP, EXT_PROXY, EXT_EMBED_BUILD = oid(0x700C), oid(0x700D), oid(0x700E)
+
 group_children = "\n".join(f'\t\t\t\t{fr} /* {f} */,' for f, fr, _ in entries)
 sources_files  = "\n".join(f'\t\t\t\t{bf} /* {f} in Sources */,' for f, _, bf in entries)
+ext_group_children = "\n".join(f'\t\t\t\t{fr} /* {f} */,' for f, fr in ext_group)
+ext_sources_files  = "\n".join(f'\t\t\t\t{bf} /* {f} in Sources */,' for f, bf in ext_entries)
 
 common = """				ALWAYS_SEARCH_USER_PATHS = NO;
 				CLANG_ENABLE_OBJC_ARC = YES;
@@ -61,6 +102,22 @@ target_common = """				CODE_SIGN_ENTITLEMENTS = rPlayHubAndroid/rPlayHubAndroid.
 				PRODUCT_BUNDLE_IDENTIFIER = com.rplay.rplayhub.android;
 				PRODUCT_NAME = "$(TARGET_NAME)";"""
 
+ext_target_common = """				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = FinderMount/FinderMount.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_HARDENED_RUNTIME = YES;
+				INFOPLIST_FILE = FinderMount/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.rplay.rplayhub.android.FinderMount;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;"""
+
 pbx = f"""// !$*UTF8*$!
 {{
 	archiveVersion = 1;
@@ -71,8 +128,34 @@ pbx = f"""// !$*UTF8*$!
 
 /* Begin PBXBuildFile section */
 {chr(10).join(builds)}
+{chr(10).join(ext_builds)}
 		{ICON_BUILD} /* AppIcon.icns in Resources */ = {{isa = PBXBuildFile; fileRef = {ICON_REF} /* AppIcon.icns */; }};
+		{EXT_EMBED_BUILD} /* FinderMount.appex in Embed Foundation Extensions */ = {{isa = PBXBuildFile; fileRef = {EXT_PRODUCT} /* FinderMount.appex */; settings = {{ATTRIBUTES = (RemoveHeadersOnCopy, ); }}; }};
 /* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		{EXT_PROXY} /* PBXContainerItemProxy */ = {{
+			isa = PBXContainerItemProxy;
+			containerPortal = {PROJECT} /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = {EXT_TARGET};
+			remoteInfo = FinderMount;
+		}};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		{PH_EMBED} /* Embed Foundation Extensions */ = {{
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				{EXT_EMBED_BUILD} /* FinderMount.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		}};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 {chr(10).join(refs)}
@@ -80,10 +163,21 @@ pbx = f"""// !$*UTF8*$!
 		{ICON_REF} /* AppIcon.icns */ = {{isa = PBXFileReference; lastKnownFileType = image.icns; path = AppIcon.icns; sourceTree = "<group>"; }};
 		{ENT_REF} /* rPlayHubAndroid.entitlements */ = {{isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = rPlayHubAndroid.entitlements; sourceTree = "<group>"; }};
 		{PRODUCT} /* rPlayHubAndroid.app */ = {{isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = rPlayHubAndroid.app; sourceTree = BUILT_PRODUCTS_DIR; }};
+{chr(10).join(ext_refs)}
+		{EXT_PLIST_REF} /* Info.plist */ = {{isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; }};
+		{EXT_ENT_REF} /* FinderMount.entitlements */ = {{isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = FinderMount.entitlements; sourceTree = "<group>"; }};
+		{EXT_PRODUCT} /* FinderMount.appex */ = {{isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = FinderMount.appex; sourceTree = BUILT_PRODUCTS_DIR; }};
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		{PH_FRAMEWORKS} /* Frameworks */ = {{
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		}};
+		{PH_EXT_FRAMEWORKS} /* Frameworks */ = {{
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -97,6 +191,7 @@ pbx = f"""// !$*UTF8*$!
 			isa = PBXGroup;
 			children = (
 				{GRP_SRC} /* rPlayHubAndroid */,
+				{GRP_EXT} /* FinderMount */,
 				{GRP_PRODUCTS} /* Products */,
 			);
 			sourceTree = "<group>";
@@ -112,10 +207,21 @@ pbx = f"""// !$*UTF8*$!
 			path = rPlayHubAndroid;
 			sourceTree = "<group>";
 		}};
+		{GRP_EXT} /* FinderMount */ = {{
+			isa = PBXGroup;
+			children = (
+{ext_group_children}
+				{EXT_PLIST_REF} /* Info.plist */,
+				{EXT_ENT_REF} /* FinderMount.entitlements */,
+			);
+			path = FinderMount;
+			sourceTree = "<group>";
+		}};
 		{GRP_PRODUCTS} /* Products */ = {{
 			isa = PBXGroup;
 			children = (
 				{PRODUCT} /* rPlayHubAndroid.app */,
+				{EXT_PRODUCT} /* FinderMount.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -130,15 +236,33 @@ pbx = f"""// !$*UTF8*$!
 				{PH_SOURCES} /* Sources */,
 				{PH_FRAMEWORKS} /* Frameworks */,
 				{PH_RESOURCES} /* Resources */,
+				{PH_EMBED} /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				{EXT_DEP} /* PBXTargetDependency */,
 			);
 			name = rPlayHubAndroid;
 			productName = rPlayHubAndroid;
 			productReference = {PRODUCT} /* rPlayHubAndroid.app */;
 			productType = "com.apple.product-type.application";
+		}};
+		{EXT_TARGET} /* FinderMount */ = {{
+			isa = PBXNativeTarget;
+			buildConfigurationList = {CFG_LIST_EXT} /* Build configuration list for PBXNativeTarget "FinderMount" */;
+			buildPhases = (
+				{PH_EXT_SOURCES} /* Sources */,
+				{PH_EXT_FRAMEWORKS} /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = FinderMount;
+			productName = FinderMount;
+			productReference = {EXT_PRODUCT} /* FinderMount.appex */;
+			productType = "com.apple.product-type.app-extension";
 		}};
 /* End PBXNativeTarget section */
 
@@ -151,6 +275,9 @@ pbx = f"""// !$*UTF8*$!
 				LastUpgradeCheck = 1500;
 				TargetAttributes = {{
 					{TARGET} = {{
+						CreatedOnToolsVersion = 15.0;
+					}};
+					{EXT_TARGET} = {{
 						CreatedOnToolsVersion = 15.0;
 					}};
 				}};
@@ -169,6 +296,7 @@ pbx = f"""// !$*UTF8*$!
 			projectRoot = "";
 			targets = (
 				{TARGET} /* rPlayHubAndroid */,
+				{EXT_TARGET} /* FinderMount */,
 			);
 		}};
 /* End PBXProject section */
@@ -193,7 +321,23 @@ pbx = f"""// !$*UTF8*$!
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		}};
+		{PH_EXT_SOURCES} /* Sources */ = {{
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+{ext_sources_files}
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		}};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		{EXT_DEP} /* PBXTargetDependency */ = {{
+			isa = PBXTargetDependency;
+			target = {EXT_TARGET} /* FinderMount */;
+			targetProxy = {EXT_PROXY} /* PBXContainerItemProxy */;
+		}};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		{CFG_PD} /* Debug */ = {{
@@ -240,6 +384,20 @@ pbx = f"""// !$*UTF8*$!
 			}};
 			name = Release;
 		}};
+		{CFG_XD} /* Debug */ = {{
+			isa = XCBuildConfiguration;
+			buildSettings = {{
+{ext_target_common}
+			}};
+			name = Debug;
+		}};
+		{CFG_XR} /* Release */ = {{
+			isa = XCBuildConfiguration;
+			buildSettings = {{
+{ext_target_common}
+			}};
+			name = Release;
+		}};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -261,6 +419,15 @@ pbx = f"""// !$*UTF8*$!
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		}};
+		{CFG_LIST_EXT} /* Build configuration list for PBXNativeTarget "FinderMount" */ = {{
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				{CFG_XD} /* Debug */,
+				{CFG_XR} /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		}};
 /* End XCConfigurationList section */
 	}};
 	rootObject = {PROJECT} /* Project object */;
@@ -270,4 +437,5 @@ pbx = f"""// !$*UTF8*$!
 out = os.path.join(ROOT, 'rPlayHubAndroid.xcodeproj', 'project.pbxproj')
 os.makedirs(os.path.dirname(out), exist_ok=True)
 open(out, 'w').write(pbx)
-print(f"wrote {os.path.relpath(out)} — {len(files)} sources")
+print(f"wrote {os.path.relpath(out)} — {len(files)} app sources, "
+      f"{len(ext_files)} + {len(SHARED)} shared extension sources")

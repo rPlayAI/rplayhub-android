@@ -94,13 +94,20 @@ if [[ -n "$ADB_BIN" ]]; then
 else
     say "WARNING: no adb binary found to bundle — the target machine will need platform-tools"
 fi
-# Adding files broke the code seal; sign the nested binary, then the bundle again.
+# Adding files broke the code seal; sign the nested binaries, then the bundle again — inside
+# out. The File Provider extension keeps its own entitlements (sandbox + network client): a
+# re-sign without them leaves an extension fileproviderd refuses to launch.
+APPEX="$APP/Contents/PlugIns/FinderMount.appex"
 if [[ -n "$SIGN_ID" ]]; then
     [[ -f "$APP/Contents/Resources/adb/adb" ]] && \
         codesign --force --sign "$SIGN_ID" --timestamp --options=runtime "$APP/Contents/Resources/adb/adb"
+    [[ -d "$APPEX" ]] && \
+        codesign --force --sign "$SIGN_ID" --timestamp --options=runtime \
+            --preserve-metadata=entitlements "$APPEX"
     codesign --force --sign "$SIGN_ID" --timestamp --options=runtime "$APP"
 else
     [[ -f "$APP/Contents/Resources/adb/adb" ]] && codesign --force --sign - "$APP/Contents/Resources/adb/adb"
+    [[ -d "$APPEX" ]] && codesign --force --sign - --preserve-metadata=entitlements "$APPEX"
     codesign --force --sign - "$APP"
 fi
 

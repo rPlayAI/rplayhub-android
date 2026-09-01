@@ -98,6 +98,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         session?.stop()
+        FinderMount.removeAll()
     }
 
     // MARK: - window
@@ -224,6 +225,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         sidebar.onStopMirror = { [weak self] in self?.stopMirroring() }
         sidebar.isMirroring = { [weak self] in self?.mirrorRevealed ?? false }
         sidebar.onDesktopMode = { [weak self] device in self?.requestDesktopMode(on: device) }
+        sidebar.onShowInFinder = { device in FinderMount.reveal(serial: device.serial) }
         mirror.onViewScreen = { [weak self] in
             guard let self else { return }
             // Fall back to the only device there is. Requiring a selection when there is
@@ -295,6 +297,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
                 self.sidebar.update(devices: captured.0, note: captured.1)
+                FinderMount.sync(devices: captured.0)
                 // Nothing to choose between: select it, so the inspector has a device rather
                 // than showing "No device selected" beside a list of exactly one.
                 if self.sidebar.selected == nil {
@@ -1650,6 +1653,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         closeDisplay.isHidden = true
         closeDisplayItem = closeDisplay
         deviceMenu.addItem(.separator())
+        let finder = deviceMenu.addItem(withTitle: "Show Files in Finder",
+                                        action: #selector(showInFinder), keyEquivalent: "e")
+        finder.keyEquivalentModifierMask = [.command, .shift]
+        finder.target = self
+        deviceMenu.addItem(.separator())
         deviceMenu.addItem(withTitle: "Refresh Devices", action: #selector(refreshFromMenu),
                            keyEquivalent: "r").target = self
         deviceItem.submenu = deviceMenu
@@ -1792,6 +1800,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func refreshFromMenu() { refreshDevices() }
+
+    /// The phone's storage as a Finder location — where a photo gets dragged out of.
+    @objc private func showInFinder() {
+        let ready = sidebar.devices.filter { $0.isReady }
+        guard let device = sidebar.selected ?? (ready.count == 1 ? ready.first : nil) else {
+            present(message: "No device selected",
+                    detail: "Pick a device in the sidebar first.")
+            return
+        }
+        FinderMount.reveal(serial: device.serial)
+    }
 
     @objc private func openScreenWindow() {
         screenWindow.open(stage: stage, from: splitView, title: window.title, tabbedWith: nil)

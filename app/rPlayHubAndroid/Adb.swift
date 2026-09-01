@@ -34,6 +34,21 @@ struct AdbDevice: Equatable {
         guard let model, !model.isEmpty else { return serial }
         return model.replacingOccurrences(of: "_", with: " ")
     }
+
+    // MARK: - File Provider domain identity
+
+    /// A serial as a File Provider domain identifier. The system forbids '/' and ':' there, and
+    /// a network device's serial is "host:port" — so those (and '%', to keep it reversible) are
+    /// percent-encoded. The extension turns it back with `serial(fromDomainIdentifier:)`.
+    static func domainIdentifier(for serial: String) -> String {
+        var allowed = CharacterSet.alphanumerics
+        allowed.insert(charactersIn: "-._~")
+        return serial.addingPercentEncoding(withAllowedCharacters: allowed) ?? serial
+    }
+
+    static func serial(fromDomainIdentifier id: String) -> String {
+        id.removingPercentEncoding ?? id
+    }
 }
 
 enum AdbError: Error, CustomStringConvertible {
@@ -281,10 +296,12 @@ enum Adb {
     /// The sync protocol is its own little language spoken after `sync:`: SEND with a
     /// "path,mode" payload, then DATA chunks, then DONE with an mtime, then a single OKAY.
     /// All of its lengths are little-endian u32, unlike the hex lengths of the host protocol.
-    static func push(_ serial: String, localPath: String, remotePath: String, mode: Int = 0o644) throws {
-        guard let data = FileManager.default.contents(atPath: localPath) else {
+    static func push(_ serial: String, localPath: String, remotePath: String, mode: Int = 0o644,
+                     progress: ((Int) -> Void)? = nil) throws {
+        guard let file = FileHandle(forReadingAtPath: localPath) else {
             throw AdbError.failed("cannot read \(localPath)")
         }
+        defer { try? file.close() }
         let s = try openTransport(serial)
         defer { s.shutdownAndClose() }
         try send(s, "sync:")
@@ -292,13 +309,16 @@ enum Adb {
         let spec = Data("\(remotePath),\(mode)".utf8)
         try s.writeAll(Data("SEND".utf8) + le32(UInt32(spec.count)) + spec)
 
-        var offset = 0
-        let chunkSize = 64 * 1024              // the sync protocol's maximum
-        while offset < data.count {
-            let end = min(offset + chunkSize, data.count)
-            let chunk = data[data.startIndex.advanced(by: offset)..<data.startIndex.advanced(by: end)]
-            try s.writeAll(Data("DATA".utf8) + le32(UInt32(chunk.count)) + Data(chunk))
-            offset = end
+        // Streamed from disk in the sync protocol's maximum chunk — a dropped-in video should
+        // not have to fit in memory first.
+        let chunkSize = 64 * 1024
+        var sent = 0
+        while true {
+            let chunk = try file.read(upToCount: chunkSize) ?? Data()
+            if chunk.isEmpty { break }
+            try s.writeAll(Data("DATA".utf8) + le32(UInt32(chunk.count)) + chunk)
+            sent += chunk.count
+            progress?(sent)
         }
 
         let mtime = UInt32(Date().timeIntervalSince1970)
