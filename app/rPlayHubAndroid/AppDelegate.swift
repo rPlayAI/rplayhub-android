@@ -621,7 +621,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         guard let w = screenWindow.window else { return }
         w.title = title
-        w.contentAspectRatio = NSSize(width: 16, height: 9)
+        // No contentAspectRatio lock: it would fight the fullSizeContentView toggle and jump the
+        // window size on every hover. MirrorView letterboxes internally, so the picture stays
+        // correct at any window ratio.
         w.setContentSize(NSSize(width: 1152, height: 648))
         applyNakedChrome(to: w)
         // Controls the naked window still needs: Wake, Screenshot, Record. Rebuilt each time so it
@@ -658,18 +660,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let lights = [w.standardWindowButton(.closeButton),
                       w.standardWindowButton(.miniaturizeButton),
                       w.standardWindowButton(.zoomButton)]
+        // Toggle the whole window between "raw" (fullSizeContentView, transparent bar, no chrome —
+        // the picture fills everything) and the traditional window (a real title-bar strip above
+        // the picture, app name, traffic lights, and our controls) — the same window that existed
+        // before raw mode. Enforced every call because macOS restores chrome on activation.
+        if visible { w.styleMask.remove(.fullSizeContentView) }
+        else { w.styleMask.insert(.fullSizeContentView) }
+        w.titlebarAppearsTransparent = !visible
+        w.titleVisibility = visible ? .visible : .hidden
+        for b in lights { b?.isHidden = !visible }
+        fusionTitlebar?.view.isHidden = !visible
+        // For the plain mirror pop-out (no fusion accessory), the bottom control strip is a "bar"
+        // too — hide it in raw mode so only the phone shows, bring it back on approach. In fusion
+        // the strip stays hidden either way (it drives the phone, not the fused app).
+        if fusionTitlebar == nil { strip.isHidden = !visible }
+
         let changed = visible != fusionChromeShown
         fusionChromeShown = visible
-
-        // Enforce the final hidden/shown state on EVERY call (cheap, no animation) — macOS re-shows
-        // traffic lights when the window activates, so the timer must keep re-hiding them.
-        let a: CGFloat = visible ? 1 : 0
-        for b in lights { b?.isHidden = !visible; if !changed { b?.alphaValue = a } }
-        fusionTitlebar?.view.isHidden = !visible
-        if !changed { fusionTitlebar?.view.alphaValue = a }
-
-        // Fade only on an actual transition.
         guard changed, animated else { return }
+        // A soft fade on the transition.
+        let a: CGFloat = visible ? 1 : 0
         for b in lights { b?.alphaValue = visible ? 0 : 1 }
         fusionTitlebar?.view.alphaValue = visible ? 0 : 1
         NSAnimationContext.runAnimationGroup { ctx in
@@ -1669,7 +1679,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func openScreenWindow() {
         screenWindow.open(stage: stage, from: splitView, title: window.title, tabbedWith: nil)
-        if let w = screenWindow.window { applyNakedChrome(to: w) }
+        if let w = screenWindow.window {
+            applyNakedChrome(to: w)
+            // Size to the phone: a snug portrait window, not a big landscape frame with empty
+            // sides. Match the mirror's aspect when known, else a sensible portrait default.
+            let vs = mirror.videoSize
+            let ratio = (vs.width > 0 && vs.height > 0) ? vs.height / vs.width : 2.1
+            let w0: CGFloat = 380
+            w.setContentSize(NSSize(width: w0, height: (w0 * ratio).rounded()))
+            w.center()
+        }
     }
 
     @objc private func openScreenTab() {
