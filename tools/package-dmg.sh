@@ -2,20 +2,22 @@
 #
 # Build rPlayHubAndroid.app (Release) and wrap it in a DMG.
 #
-#   ./tools/package-dmg.sh                       # ad-hoc signed, LOCAL TESTING ONLY
-#   SIGN_ID="Developer ID Application: Huihong Luo (TEAMID)" ./tools/package-dmg.sh
-#   SIGN_ID="…" NOTARY_PROFILE=rplayhub-android ./tools/package-dmg.sh   # sign + notarize + staple
+#   ./tools/package-dmg.sh                                   # ad-hoc signed, LOCAL TESTING ONLY
+#   SIGN_ID="Developer ID Application: VMLite Corporation (NL28FE3UZ7)" \
+#   NOTARY_PROFILE=AC_PASSWORD ./tools/package-dmg.sh        # shippable: sign + notarize + staple
 #
-# Adapted from ~/rplay-hub/scripts/package-dmg.sh. This variant is for a PERSONAL Apple account,
-# not VMLite: pass a personal "Developer ID Application" identity as SIGN_ID and a matching
-# notarytool keychain profile as NOTARY_PROFILE. Create the profile once with:
+# Shippable = one ad-hoc Release build (the "Bundle agent + adb" phase bakes in the agent, adb and
+# the companion APK), then re-signed inside out with raw codesign and the Developer ID identity.
+# NOT xcodebuild's own Developer ID signing: the app carries an App Group for the store, a
+# RESTRICTED entitlement that xcodebuild will only sign against a Developer ID provisioning
+# profile — which it cannot create automatically. The DMG does not need the group (it exists only
+# for App Store validation; the Finder mount runs without it), so it is stripped here and raw
+# codesign signs the rest, which needs no profile. tools/archive-appstore.sh keeps the group.
 #
-#   xcrun notarytool store-credentials rplayhub-android \
-#       --apple-id "you@example.com" --team-id "TEAMID" --password "app-specific-password"
-#
-# A "Developer ID Application" cert needs a paid Apple Developer Program membership; an
-# "Apple Development" cert cannot notarize a downloadable app. Without SIGN_ID + NOTARY_PROFILE the
-# DMG is ad-hoc signed and Gatekeeper will block anyone who DOWNLOADS it — fine on this Mac only.
+# NOTARY_PROFILE is a notarytool keychain profile (AC_PASSWORD is the team's, shared with ~/rplay):
+#   xcrun notarytool store-credentials AC_PASSWORD \
+#       --apple-id "you@example.com" --team-id NL28FE3UZ7 --password "app-specific-password"
+# Without SIGN_ID + NOTARY_PROFILE the DMG is ad-hoc signed and Gatekeeper blocks a DOWNLOADED copy.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -25,6 +27,7 @@ DD="$BUILD/DerivedData"
 STAGE="$BUILD/dmg-stage"
 APP_NAME="rPlayHubAndroid"
 VOLNAME="rPlayHub Android"
+TEAM="NL28FE3UZ7"
 
 VERSION="$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' \
     "$ROOT/app/rPlayHubAndroid/Info.plist" 2>/dev/null || echo "0.0.0")"
@@ -32,101 +35,84 @@ DMG="$BUILD/$APP_NAME-$VERSION.dmg"
 
 SIGN_ID="${SIGN_ID:-}"
 NOTARY_PROFILE="${NOTARY_PROFILE:-}"
+AGENT_DIR="${RPLAYHUB_AGENT_DIR:-$ROOT/build/agent}"
 
 say() { printf '\033[1m==>\033[0m %s\n' "$*"; }
 
-# ---------------------------------------------------------------- agent artifacts
-# The app locates the screen-sharing agent at runtime (RPLAYHUB_AGENT_DIR or a built path). A
-# downloaded copy on another Mac will have neither unless the agent is bundled or the user builds
-# it. Warn if it is missing here, but still package — this is enough to test the app itself.
-if [[ ! -f "$ROOT/refs/studio/out/screen-sharing-agent.jar" && -z "${RPLAYHUB_AGENT_DIR:-}" ]]; then
-    say "note: no built agent found (tools/build-agent.sh) — the app packages, but mirroring needs the agent present at runtime"
-fi
+# ---------------------------------------------------------------- runtime pieces
+# The build phase bundles these; warn now if they are missing rather than after a long build.
+[[ -f "$AGENT_DIR/screen-sharing-agent.jar" ]] || \
+    say "WARNING: no built agent at $AGENT_DIR (tools/build-agent.sh) — mirroring will not work"
+[[ -f "$ROOT/helper/app/build/outputs/apk/debug/app-debug.apk" ]] || \
+    say "note: no companion apk (tools/build-helper.sh) — Install Companion App will be unavailable"
 
-# ---------------------------------------------------------------- build
 say "building $APP_NAME $VERSION (Release)"
 rm -rf "$STAGE" "$DMG"
 mkdir -p "$STAGE"
+python3 "$ROOT/tools/gen-xcodeproj.py" >/dev/null
 
-if [[ -n "$SIGN_ID" ]]; then
-    # Hardened runtime (required for notarization) is already on in the project.
-    xcodebuild -project "$PROJECT" -scheme "$APP_NAME" -configuration Release \
-        -derivedDataPath "$DD" \
-        CODE_SIGN_STYLE=Manual \
-        CODE_SIGN_IDENTITY="$SIGN_ID" \
-        OTHER_CODE_SIGN_FLAGS="--timestamp --options=runtime" \
-        build
-else
-    say "no SIGN_ID set — building ad-hoc signed (LOCAL TESTING ONLY)"
-    xcodebuild -project "$PROJECT" -scheme "$APP_NAME" -configuration Release \
-        -derivedDataPath "$DD" \
-        CODE_SIGN_STYLE=Manual \
-        CODE_SIGN_IDENTITY="-" \
-        DEVELOPMENT_TEAM="" \
-        PROVISIONING_PROFILE_SPECIFIER="" \
-        build
-fi
-
+# One Release build, ad-hoc signed by Xcode (no provisioning profile is demanded that way).
+# The "Bundle agent + adb" phase bakes in the agent, adb and the companion APK. Start from a
+# fresh bundle: xcodebuild never removes files it did not put there, and a stale copy from an
+# older layout (an unsigned Resources/adb/adb) once failed notarization.
+rm -rf "$DD/Build/Products/Release/$APP_NAME.app"
+xcodebuild -project "$PROJECT" -scheme "$APP_NAME" -configuration Release \
+    -derivedDataPath "$DD" \
+    CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY="-" DEVELOPMENT_TEAM="" \
+    PROVISIONING_PROFILE_SPECIFIER="" RPLAYHUB_AGENT_DIR="$AGENT_DIR" build
 APP="$DD/Build/Products/Release/$APP_NAME.app"
-[[ -d "$APP" ]] || { echo "build did not produce $APP" >&2; exit 1; }
-
-# ---------------------------------------------------------------- bundle the runtime pieces
-# The app is useless without the device agent and an adb binary; bake both into Resources so the
-# DMG runs on a Mac with no Android tooling. agentDirectory() checks Resources/agent first, and
-# Adb.binaryPath() checks Resources/adb/adb first.
-say "bundling the agent and adb into the app"
-AGENT_SRC="${RPLAYHUB_AGENT_DIR:-$ROOT/build/agent}"
-if [[ -f "$AGENT_SRC/screen-sharing-agent.jar" ]]; then
-    mkdir -p "$APP/Contents/Resources/agent"
-    cp -R "$AGENT_SRC/." "$APP/Contents/Resources/agent/"
-else
-    say "WARNING: no built agent at $AGENT_SRC — mirroring will need one on the target machine"
-fi
-ADB_BIN=""
-for c in "${ANDROID_HOME:-}/platform-tools/adb" \
-         /opt/homebrew/share/android-commandlinetools/platform-tools/adb \
-         /opt/homebrew/bin/adb /usr/local/bin/adb; do
-    [[ -x "$c" ]] && { ADB_BIN="$c"; break; }
-done
-if [[ -n "$ADB_BIN" ]]; then
-    cp "$ADB_BIN" "$APP/Contents/MacOS/adb"
-fi
-COMPANION="$ROOT/helper/app/build/outputs/apk/debug/app-debug.apk"
-if [[ -f "$COMPANION" ]]; then
-    cp "$COMPANION" "$APP/Contents/Resources/companion.apk"
-else
-    say "note: no companion apk (tools/build-helper.sh) — Install Companion App will be unavailable"
-else
-    say "WARNING: no adb binary found to bundle — the target machine will need platform-tools"
-fi
-# Adding files broke the code seal; sign the nested binaries, then the bundle again — inside
-# out. The File Provider extension keeps its own entitlements (sandbox + network client): a
-# re-sign without them leaves an extension fileproviderd refuses to launch.
 APPEX="$APP/Contents/PlugIns/FinderMount.appex"
+# The legacy adb location; never ship an unsigned copy from it.
+rm -rf "$APP/Contents/Resources/adb"
+
 if [[ -n "$SIGN_ID" ]]; then
+    # Re-sign for Developer ID with raw codesign, inside out — the recipe that shipped 0.2.0.
+    #
+    # The App Group (com.apple.security.application-groups) is stripped first, from the app's and
+    # the extension's entitlements AND from the extension's NSExtensionFileProviderDocumentGroup:
+    # it exists only to satisfy App Store validation, the Finder mount runs without it, and it is
+    # a RESTRICTED entitlement — signing it needs a Developer ID provisioning profile, which Xcode
+    # cannot create automatically (only App Store profiles are). Without it every entitlement
+    # left is unrestricted and Developer ID needs no profile at all.
+    say "re-signing with $SIGN_ID (app group stripped for the Developer ID build)"
+    ENT_DIR="$BUILD/dmg-entitlements"; rm -rf "$ENT_DIR"; mkdir -p "$ENT_DIR"
+    cp "$ROOT/app/rPlayHubAndroid/rPlayHubAndroid.entitlements" "$ENT_DIR/app.entitlements"
+    cp "$ROOT/app/FinderMount/FinderMount.entitlements" "$ENT_DIR/appex.entitlements"
+    for f in "$ENT_DIR/app.entitlements" "$ENT_DIR/appex.entitlements"; do
+        /usr/libexec/PlistBuddy -c "Delete :com.apple.security.application-groups" "$f" 2>/dev/null || true
+    done
+    /usr/libexec/PlistBuddy -c "Delete :NSExtension:NSExtensionFileProviderDocumentGroup" \
+        "$APPEX/Contents/Info.plist" 2>/dev/null || true
+
     [[ -f "$APP/Contents/MacOS/adb" ]] && \
         codesign --force --sign "$SIGN_ID" --timestamp --options=runtime \
-            --entitlements "$ROOT/app/rPlayHubAndroid/adb-inherit.entitlements" \
-            "$APP/Contents/MacOS/adb"
-    [[ -d "$APPEX" ]] && \
-        codesign --force --sign "$SIGN_ID" --timestamp --options=runtime \
-            --preserve-metadata=entitlements "$APPEX"
-    codesign --force --sign "$SIGN_ID" --timestamp --options=runtime "$APP"
+            --entitlements "$ROOT/app/rPlayHubAndroid/adb-inherit.entitlements" "$APP/Contents/MacOS/adb"
+    codesign --force --sign "$SIGN_ID" --timestamp --options=runtime \
+        --entitlements "$ENT_DIR/appex.entitlements" "$APPEX"
+    codesign --force --sign "$SIGN_ID" --timestamp --options=runtime \
+        --entitlements "$ENT_DIR/app.entitlements" "$APP"
 else
-    [[ -f "$APP/Contents/MacOS/adb" ]] && codesign --force --sign - \
-        --entitlements "$ROOT/app/rPlayHubAndroid/adb-inherit.entitlements" "$APP/Contents/MacOS/adb"
-    [[ -d "$APPEX" ]] && codesign --force --sign - --preserve-metadata=entitlements "$APPEX"
-    codesign --force --sign - "$APP"
+    say "no SIGN_ID set — ad-hoc signed (LOCAL TESTING ONLY)"
 fi
+[[ -d "$APP" ]] || { echo "build did not produce $APP" >&2; exit 1; }
 
-# ---------------------------------------------------------------- verify signature
-say "verifying signature"
+# ---------------------------------------------------------------- verify
+say "verifying signature and bundled pieces"
 codesign --verify --deep --strict --verbose=2 "$APP" 2>&1 | sed 's/^/    /'
+for f in "Contents/MacOS/adb" "Contents/Resources/agent/screen-sharing-agent.jar" \
+         "Contents/Resources/companion.apk"; do
+    [[ -e "$APP/$f" ]] && echo "    bundled: $f" || say "WARNING: missing $f"
+done
+if codesign -d --entitlements :- "$APP/Contents/MacOS/adb" 2>/dev/null | grep -q inherit; then
+    echo "    adb keeps its sandbox+inherit entitlement"
+else
+    say "WARNING: bundled adb lost its inherit entitlement — it will not run inside the sandbox"
+fi
 if [[ -n "$SIGN_ID" ]]; then
     if spctl --assess --type execute --verbose "$APP" 2>&1 | sed 's/^/    /'; then
         say "Gatekeeper assessment passed"
     else
-        say "Gatekeeper assessment failed — notarization is still needed"
+        say "Gatekeeper assessment pending — notarization is what clears it"
     fi
 fi
 
@@ -136,10 +122,7 @@ cp -R "$APP" "$STAGE/"
 ln -s /Applications "$STAGE/Applications"
 
 say "creating $DMG"
-hdiutil create -volname "$VOLNAME $VERSION" \
-    -srcfolder "$STAGE" \
-    -ov -format UDZO \
-    -fs HFS+ \
+hdiutil create -volname "$VOLNAME $VERSION" -srcfolder "$STAGE" -ov -format UDZO -fs HFS+ \
     "$DMG" >/dev/null
 
 # ---------------------------------------------------------------- notarize
