@@ -1729,6 +1729,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         finder.target = self
         deviceMenu.addItem(withTitle: "Install Companion App on Device",
                            action: #selector(installCompanionFromMenu), keyEquivalent: "").target = self
+        // scrcpy-parity AOA HID (USB only), behind RPLAYHUB_HID: a keyboard self-test that
+        // registers a real USB HID keyboard on the phone and types on it.
+        let hidTest = deviceMenu.addItem(withTitle: "HID Keyboard Test (USB)",
+                                         action: #selector(hidKeyboardTest), keyEquivalent: "")
+        hidTest.target = self
+        hidTest.isHidden = !AppBuild.hidEnabled
         deviceMenu.addItem(.separator())
         deviceMenu.addItem(withTitle: "Refresh Devices", action: #selector(refreshFromMenu),
                            keyEquivalent: "r").target = self
@@ -1936,6 +1942,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 DispatchQueue.main.async {
                     self?.window.subtitle = ""
                     self?.present(message: "Couldn't install the companion app", detail: "\(error)")
+                }
+            }
+        }
+    }
+
+    /// AOA HID self-test: open the selected USB device as an AOA accessory, register a HID
+    /// keyboard, and type "hi" on it. Proves the whole USB/AOA/HID path on a real phone.
+    @objc private func hidKeyboardTest() {
+        let ready = sidebar.devices.filter { $0.isReady }
+        guard let device = sidebar.selected ?? (ready.count == 1 ? ready.first : nil) else {
+            present(message: "No device selected", detail: "Pick a USB-connected device first.")
+            return
+        }
+        // A network serial (host:port) has no USB link; AOA needs the cable.
+        guard !device.serial.contains(":") else {
+            present(message: "HID needs USB",
+                    detail: "\(device.displayName) is connected over the network. AOA HID rides "
+                          + "the USB cable — plug the phone in and select that entry.")
+            return
+        }
+        window.subtitle = "registering HID keyboard"
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            do {
+                let hid = try AoaHid(serial: device.serial)
+                // "hi": HID usage 0x0B = h, 0x0C = i; press then release each.
+                for key: UInt8 in [0x0B, 0x0C] {
+                    try hid.sendKeyboard(modifiers: 0, keys: [key])
+                    usleep(40_000)
+                    try hid.releaseKeyboard()
+                    usleep(40_000)
+                }
+                DispatchQueue.main.async {
+                    self?.window.subtitle = ""
+                    self?.present(message: "HID keyboard works",
+                                  detail: "Registered a USB HID keyboard on \(device.displayName) "
+                                        + "and typed \"hi\" into the focused field.")
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    self?.window.subtitle = ""
+                    self?.present(message: "HID test failed", detail: "\(error)")
                 }
             }
         }

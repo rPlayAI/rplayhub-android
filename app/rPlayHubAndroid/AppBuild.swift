@@ -13,6 +13,14 @@ enum AppBuild {
     /// for a launch. Gates the menu entry and, at session start, the sensor channel we ask the
     /// agent for — a session started with the gate off carries zero new code paths, and a
     /// freshly flipped gate needs the next session (Reconnect) before orientation flows.
+    /// AOA HID input (scrcpy-style, USB-only). Experimental / parity feature.
+    static var hidEnabled: Bool {
+        if let env = ProcessInfo.processInfo.environment["RPLAYHUB_HID"] {
+            return env == "1" || env.lowercased() == "true"
+        }
+        return UserDefaults.standard.bool(forKey: "HidEnabled")
+    }
+
     static var twinEnabled: Bool {
         get {
             if let env = ProcessInfo.processInfo.environment["RPLAYHUB_TWIN"] {
