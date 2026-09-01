@@ -484,7 +484,12 @@ final class MirrorView: NSView, NSMenuItemValidation {
         // Device Hub keeps a black bezel around the live screen, not a hairline — it is what
         // makes the picture read as a phone rather than as a rectangle of video. The idle
         // mockup's bezel stays proportional to its own small size.
-        clipLayer.borderWidth = borderless ? 0 : (isGated ? max(1, rect.width * 0.05) : Self.bezelWidth)
+        // Keep the phone's black bezel edge even in a naked window — it's what makes the floating
+        // picture read as a real phone. A fusion display (no displayShape) is a desktop, not a
+        // phone, so it gets no edge.
+        clipLayer.borderWidth = borderless
+            ? (displayShape != nil ? Self.bezelWidth : 0)
+            : (isGated ? max(1, rect.width * 0.05) : Self.bezelWidth)
         placeholderLayer.frame = clipLayer.bounds
         placeholderLayer.isHidden = !isGated
         placeholderLayer.cornerRadius = clipLayer.cornerRadius
