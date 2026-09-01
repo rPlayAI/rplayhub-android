@@ -174,8 +174,12 @@ enum Adb {
     /// the usual install locations have to be tried directly.
     static func binaryPath() -> String? {
         var candidates = [
-            // A copy bundled into the app (tools/package-dmg.sh puts one in Resources/adb/), so
-            // the DMG works on a Mac with no Android tooling installed.
+            // The bundled adb, next to the app's own executable in Contents/MacOS — where a
+            // sandboxed app's helper tool must live, signed to inherit the app's sandbox (this
+            // is exactly how the store build ships it). package-dmg.sh puts it here.
+            Bundle.main.executableURL?.deletingLastPathComponent()
+                .appendingPathComponent("adb").path ?? "/nonexistent",
+            // Older layout: a copy under Resources/adb (kept so an existing bundle still works).
             Bundle.main.resourcePath.map { $0 + "/adb/adb" } ?? "/nonexistent",
             "/opt/homebrew/bin/adb",
             "/usr/local/bin/adb",

@@ -89,8 +89,7 @@ for c in "${ANDROID_HOME:-}/platform-tools/adb" \
     [[ -x "$c" ]] && { ADB_BIN="$c"; break; }
 done
 if [[ -n "$ADB_BIN" ]]; then
-    mkdir -p "$APP/Contents/Resources/adb"
-    cp "$ADB_BIN" "$APP/Contents/Resources/adb/adb"
+    cp "$ADB_BIN" "$APP/Contents/MacOS/adb"
 else
     say "WARNING: no adb binary found to bundle — the target machine will need platform-tools"
 fi
@@ -99,17 +98,17 @@ fi
 # re-sign without them leaves an extension fileproviderd refuses to launch.
 APPEX="$APP/Contents/PlugIns/FinderMount.appex"
 if [[ -n "$SIGN_ID" ]]; then
-    [[ -f "$APP/Contents/Resources/adb/adb" ]] && \
+    [[ -f "$APP/Contents/MacOS/adb" ]] && \
         codesign --force --sign "$SIGN_ID" --timestamp --options=runtime \
             --entitlements "$ROOT/app/rPlayHubAndroid/adb-inherit.entitlements" \
-            "$APP/Contents/Resources/adb/adb"
+            "$APP/Contents/MacOS/adb"
     [[ -d "$APPEX" ]] && \
         codesign --force --sign "$SIGN_ID" --timestamp --options=runtime \
             --preserve-metadata=entitlements "$APPEX"
     codesign --force --sign "$SIGN_ID" --timestamp --options=runtime "$APP"
 else
-    [[ -f "$APP/Contents/Resources/adb/adb" ]] && codesign --force --sign - \
-        --entitlements "$ROOT/app/rPlayHubAndroid/adb-inherit.entitlements" "$APP/Contents/Resources/adb/adb"
+    [[ -f "$APP/Contents/MacOS/adb" ]] && codesign --force --sign - \
+        --entitlements "$ROOT/app/rPlayHubAndroid/adb-inherit.entitlements" "$APP/Contents/MacOS/adb"
     [[ -d "$APPEX" ]] && codesign --force --sign - --preserve-metadata=entitlements "$APPEX"
     codesign --force --sign - "$APP"
 fi

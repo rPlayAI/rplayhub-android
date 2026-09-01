@@ -240,6 +240,7 @@
 				1A0000000000000000005002 /* Frameworks */,
 				1A0000000000000000005003 /* Resources */,
 				1A0000000000000000007008 /* Embed Foundation Extensions */,
+				1A0000000000000000005004 /* Bundle agent + adb */,
 			);
 			buildRules = (
 			);
@@ -314,6 +315,24 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		1A0000000000000000005004 /* Bundle agent + adb */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+			);
+			name = "Bundle agent + adb";
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -e\nif [ \"${CONFIGURATION}\" != \"Release\" ]; then exit 0; fi\nAPP=\"${CODESIGNING_FOLDER_PATH}\"\nROOT=\"${SRCROOT}/..\"\nAGENT_DIR=\"${RPLAYHUB_AGENT_DIR:-$ROOT/build/agent}\"\nif [ -f \"$AGENT_DIR/screen-sharing-agent.jar\" ]; then\n  rm -rf \"$APP/Contents/Resources/agent\"\n  cp -R \"$AGENT_DIR\" \"$APP/Contents/Resources/agent\"\nelse\n  echo \"warning: no built agent at $AGENT_DIR - mirroring will not work\"\nfi\nADB=\"\"\nfor c in /opt/homebrew/share/android-commandlinetools/platform-tools/adb /opt/homebrew/bin/adb /usr/local/bin/adb; do\n  if [ -x \"$c\" ]; then ADB=\"$c\"; break; fi\ndone\nif [ -n \"$ADB\" ]; then\n  cp \"$ADB\" \"$APP/Contents/MacOS/adb\"\n  codesign --force --sign \"${EXPANDED_CODE_SIGN_IDENTITY:--}\" --options runtime --entitlements \"$ROOT/app/rPlayHubAndroid/adb-inherit.entitlements\" \"$APP/Contents/MacOS/adb\"\nelse\n  echo \"warning: no adb binary found to bundle\"\nfi";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		1A0000000000000000005001 /* Sources */ = {

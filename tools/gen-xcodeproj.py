@@ -61,6 +61,7 @@ ICON_BUILD = oid(0x2004)
 PRODUCT, TARGET, PROJECT = oid(0x3001), oid(0x3002), oid(0x3003)
 GRP_ROOT, GRP_SRC, GRP_PRODUCTS = oid(0x4001), oid(0x4002), oid(0x4003)
 PH_SOURCES, PH_FRAMEWORKS, PH_RESOURCES = oid(0x5001), oid(0x5002), oid(0x5003)
+PH_BUNDLE_AGENT = oid(0x5004)
 CFG_LIST_PROJ, CFG_LIST_TGT = oid(0x6001), oid(0x6002)
 CFG_PD, CFG_PR, CFG_TD, CFG_TR = oid(0x6003), oid(0x6004), oid(0x6005), oid(0x6006)
 
@@ -116,6 +117,30 @@ ext_target_common = """				APPLICATION_EXTENSION_API_ONLY = YES;
 				PRODUCT_BUNDLE_IDENTIFIER = ai.rplay.rplayhub.android.FinderMount;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;"""
+
+SHELL_SCRIPT_RAW = r'''set -e
+if [ "${CONFIGURATION}" != "Release" ]; then exit 0; fi
+APP="${CODESIGNING_FOLDER_PATH}"
+ROOT="${SRCROOT}/.."
+AGENT_DIR="${RPLAYHUB_AGENT_DIR:-$ROOT/build/agent}"
+if [ -f "$AGENT_DIR/screen-sharing-agent.jar" ]; then
+  rm -rf "$APP/Contents/Resources/agent"
+  cp -R "$AGENT_DIR" "$APP/Contents/Resources/agent"
+else
+  echo "warning: no built agent at $AGENT_DIR - mirroring will not work"
+fi
+ADB=""
+for c in /opt/homebrew/share/android-commandlinetools/platform-tools/adb /opt/homebrew/bin/adb /usr/local/bin/adb; do
+  if [ -x "$c" ]; then ADB="$c"; break; fi
+done
+if [ -n "$ADB" ]; then
+  cp "$ADB" "$APP/Contents/MacOS/adb"
+  codesign --force --sign "${EXPANDED_CODE_SIGN_IDENTITY:--}" --options runtime --entitlements "$ROOT/app/rPlayHubAndroid/adb-inherit.entitlements" "$APP/Contents/MacOS/adb"
+else
+  echo "warning: no adb binary found to bundle"
+fi'''
+SHELL_SCRIPT = (SHELL_SCRIPT_RAW.replace(chr(92), chr(92)*2)
+                .replace(chr(34), chr(92)+chr(34)).replace(chr(10), chr(92)+'n'))
 
 pbx = f"""// !$*UTF8*$!
 {{
@@ -236,6 +261,7 @@ pbx = f"""// !$*UTF8*$!
 				{PH_FRAMEWORKS} /* Frameworks */,
 				{PH_RESOURCES} /* Resources */,
 				{PH_EMBED} /* Embed Foundation Extensions */,
+				{PH_BUNDLE_AGENT} /* Bundle agent + adb */,
 			);
 			buildRules = (
 			);
@@ -310,6 +336,24 @@ pbx = f"""// !$*UTF8*$!
 			runOnlyForDeploymentPostprocessing = 0;
 		}};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		{PH_BUNDLE_AGENT} /* Bundle agent + adb */ = {{
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+			);
+			name = "Bundle agent + adb";
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "{SHELL_SCRIPT}";
+		}};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		{PH_SOURCES} /* Sources */ = {{
