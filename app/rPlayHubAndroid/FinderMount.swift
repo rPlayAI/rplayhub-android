@@ -24,6 +24,16 @@ enum FinderMount {
     /// back — a hard failure repeats identically on every 2-second poll otherwise.
     private static var failed: Set<String> = []
 
+    /// One-shot: drop EVERY domain this app's provider owns. For the developer reset switch
+    /// (RPLAYHUB_RESET_MOUNTS) — e.g. after a bundle-id change leaves an orphaned domain behind.
+    static func resetAllDomains(completion: @escaping () -> Void) {
+        NSFileProviderManager.removeAllDomains { error in
+            if let error { AppBuild.log("finder mount: reset failed: \(error)") }
+            else { AppBuild.log("finder mount: all domains reset") }
+            DispatchQueue.main.async { mounted.removeAll(); completion() }
+        }
+    }
+
     /// Bring the registered domains in line with the ready devices. Cheap to call on every
     /// poll: nothing happens unless the set changed.
     static func sync(devices: [AdbDevice]) {

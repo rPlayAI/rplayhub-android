@@ -93,7 +93,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         AppBuild.log("rPlayHubAndroid \(AppBuild.version) starting")
         buildMenu()
         buildWindow()
-        startPolling()
+        // Developer reset: clear any File Provider domains this provider owns before polling —
+        // used to purge an orphan left by a bundle-id change. Never on for a normal launch.
+        if ProcessInfo.processInfo.environment["RPLAYHUB_RESET_MOUNTS"] != nil {
+            FinderMount.resetAllDomains { [weak self] in self?.startPolling() }
+        } else {
+            startPolling()
+        }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
