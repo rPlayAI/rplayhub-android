@@ -32,6 +32,11 @@ final class AgentSession {
 
     static let devicePathBase = "/data/local/tmp/.studio"
     static let jarName = "screen-sharing-agent.jar"
+    /// A second copy of the jar for the tools that run from it outside the agent (AppLabel, via
+    /// app_process). The agent DELETES its own files from devicePathBase once it is up (Studio's
+    /// RemoveAgentFiles), so anything launched from there after that point aborts; this path is
+    /// the agent's business to leave alone.
+    static let toolsJarRemote = "/data/local/tmp/.rplayhub/screen-sharing-agent.jar"
     static let soName = "libscreen-sharing-agent.so"
 
     let serial: String
@@ -159,6 +164,10 @@ final class AgentSession {
         }
         let jarRemote = "\(devicePathBase)/\(jarName)"
         let soRemote = "\(devicePathBase)/\(soName)"
+        if !deployedMatches(serial: serial, pairs: [(jarLocal, toolsJarRemote)]) {
+            _ = try? Adb.shell(serial, "mkdir -p \((toolsJarRemote as NSString).deletingLastPathComponent)")
+            try Adb.push(serial, localPath: jarLocal, remotePath: toolsJarRemote, mode: 0o644)
+        }
         if deployedMatches(serial: serial, pairs: [(jarLocal, jarRemote), (soLocal, soRemote)]) {
             return
         }

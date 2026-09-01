@@ -631,7 +631,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func fetchAppLabel(package: String, for displayId: Int32) {
         guard let serial = session?.serial else { return }
         DispatchQueue.global(qos: .utility).async { [weak self] in
-            let cmd = "CLASSPATH=\(AgentSession.devicePathBase)/\(AgentSession.jarName)"
+            let cmd = "CLASSPATH=\(AgentSession.toolsJarRemote)"
                 + " app_process / com.android.tools.screensharing.AppLabel \(package) 2>/dev/null"
             guard let out = try? Adb.shell(serial, cmd) else { return }
             // AppLabel prints "label<TAB>base64png"; take the label field only, or the icon blob

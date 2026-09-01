@@ -185,7 +185,7 @@ final class AppsPanel: NSView, NSTableViewDataSource, NSTableViewDelegate {
     private func fetchLabels(serial: String, packages ids: [String]) {
         guard !ids.isEmpty else { return }
         DispatchQueue.global(qos: .utility).async { [weak self] in
-            let cmd = "CLASSPATH=\(AgentSession.devicePathBase)/\(AgentSession.jarName)"
+            let cmd = "CLASSPATH=\(AgentSession.toolsJarRemote)"
                 + " app_process / com.android.tools.screensharing.AppLabel "
                 + ids.joined(separator: " ") + " 2>/dev/null"
             guard let out = try? Adb.shell(serial, cmd) else { return }
