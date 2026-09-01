@@ -682,6 +682,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         stageMinWidth?.isActive = false          // let the window shrink to the phone's true aspect
         stripTopToMirror?.isActive = false       // the strip floats over the picture, not under it
         mirrorBottomToStage?.isActive = true
+        stageTopPad?.constant = 0                // no white band above the picture in this window
+        stageLeadPad?.constant = 0
+        stageTrailPad?.constant = 0
         fusionChromeShown = true                 // force the first setFusionChrome to take effect
         setFusionChrome(visible: false, animated: false)
         installFusionHover()
@@ -778,10 +781,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// phone's width when it goes. Anchored at the top-left so the window doesn't wander.
     private func widenForStrip(_ w: NSWindow, visible: Bool) {
         guard nakedPictureSize.width > 0 else { return }
-        // Wide enough for every toolbar button plus breathing room — and never narrower than the
-        // main window's stage, which is the width this toolbar was designed at.
+        // Grow the width by one control's width — a small, even margin beside the picture rather
+        // than a wide stretch — but never narrower than the toolbar actually needs.
         let wanted = visible
-            ? max(nakedPictureSize.width, strip.minimumContentWidth, 520)
+            ? max(nakedPictureSize.width + ControlStrip.controlWidth, strip.minimumContentWidth)
             : nakedPictureSize.width
         guard abs(w.frame.width - wanted) > 1 else { return }
         let top = w.frame.maxY, left = w.frame.minX
