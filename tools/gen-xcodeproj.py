@@ -98,7 +98,7 @@ target_common = """				CODE_SIGN_STYLE = Automatic;
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 0.1.0;
+				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = ai.rplay.rplayhub.android;
 				PRODUCT_NAME = "$(TARGET_NAME)";"""
 
@@ -113,7 +113,7 @@ ext_target_common = """				APPLICATION_EXTENSION_API_ONLY = YES;
 					"@executable_path/../Frameworks",
 					"@executable_path/../../../../Frameworks",
 				);
-				MARKETING_VERSION = 0.1.0;
+				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = ai.rplay.rplayhub.android.FinderMount;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;"""

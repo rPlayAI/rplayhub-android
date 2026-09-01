@@ -21,5 +21,9 @@
 	<true/>
 	<key>com.apple.security.files.downloads.read-write</key>
 	<true/>
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>group.ai.rplay.rplayhub</string>
+	</array>
 </dict>
 </plist>
