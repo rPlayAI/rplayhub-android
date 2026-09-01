@@ -482,8 +482,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Host-side recorder for the fusion display (Android's screenrecord can't capture a virtual
     /// display). Fed the decoded frames while active.
     private let fusionRecorder = FrameRecorder()
-    /// Mouse-moved monitor that reveals the naked fusion window's chrome near the top edge.
-    private var fusionHoverMonitor: Any?
+    /// Polls the cursor to reveal the naked window's chrome near the top edge (a timer, not a
+    /// mouse-moved monitor, which only fires while the window is key and accepts moved events).
+    private var fusionHoverTimer: Timer?
+    private var fusionChromeShown = false
     // The stage's padding around the picture and the strip's reserved height — collapsed to zero
     // while a fusion window is up, restored when it closes.
     private var stageTopPad: NSLayoutConstraint?
@@ -644,55 +646,63 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         w.titlebarAppearsTransparent = true
         w.titleVisibility = .hidden
         w.styleMask.insert(.fullSizeContentView)
-        w.acceptsMouseMovedEvents = true
+        fusionChromeShown = true                 // force the first setFusionChrome to take effect
         setFusionChrome(visible: false, animated: false)
         installFusionHover()
     }
 
-    /// Show/hide the naked window's chrome (traffic lights + our controls) as one.
+    /// Fully show/hide the naked window's chrome — the three traffic lights AND our accessory — as
+    /// one. Uses isHidden (not just alpha) so the buttons truly disappear; idempotent per state.
     private func setFusionChrome(visible: Bool, animated: Bool = true) {
         guard let w = screenWindow.window else { return }
-        let a: CGFloat = visible ? 1 : 0
         let lights = [w.standardWindowButton(.closeButton),
                       w.standardWindowButton(.miniaturizeButton),
                       w.standardWindowButton(.zoomButton)]
-        let apply = {
-            for b in lights { b?.alphaValue = a }
-            self.fusionTitlebar?.view.alphaValue = a
-        }
-        if animated {
-            NSAnimationContext.runAnimationGroup { ctx in
-                ctx.duration = 0.15
-                for b in lights { b?.animator().alphaValue = a }
-                self.fusionTitlebar?.view.animator().alphaValue = a
-            }
-        } else {
-            apply()
+        let changed = visible != fusionChromeShown
+        fusionChromeShown = visible
+
+        // Enforce the final hidden/shown state on EVERY call (cheap, no animation) — macOS re-shows
+        // traffic lights when the window activates, so the timer must keep re-hiding them.
+        let a: CGFloat = visible ? 1 : 0
+        for b in lights { b?.isHidden = !visible; if !changed { b?.alphaValue = a } }
+        fusionTitlebar?.view.isHidden = !visible
+        if !changed { fusionTitlebar?.view.alphaValue = a }
+
+        // Fade only on an actual transition.
+        guard changed, animated else { return }
+        for b in lights { b?.alphaValue = visible ? 0 : 1 }
+        fusionTitlebar?.view.alphaValue = visible ? 0 : 1
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = 0.12
+            for b in lights { b?.animator().alphaValue = a }
+            self.fusionTitlebar?.view.animator().alphaValue = a
         }
     }
 
-    /// Watch the cursor while a fusion window is up: chrome appears when it nears the top edge,
-    /// hides otherwise — the "only shows when the mouse is close" behaviour.
+    /// Poll the cursor while a naked window is up: chrome appears when it nears the top edge, hides
+    /// otherwise. A timer is used (not a mouse-moved monitor) so it works even when the window
+    /// isn't key, and it re-enforces the hidden state that macOS otherwise restores.
     private func installFusionHover() {
         removeFusionHover()
-        fusionHoverMonitor = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved]) { [weak self] event in
-            self?.updateFusionHover()
-            return event
-        }
+        let t = Timer(timeInterval: 0.15, repeats: true) { [weak self] _ in self?.updateFusionHover() }
+        RunLoop.main.add(t, forMode: .common)
+        fusionHoverTimer = t
     }
 
     private func removeFusionHover() {
-        if let m = fusionHoverMonitor { NSEvent.removeMonitor(m) }
-        fusionHoverMonitor = nil
+        fusionHoverTimer?.invalidate()
+        fusionHoverTimer = nil
     }
 
     private func updateFusionHover() {
         guard let w = screenWindow.window, w.isVisible else { return }
+        // A revealed traffic light must not vanish while the cursor is on it, so if chrome is shown
+        // keep it shown until the cursor leaves a slightly taller band (hysteresis).
         let mouse = NSEvent.mouseLocation                 // screen coordinates
         let f = w.frame
-        let inX = mouse.x >= f.minX && mouse.x <= f.maxX
-        // A band at the top of the window (title bar is at the top in screen coords → high y).
-        let nearTop = inX && mouse.y <= f.maxY + 6 && mouse.y >= f.maxY - 80
+        let inX = mouse.x >= f.minX - 4 && mouse.x <= f.maxX + 4
+        let band: CGFloat = fusionChromeShown ? 90 : 64
+        let nearTop = inX && mouse.y <= f.maxY + 8 && mouse.y >= f.maxY - band
         setFusionChrome(visible: nearTop)
     }
 
