@@ -19,6 +19,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let strip = ControlStrip()
     private let inspector = InspectorPane()
     private let screenWindow = ScreenWindow()
+    /// Shared items arriving from the phone's companion app (helper/). Live while a session is.
+    private let shareInbox = ShareInbox()
     private var stage: NSView!
 
     private var session: AgentSession?
@@ -97,6 +99,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
     func applicationWillTerminate(_ notification: Notification) {
+        shareInbox.stop()
         session?.stop()
         FinderMount.removeAll()
     }
@@ -401,6 +404,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             sessionReachedRunning = true
             attachStream()
             startHealthTimer()
+            if let serial = session?.serial { shareInbox.start(serial: serial) }
+            shareInbox.onReceived = { [weak self] urls in self?.presentShared(urls) }
             // Fusion or Desktop Mode queued before the session was up: request the display now.
             if let control = session?.control {
                 for request in pendingFusion where !request.sent {
@@ -1828,6 +1833,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func stopMirroring() {
         if twinActive { exitTwin() }
+        shareInbox.stop()
         discardFusionWindows()
         session?.stop()
         session = nil
@@ -1840,6 +1846,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func refreshFromMenu() { refreshDevices() }
+
+    /// Items shared from the phone arrived (companion app ▸ Send to Mac). If a fusion window is
+    /// up — the case the feature is for, a photo shared out of the fused app — show them there as
+    /// draggable thumbnails; otherwise reveal them in Finder, ready to drag from there.
+    private func presentShared(_ urls: [URL]) {
+        guard !urls.isEmpty else { return }
+        NSApp.activate(ignoringOtherApps: true)
+        if let fw = frontFusionWindow {
+            fw.showReceived(urls)
+        } else {
+            NSWorkspace.shared.activateFileViewerSelecting(urls)
+        }
+    }
 
     /// The phone's storage as a Finder location — where a photo gets dragged out of.
     @objc private func showInFinder() {

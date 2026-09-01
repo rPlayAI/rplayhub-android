@@ -29,6 +29,7 @@ final class FusionWindow: NSObject, NSWindowDelegate {
 
     private let titlebar: FusionTitlebar
     private var hoverTimer: Timer?
+    private weak var tray: ReceivedTray?
     private var chromeShown = true       // forced through the first setChrome(false)
     /// The reveal only arms once the pointer has left the top band: opening from a menu leaves
     /// it right where the band is, which would flip the window out of raw mode as it appears.
@@ -90,6 +91,27 @@ final class FusionWindow: NSObject, NSWindowDelegate {
         window.delegate = nil
         onClose?()
         onClose = nil
+    }
+
+    /// Files shared from the phone landed: show them as draggable thumbnails over this window's
+    /// bottom-leading corner, so a photo shared from the fused app can be dragged straight out.
+    func showReceived(_ urls: [URL]) {
+        guard !urls.isEmpty, let content = window.contentView else { return }
+        let tray: ReceivedTray
+        if let existing = self.tray, existing.superview != nil {
+            tray = existing
+        } else {
+            tray = ReceivedTray(frame: .zero)
+            tray.translatesAutoresizingMaskIntoConstraints = false
+            content.addSubview(tray)
+            NSLayoutConstraint.activate([
+                tray.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 16),
+                tray.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -16),
+            ])
+            self.tray = tray
+        }
+        tray.present(urls)
+        window.makeKeyAndOrderFront(nil)
     }
 
     // MARK: - chrome
