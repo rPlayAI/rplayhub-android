@@ -496,6 +496,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// The picture's size in a naked window; the window is resized around it so the picture never
     /// changes size when the chrome toggles.
     private var nakedPictureSize: NSSize = .zero
+    /// The reveal only arms once the cursor has left the window's edges: opening the window from a
+    /// menu leaves the pointer right where the chrome band is, which would flip it out of raw mode
+    /// the instant it appears.
+    private var fusionHoverArmed = false
     // The stage's padding around the picture and the strip's reserved height — collapsed to zero
     // while a fusion window is up, restored when it closes.
     private var stageTopPad: NSLayoutConstraint?
@@ -752,6 +756,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// isn't key, and it re-enforces the hidden state that macOS otherwise restores.
     private func installFusionHover() {
         removeFusionHover()
+        fusionHoverArmed = false          // open raw, whatever the pointer is doing right now
         let t = Timer(timeInterval: 0.15, repeats: true) { [weak self] _ in self?.updateFusionHover() }
         RunLoop.main.add(t, forMode: .common)
         fusionHoverTimer = t
@@ -774,7 +779,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // strip at the bottom, so approaching either one should reveal the chrome.
         let nearTop = mouse.y <= f.maxY + 8 && mouse.y >= f.maxY - band
         let nearBottom = mouse.y >= f.minY - 8 && mouse.y <= f.minY + band
-        setFusionChrome(visible: inX && (nearTop || nearBottom))
+        let near = inX && (nearTop || nearBottom)
+        // Stay raw until the pointer has been away once (see fusionHoverArmed).
+        guard fusionHoverArmed else {
+            if !near { fusionHoverArmed = true }
+            return
+        }
+        setFusionChrome(visible: near)
     }
 
     private func removeFusionTitlebar() {
