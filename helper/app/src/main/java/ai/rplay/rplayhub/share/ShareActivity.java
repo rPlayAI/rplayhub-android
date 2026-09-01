@@ -1,4 +1,4 @@
-package com.rplay.rplayhub.helper;
+package ai.rplay.rplayhub.share;
 
 import android.content.Intent;
 import android.net.Uri;

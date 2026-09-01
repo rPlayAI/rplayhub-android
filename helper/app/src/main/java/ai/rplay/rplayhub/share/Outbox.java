@@ -1,4 +1,4 @@
-package com.rplay.rplayhub.helper;
+package ai.rplay.rplayhub.share;
 
 import android.content.ContentResolver;
 import android.content.Context;
@@ -17,7 +17,7 @@ import java.util.List;
  * Where shared items are handed to the Mac.
  *
  * The app copies each shared item into its own external files directory —
- * {@code /sdcard/Android/data/com.rplay.rplayhub.helper/files/outbox/} — which needs no runtime
+ * {@code /sdcard/Android/data/ai.rplay.rplayhub.share/files/outbox/} — which needs no runtime
  * permission and which the Mac's shell agent can read (shell is in the ext_data_rw group). Each
  * share is one numbered batch directory; a {@code .ready} marker is written last, so the Mac only
  * ever pulls a batch once every file in it is complete.

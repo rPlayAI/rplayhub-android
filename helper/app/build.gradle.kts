@@ -3,11 +3,11 @@ plugins {
 }
 
 android {
-  namespace = "com.rplay.rplayhub.helper"
+  namespace = "ai.rplay.rplayhub.share"
   compileSdk = 36
 
   defaultConfig {
-    applicationId = "com.rplay.rplayhub.helper"
+    applicationId = "ai.rplay.rplayhub.share"
     minSdk = 26
     targetSdk = 36
     versionCode = 1

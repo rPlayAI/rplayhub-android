@@ -1,4 +1,4 @@
-package com.rplay.rplayhub.helper;
+package ai.rplay.rplayhub.share;
 
 import android.app.Activity;
 import android.graphics.Color;

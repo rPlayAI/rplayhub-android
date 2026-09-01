@@ -2,7 +2,7 @@
 //  ShareInbox.swift
 //  The Mac side of the companion app: shared items arriving from the phone.
 //
-//  The companion (helper/, package com.rplay.rplayhub.helper) is a Share-sheet target: from any
+//  The companion (helper/, package ai.rplay.rplayhub.share) is a Share-sheet target: from any
 //  Android app you tap Share ▸ Send to Mac, and it copies the shared items into its own external
 //  files "outbox" — /sdcard/Android/data/<pkg>/files/outbox/<batch>/ — writing a `.ready` marker
 //  last. That directory needs no runtime permission on the phone and the adb shell can read it
@@ -15,7 +15,7 @@
 import AppKit
 
 final class ShareInbox {
-    static let helperPackage = "com.rplay.rplayhub.helper"
+    static let helperPackage = "ai.rplay.rplayhub.share"
     private static let outboxRemote =
         "/sdcard/Android/data/\(helperPackage)/files/outbox"
 

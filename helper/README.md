@@ -7,7 +7,7 @@ thumbnail on the fusion window, or in Finder — ready to drag anywhere.
 ## How it works
 
 It needs **no runtime permissions and no Shizuku**. The share target copies each shared item into
-its own external files directory (`/sdcard/Android/data/com.rplay.rplayhub.helper/files/outbox/`),
+its own external files directory (`/sdcard/Android/data/ai.rplay.rplayhub.share/files/outbox/`),
 writing a `.ready` marker last. The Mac app's `ShareInbox` polls that directory over adb while a
 session is live — the adb shell can read it (shell is in the `ext_data_rw` group) — pulls each
 ready batch to `~/Downloads/rPlayHub Shared/`, deletes it on the device, and presents it.
