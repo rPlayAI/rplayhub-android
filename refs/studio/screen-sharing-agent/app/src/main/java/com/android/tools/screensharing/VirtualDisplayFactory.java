@@ -98,6 +98,9 @@ public final class VirtualDisplayFactory {
       } catch (Throwable e) {
         Log.w(TAG, "keep-alive surface failed: " + e);
       }
+      // NOTE: catching content dragged OUT of apps on this display (see DragCatcher) cannot be
+      // done from here — a shell-uid overlay is rejected by WindowManager ("Unknown pid uid=2000":
+      // the agent has no window session). It needs a companion app / accessibility service.
     }
     return display;
   }

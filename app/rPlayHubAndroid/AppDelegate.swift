@@ -482,6 +482,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Host-side recorder for the fusion display (Android's screenrecord can't capture a virtual
     /// display). Fed the decoded frames while active.
     private let fusionRecorder = FrameRecorder()
+    /// Mouse-moved monitor that reveals the naked fusion window's chrome near the top edge.
+    private var fusionHoverMonitor: Any?
     // The stage's padding around the picture and the strip's reserved height — collapsed to zero
     // while a fusion window is up, restored when it closes.
     private var stageTopPad: NSLayoutConstraint?
@@ -617,13 +619,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         guard let w = screenWindow.window else { return }
         w.title = title
-        // A classic title bar — traffic lights and the app's name — with the picture flush
-        // against it below; only the content area keeps the 16:9 aspect.
         w.contentAspectRatio = NSSize(width: 16, height: 9)
         w.setContentSize(NSSize(width: 1152, height: 648))
-        // Title-bar controls for the chromeless window: Wake, Screenshot, Record — the actions a
-        // fused app still needs without the main control strip. Rebuilt each time so it never
-        // stacks; recording state seeds from whether a recording is live.
+        applyNakedChrome(to: w)
+        // Controls the naked window still needs: Wake, Screenshot, Record. Rebuilt each time so it
+        // never stacks; recording state seeds from whether a recording is live.
         if let existing = fusionTitlebar { w.removeTitlebarAccessoryViewController(at: existing.position) }
         let bar = FusionTitlebar(
             onWake: { [weak self] in self?.wakeDevice() },
@@ -633,9 +633,71 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         w.addTitlebarAccessoryViewController(bar)
         bar.position = (w.titlebarAccessoryViewControllers.count - 1)
         fusionTitlebar = bar
+        setFusionChrome(visible: false, animated: false)   // start naked, hiding the new accessory too
+    }
+
+    /// Make a screen window "naked": the picture fills edge to edge under a transparent title bar
+    /// (no opaque bar, no title text), so it blends into the desktop, and the chrome — traffic
+    /// lights and any accessory — fades in only when the mouse nears the top edge. Used for both
+    /// the fusion window and the plain "Open Screen in New Window" pop-out.
+    private func applyNakedChrome(to w: NSWindow) {
+        w.titlebarAppearsTransparent = true
+        w.titleVisibility = .hidden
+        w.styleMask.insert(.fullSizeContentView)
+        w.acceptsMouseMovedEvents = true
+        setFusionChrome(visible: false, animated: false)
+        installFusionHover()
+    }
+
+    /// Show/hide the naked window's chrome (traffic lights + our controls) as one.
+    private func setFusionChrome(visible: Bool, animated: Bool = true) {
+        guard let w = screenWindow.window else { return }
+        let a: CGFloat = visible ? 1 : 0
+        let lights = [w.standardWindowButton(.closeButton),
+                      w.standardWindowButton(.miniaturizeButton),
+                      w.standardWindowButton(.zoomButton)]
+        let apply = {
+            for b in lights { b?.alphaValue = a }
+            self.fusionTitlebar?.view.alphaValue = a
+        }
+        if animated {
+            NSAnimationContext.runAnimationGroup { ctx in
+                ctx.duration = 0.15
+                for b in lights { b?.animator().alphaValue = a }
+                self.fusionTitlebar?.view.animator().alphaValue = a
+            }
+        } else {
+            apply()
+        }
+    }
+
+    /// Watch the cursor while a fusion window is up: chrome appears when it nears the top edge,
+    /// hides otherwise — the "only shows when the mouse is close" behaviour.
+    private func installFusionHover() {
+        removeFusionHover()
+        fusionHoverMonitor = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved]) { [weak self] event in
+            self?.updateFusionHover()
+            return event
+        }
+    }
+
+    private func removeFusionHover() {
+        if let m = fusionHoverMonitor { NSEvent.removeMonitor(m) }
+        fusionHoverMonitor = nil
+    }
+
+    private func updateFusionHover() {
+        guard let w = screenWindow.window, w.isVisible else { return }
+        let mouse = NSEvent.mouseLocation                 // screen coordinates
+        let f = w.frame
+        let inX = mouse.x >= f.minX && mouse.x <= f.maxX
+        // A band at the top of the window (title bar is at the top in screen coords → high y).
+        let nearTop = inX && mouse.y <= f.maxY + 6 && mouse.y >= f.maxY - 80
+        setFusionChrome(visible: nearTop)
     }
 
     private func removeFusionTitlebar() {
+        removeFusionHover()
         guard let bar = fusionTitlebar, let w = screenWindow.window,
               bar.position < w.titlebarAccessoryViewControllers.count else { fusionTitlebar = nil; return }
         w.removeTitlebarAccessoryViewController(at: bar.position)
@@ -1597,6 +1659,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func openScreenWindow() {
         screenWindow.open(stage: stage, from: splitView, title: window.title, tabbedWith: nil)
+        if let w = screenWindow.window { applyNakedChrome(to: w) }
     }
 
     @objc private func openScreenTab() {
