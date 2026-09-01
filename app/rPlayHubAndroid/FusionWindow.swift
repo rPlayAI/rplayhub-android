@@ -17,8 +17,15 @@ final class FusionWindow: NSObject, NSWindowDelegate {
     let decorated: Bool
     let mirror = MirrorView()
     let window: NSWindow
+    /// The app on this display, if it is an app's window rather than a desktop.
+    var package: String?
+    /// Host-side recorder for this display (Android's screenrecord can't capture a virtual
+    /// display). Fed the decoded frames while active.
+    let recorder = FrameRecorder()
     /// The window was closed, by the user or programmatically. Fires once.
     var onClose: (() -> Void)?
+    /// The title bar's Record button. Set after init because the handler needs the window.
+    var onRecord: (() -> Void)?
 
     private let titlebar: FusionTitlebar
     private var hoverTimer: Timer?
@@ -29,16 +36,18 @@ final class FusionWindow: NSObject, NSWindowDelegate {
     private var closed = false
 
     init(displayId: Int32, title: String, decorated: Bool,
-         onWake: @escaping () -> Void, onScreenshot: @escaping () -> Void,
-         onRecord: @escaping () -> Void) {
+         onWake: @escaping () -> Void, onScreenshot: @escaping () -> Void) {
         self.displayId = displayId
         self.decorated = decorated
         let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1152, height: 648),
                          styleMask: [.titled, .closable, .miniaturizable, .resizable],
                          backing: .buffered, defer: false)
         window = w
-        titlebar = FusionTitlebar(onWake: onWake, onScreenshot: onScreenshot, onRecord: onRecord)
+        var recordTap: (() -> Void)?
+        titlebar = FusionTitlebar(onWake: onWake, onScreenshot: onScreenshot,
+                                  onRecord: { recordTap?() })
         super.init()
+        recordTap = { [weak self] in self?.onRecord?() }
         w.title = title
         w.isReleasedWhenClosed = false
         w.delegate = self

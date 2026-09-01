@@ -358,7 +358,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         if twinActive { exitTwin() }   // the new session's decoder starts back in native output
-        discardFusionWindow()          // its virtual display dies with the old agent
+        discardFusionWindows()         // their virtual displays die with the old agent
         session?.stop()
         mirror.reset()
         mirror.autoReveal = reveal          // reset() set it true; a prepared session stays gated
@@ -402,12 +402,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             attachStream()
             startHealthTimer()
             // Fusion or Desktop Mode queued before the session was up: request the display now.
-            if pendingFusionPackage != nil || desktopModeRequested, !fusionRequested,
-               let control = session?.control {
-                fusionRequested = true
-                control.send(ControlMessage.createNewDisplay(width: 1920, height: 1080, dpi: 240,
-                                                             decorations: desktopModeRequested))
-                AppBuild.log("fusion: requested a display for \(pendingFusionPackage ?? "desktop mode")")
+            if let control = session?.control {
+                for request in pendingFusion where !request.sent {
+                    request.sent = true
+                    control.send(ControlMessage.createNewDisplay(width: 1920, height: 1080, dpi: 240,
+                                                                 decorations: request.package == nil))
+                    AppBuild.log("fusion: requested a display for \(request.package ?? "desktop mode")")
+                }
+                fuseDebugPackages()
             }
         case .failed(let reason):
             window.subtitle = "failed"
@@ -456,22 +458,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         video.primaryDisplayId = 0
         video.onFormat = { [weak self] id, size in
             guard let self else { return }
-            if let fw = self.fusionWindow, fw.displayId == id { fw.mirror.videoSize = size }
+            if let fw = self.fusionWindows[id] { fw.mirror.videoSize = size }
             else if id == self.currentDisplayId { self.mirror.videoSize = size }
         }
         video.onGeometry = { [weak self] header in
             guard let self else { return }
             let id = header.displayId
-            if let fw = self.fusionWindow, fw.displayId == id {
+            if let fw = self.fusionWindows[id] {
                 fw.mirror.apply(header: header)
                 return
             }
             // A display we asked for (fusion / Desktop Mode) announces itself by its first
             // packets: an id that is neither the phone's nor what the stage already shows.
-            if id != 0, id != self.currentDisplayId, self.fusionWindow == nil,
-               self.pendingFusionPackage != nil || self.desktopModeRequested {
-                self.openFusionWindow(displayId: id)
-                self.fusionWindow?.mirror.apply(header: header)
+            // Requests are answered in the order they were made.
+            if id != 0, id != self.currentDisplayId, !self.pendingFusion.isEmpty {
+                self.openFusionWindow(displayId: id, for: self.pendingFusion.removeFirst())
+                self.fusionWindows[id]?.mirror.apply(header: header)
                 return
             }
             self.adoptDisplay(id)
@@ -508,20 +510,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - virtual displays (scrcpy --new-display)
 
-    /// Fusion: create a virtual display and, once its frames arrive and the viewer adopts it,
-    /// launch the chosen app onto it (adoptDisplay performs the launch — the id is only known
-    /// from the packet headers). Starts a session first if none is running.
-    private var pendingFusionPackage: String?
-    private var fusionRequested = false
-    /// Desktop Mode: fusion without an app — the 1920×1080 display's own desktop shell (wallpaper,
-    /// taskbar, launcher) IS the content, in a chromeless window titled "Desktop".
-    private var desktopModeRequested = false
-    /// The virtual display's own window (fusion or Desktop Mode), while one is up. It watches
-    /// that display's stream; the main stage keeps the phone's.
-    private var fusionWindow: FusionWindow?
-    /// Host-side recorder for the fusion display (Android's screenrecord can't capture a virtual
-    /// display). Fed the decoded frames while active.
-    private let fusionRecorder = FrameRecorder()
+    /// One virtual display asked for and not yet answered: an app to put on it, or nil for
+    /// Desktop Mode (the display's own shell is the content). `sent` is false while the session
+    /// is still coming up; the .running hook sends it then.
+    private final class FusionRequest {
+        let package: String?
+        var sent = false
+        init(package: String?) { self.package = package }
+    }
+    private var pendingFusion: [FusionRequest] = []
+    /// Every virtual display that has a window of its own, by display id. The main stage keeps
+    /// the phone's display; these run beside it, as many as the user opens.
+    private var fusionWindows: [Int32: FusionWindow] = [:]
+    private var fusionWindowsOpened = 0     // for cascading new windows
+    private var debugFused = false
     /// Polls the cursor to reveal the naked window's chrome near the top edge (a timer, not a
     /// mouse-moved monitor, which only fires while the window is key and accepts moved events).
     private var fusionHoverTimer: Timer?
@@ -566,12 +568,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Record the fusion display to an .mp4 on the Mac, host-side (screenrecord can't capture a
-    /// virtual display). Toggles: first press asks where to save and starts; second stops.
-    private func toggleFusionRecording() {
-        if fusionRecorder.isRecording {
-            fusionWindow?.setRecording(false)
-            fusionRecorder.stop { [weak self] url in
+    /// Record a fusion window's display to an .mp4 on the Mac, host-side (screenrecord can't
+    /// capture a virtual display). Toggles: first press asks where to save and starts; second
+    /// stops. Each window records on its own.
+    private func toggleFusionRecording(_ fw: FusionWindow) {
+        if fw.recorder.isRecording {
+            fw.setRecording(false)
+            fw.recorder.stop { [weak self] url in
                 self?.window.subtitle = url != nil ? "recording saved" : "recording failed"
                 AppBuild.log(url != nil ? "fusion recording saved to \(url!.path)" : "fusion recording failed")
             }
@@ -580,7 +583,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let panel = NSSavePanel()
         // No .mp4 here — allowedContentTypes appends it, and a name that already carries the
         // extension would double it.
-        guard let fw = fusionWindow else { return }
         panel.nameFieldStringValue = fw.title
         panel.allowedContentTypes = [.mpeg4Movie]
         panel.beginSheetModal(for: fw.window) { [weak self] response in
@@ -588,9 +590,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let size = fw.mirror.videoSize
             let w = size.width > 0 ? Int(size.width) : 1920
             let h = size.height > 0 ? Int(size.height) : 1080
-            self.fusionRecorder.start(to: url, width: w, height: h)
+            fw.recorder.start(to: url, width: w, height: h)
             fw.setRecording(true)
             self.window.subtitle = "recording"
+            AppBuild.log("fusion recording started (\(w)×\(h))")
         }
     }
 
@@ -599,22 +602,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// `device` targets a specific phone (the sidebar row's context menu); nil means the current
     /// session or the selected device — Desktop Mode is per-device, like everything else here.
     private func requestDesktopMode(on device: AdbDevice?) {
-        pendingFusionPackage = nil
         if let device, session?.serial != device.serial {
-            desktopModeRequested = true
+            pendingFusion.append(FusionRequest(package: nil))
             startSession(for: device, reveal: false)   // the .running hook fires the request
             return
         }
         wakeDevice()
-        if let fw = fusionWindow {
-            if fw.decorated {                          // already a desktop window: that is it
-                fw.window.makeKeyAndOrderFront(nil)
-                return
-            }
-            fw.close()   // an app's bare display has no taskbar or launcher; a desktop needs one
+        // One desktop is enough — an app window is a bare display (no taskbar, no launcher),
+        // but a desktop window that already exists is exactly what was asked for.
+        if let desktop = fusionWindows.values.first(where: { $0.decorated }) {
+            desktop.window.makeKeyAndOrderFront(nil)
+            return
         }
-        desktopModeRequested = true
-        requestFusionDisplay(decorations: true, what: "desktop mode")
+        requestFusionDisplay(package: nil)
     }
 
     /// "com.google.android.youtube" → "Youtube": the last segment stands in for the real label
@@ -628,7 +628,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// adb shell can resolve, so a tiny entry in the agent jar (AppLabel, run via app_process —
     /// already on the device) resolves it the way the launcher does; the window is retitled when
     /// the answer arrives, a beat after the placeholder.
-    private func fetchAppLabel(package: String) {
+    private func fetchAppLabel(package: String, for displayId: Int32) {
         guard let serial = session?.serial else { return }
         DispatchQueue.global(qos: .utility).async { [weak self] in
             let cmd = "CLASSPATH=\(AgentSession.devicePathBase)/\(AgentSession.jarName)"
@@ -642,7 +642,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let label = line.components(separatedBy: "\t").first?
                 .trimmingCharacters(in: .whitespaces) ?? ""
             guard !label.isEmpty, label != package else { return }
-            DispatchQueue.main.async { self?.fusionWindow?.title = label }
+            DispatchQueue.main.async { self?.fusionWindows[displayId]?.title = label }
         }
     }
 
@@ -808,41 +808,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func startFusion(package: String) {
         wakeDevice()   // the fusion display shares the phone's power state; it must be awake to render
-        // A fusion window is already up: reuse its display. Launching onto it is instant, while
-        // a second create-while-streaming can bounce the agent (it recovers via the queued
-        // request, but that costs ~15 seconds and leaks the first display).
-        if let fw = fusionWindow, let serial = session?.serial {
+        // Already open in a window: that one comes forward. Launching the same app on a second
+        // display would only move its task there anyway.
+        if let fw = fusionWindows.values.first(where: { $0.package == package }),
+           let serial = session?.serial {
             let id = fw.displayId
-            AppBuild.log("fusion: reusing display \(id) for \(package)")
             DispatchQueue.global(qos: .userInitiated).async {
                 try? Adb.launch(serial, package: package, displayId: id)
             }
-            fw.title = fusionTitle(for: package)
             fw.window.makeKeyAndOrderFront(nil)
-            fetchAppLabel(package: package)
             return
         }
-        pendingFusionPackage = package
-        desktopModeRequested = false
-        requestFusionDisplay(decorations: false, what: package)
+        requestFusionDisplay(package: package)
     }
 
     /// Ask the agent for a virtual display; its first packets open the window (attachStream's
     /// geometry hook). Starts a session first if none is running — prepared, not revealed: the
     /// new window is the picture, and the main stage stays exactly as it was.
-    private func requestFusionDisplay(decorations: Bool, what: String) {
+    private func requestFusionDisplay(package: String?) {
+        let request = FusionRequest(package: package)
+        let what = package ?? "desktop mode"
         if let session, sessionReachedRunning, let control = session.control {
-            fusionRequested = true
+            request.sent = true
+            pendingFusion.append(request)
             control.send(ControlMessage.createNewDisplay(width: 1920, height: 1080, dpi: 240,
-                                                         decorations: decorations))
+                                                         decorations: package == nil))
             AppBuild.log("fusion: requested a display for \(what)")
         } else if let session, case .deploying = session.state {
-            // Still coming up: the .running hook fires the request.
+            pendingFusion.append(request)      // the .running hook sends it
         } else if let device = sidebar.selected ?? sidebar.devices.first(where: { $0.isReady }) {
+            pendingFusion.append(request)
             startSession(for: device, reveal: false)
         } else {
-            pendingFusionPackage = nil
-            desktopModeRequested = false
             present(message: "No device", detail: "Connect a device first, then try again.")
         }
     }
@@ -850,29 +847,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// The requested display's first frames arrived: give it a window of its own, wired to
     /// that display's decoder, and put the app on it (or nothing — Desktop Mode's own shell is
     /// the content).
-    private func openFusionWindow(displayId id: Int32) {
+    private func openFusionWindow(displayId id: Int32, for request: FusionRequest) {
         guard let session, let video = session.video else { return }
-        let package = pendingFusionPackage
+        let package = request.package
         let fw = FusionWindow(displayId: id,
                               title: package.map(fusionTitle(for:)) ?? "Desktop",
-                              decorated: desktopModeRequested,
+                              decorated: package == nil,
                               onWake: { [weak self] in self?.wakeDevice() },
-                              onScreenshot: { [weak self] in self?.saveScreenshot(displayId: id) },
-                              onRecord: { [weak self] in self?.toggleFusionRecording() })
+                              onScreenshot: { [weak self] in self?.saveScreenshot(displayId: id) })
+        fw.onRecord = { [weak self, weak fw] in if let fw { self?.toggleFusionRecording(fw) } }
+        fw.package = package
         fw.mirror.control = session.control
         fw.onClose = { [weak self] in self?.fusionWindowClosed(id) }
-        video.decoder(for: id).onFrame = { [weak self, weak fw] picture in
-            guard let self, let fw else { return }
+        video.decoder(for: id).onFrame = { [weak fw] picture in
+            guard let fw else { return }
             fw.mirror.displayLayer.present(picture)
-            if self.fusionRecorder.isRecording { self.fusionRecorder.append(picture) }
+            if fw.recorder.isRecording { fw.recorder.append(picture) }
         }
-        fusionWindow = fw
+        // Each new window steps down and right from the last, so they don't stack exactly.
+        let step = CGFloat(fusionWindowsOpened % 6) * 32
+        fw.window.setFrameTopLeftPoint(NSPoint(x: fw.window.frame.minX + step,
+                                               y: fw.window.frame.maxY - step))
+        fusionWindowsOpened += 1
+        fusionWindows[id] = fw
         createdDisplayIds.insert(id)
         closeDisplayItem?.isHidden = false
-        inspector.apps.launchDisplayId = id       // Apps-tab launches go to the window while it is up
-        fusionRequested = false
-        pendingFusionPackage = nil
-        desktopModeRequested = false
+        inspector.apps.launchDisplayId = id       // Apps-tab launches go to the newest window
         let serial = session.serial
         DispatchQueue.global(qos: .userInitiated).async {
             // The display mirrors the phone's keyguard when the phone sits locked — a clock
@@ -882,7 +882,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         if let package {
             AppBuild.log("fusion: launching \(package) on display \(id)")
-            fetchAppLabel(package: package)
+            fetchAppLabel(package: package, for: id)
         } else {
             AppBuild.log("fusion: desktop mode on display \(id)")
         }
@@ -890,25 +890,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// The window was closed: the display goes with it. The stage is untouched.
     private func fusionWindowClosed(_ id: Int32) {
-        guard fusionWindow?.displayId == id else { return }
-        if fusionRecorder.isRecording { toggleFusionRecording() }
-        fusionWindow = nil
+        guard let fw = fusionWindows.removeValue(forKey: id) else { return }
+        if fw.recorder.isRecording { toggleFusionRecording(fw) }
         session?.control?.send(ControlMessage.destroyNewDisplay(displayId: id))
         session?.video?.forgetDisplay(id)
         createdDisplayIds.remove(id)
-        closeDisplayItem?.isHidden = !createdDisplayIds.contains(currentDisplayId)
-        inspector.apps.launchDisplayId = currentDisplayId
+        closeDisplayItem?.isHidden = fusionWindows.isEmpty
+            && !createdDisplayIds.contains(currentDisplayId)
+        inspector.apps.launchDisplayId = fusionWindows.keys.max() ?? currentDisplayId
         AppBuild.log("fusion: closed display \(id)")
     }
 
-    /// The session is going away (restart, stop, failure): the window's display dies with the
-    /// agent, so there is nothing to tell it — just take the window down.
-    private func discardFusionWindow() {
-        guard let fw = fusionWindow else { return }
-        if fusionRecorder.isRecording { toggleFusionRecording() }
-        fw.onClose = nil
-        fusionWindow = nil
-        fw.close()
+    /// The session is going away (restart, stop, failure): the windows' displays die with the
+    /// agent, so there is nothing to tell them — just take the windows down.
+    private func discardFusionWindows() {
+        for fw in fusionWindows.values {
+            if fw.recorder.isRecording { toggleFusionRecording(fw) }
+            fw.onClose = nil
+            fw.close()
+        }
+        fusionWindows.removeAll()
+        pendingFusion.removeAll()
+    }
+
+    /// The window to act on from the Device menu: the one in front, else the newest.
+    private var frontFusionWindow: FusionWindow? {
+        fusionWindows.values.first { $0.window.isKeyWindow }
+            ?? fusionWindows.max { $0.key < $1.key }?.value
+    }
+
+    /// `RPLAYHUB_FUSE=pkg,pkg,…` opens those apps on virtual displays once the first session is
+    /// up — a way to drive fusion from a shell for testing, since the Apps tab needs a click.
+    private func fuseDebugPackages() {
+        guard !debugFused,
+              let raw = ProcessInfo.processInfo.environment["RPLAYHUB_FUSE"], !raw.isEmpty else {
+            return
+        }
+        debugFused = true
+        for package in raw.split(separator: ",").map({ $0.trimmingCharacters(in: .whitespaces) })
+        where !package.isEmpty {
+            startFusion(package: package)
+        }
     }
 
     @objc private func createVirtualDisplay(_ sender: NSMenuItem) {
@@ -925,7 +947,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func closeVirtualDisplay() {
-        if let fw = fusionWindow { fw.close(); return }   // its onClose destroys the display
+        if let fw = frontFusionWindow { fw.close(); return }   // its onClose destroys the display
         closeStageVirtualDisplay()
     }
 
@@ -1487,7 +1509,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let panel = NSSavePanel()
         panel.nameFieldStringValue = "screenshot.png"
         panel.allowedContentTypes = [.png]
-        let host: NSWindow = fusionWindow?.displayId == displayId ? fusionWindow!.window : window
+        let host: NSWindow = fusionWindows[displayId]?.window ?? window
         panel.beginSheetModal(for: host) { response in
             guard response == .OK, let url = panel.url else { return }
             DispatchQueue.global(qos: .userInitiated).async {
@@ -1806,7 +1828,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func stopMirroring() {
         if twinActive { exitTwin() }
-        discardFusionWindow()
+        discardFusionWindows()
         session?.stop()
         session = nil
         mirrorRevealed = false
