@@ -128,9 +128,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // A hidden strip still reports its intrinsic height; only a required zero-height cap
         // actually removes the band it reserves. Activated by fusion, deactivated on close.
         stripZeroHeight = strip.heightAnchor.constraint(equalToConstant: 0)
+        // Normally the strip sits UNDER the picture and drives its bottom edge. In a naked window
+        // it floats OVER the picture instead (mirrorBottomToStage), so showing or hiding it never
+        // resizes the picture — the toggle is then a pure fade with nothing jumping.
+        stripTopToMirror = strip.topAnchor.constraint(equalTo: mirror.bottomAnchor)
+        mirrorBottomToStage = mirror.bottomAnchor.constraint(equalTo: middle.bottomAnchor)
         NSLayoutConstraint.activate([
             stageTopPad!, stageLeadPad!, stageTrailPad!,
-            strip.topAnchor.constraint(equalTo: mirror.bottomAnchor),
+            stripTopToMirror!,
             strip.leadingAnchor.constraint(equalTo: middle.leadingAnchor),
             strip.trailingAnchor.constraint(equalTo: middle.trailingAnchor),
             strip.bottomAnchor.constraint(equalTo: middle.bottomAnchor),
@@ -248,6 +253,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.mirror.borderless = false   // the main stage gets its device bezel back
             self.mirror.nakedBackground = false   // and its Device-Hub white surround
             self.stageMinWidth?.isActive = true   // the split view needs its width floor back
+            self.mirrorBottomToStage?.isActive = false
+            self.stripTopToMirror?.isActive = true
             if let w = self.screenWindow.window { w.isOpaque = true; w.backgroundColor = .windowBackgroundColor }
             self.stageTopPad?.constant = 16
             self.stageLeadPad?.constant = 12
@@ -508,6 +515,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var stripMinHeight: NSLayoutConstraint?
     private var stripZeroHeight: NSLayoutConstraint?
     private var stageMinWidth: NSLayoutConstraint?
+    private var stripTopToMirror: NSLayoutConstraint?
+    private var mirrorBottomToStage: NSLayoutConstraint?
 
     /// Fuse whatever app is selected in the Apps tab — the keyboard path to what the Apps-list
     /// right-click "Open on Virtual Display" does, so fusion is drivable without the mouse.
@@ -671,6 +680,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         mirror.nakedBackground = true
         mirror.borderless = true                 // no device bezel, no inset — the screen IS the window
         stageMinWidth?.isActive = false          // let the window shrink to the phone's true aspect
+        stripTopToMirror?.isActive = false       // the strip floats over the picture, not under it
+        mirrorBottomToStage?.isActive = true
         fusionChromeShown = true                 // force the first setFusionChrome to take effect
         setFusionChrome(visible: false, animated: false)
         installFusionHover()
@@ -722,19 +733,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // the picture fills everything) and the traditional window (a real title-bar strip above
         // the picture, app name, traffic lights, and our controls) — the same window that existed
         // before raw mode. Enforced every call because macOS restores chrome on activation.
-        // fullSizeContentView stays ON in both modes so the WINDOW NEVER CHANGES SIZE: the title
-        // bar floats over the top of the picture when shown, rather than pushing it down.
-        w.styleMask.insert(.fullSizeContentView)
-        w.titlebarAppearsTransparent = true
+        // A real, full title bar when shown (it takes its own strip above the content, so the
+        // window frame stays put); none at all in raw mode.
+        if visible { w.styleMask.remove(.fullSizeContentView) }
+        else { w.styleMask.insert(.fullSizeContentView) }
+        w.titlebarAppearsTransparent = !visible
         w.titleVisibility = visible ? .visible : .hidden
         for b in lights { b?.isHidden = !visible }
         fusionTitlebar?.view.isHidden = !visible
         // For the plain mirror pop-out (no fusion accessory), the bottom control strip is a "bar"
         // too — hide it in raw mode so only the phone shows, bring it back on approach. In fusion
         // the strip stays hidden either way (it drives the phone, not the fused app).
+        // The mirror pop-out swaps the WHOLE look: raw phone (clear surround, no bezel, strip
+        // floating and hidden) ⇄ the ordinary window (white surround, device bezel, control strip
+        // under the picture). A fusion window is a desktop, so it keeps its edgeless look.
         if fusionTitlebar == nil {
+            mirror.borderless = !visible
+            mirror.nakedBackground = !visible
+            w.isOpaque = visible
+            w.backgroundColor = visible ? .windowBackgroundColor : .clear
             strip.isHidden = !visible
-            stripZeroHeight?.isActive = !visible    // and give up its reserved band in raw mode
+            stripTopToMirror?.isActive = visible
+            mirrorBottomToStage?.isActive = !visible
         }
 
         let changed = visible != fusionChromeShown
@@ -1354,11 +1374,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             isPinned.toggle()
             window.level = isPinned ? .floating : .normal
             mirror.setPinned(isPinned)
+        // Through the menu handlers, not screenWindow.open directly, so the context-menu items get
+        // the same naked-window treatment as View ▸ Open Screen in New Window.
         case .openWindow:
-            screenWindow.open(stage: stage, from: splitView, title: window.title, tabbedWith: nil)
+            openScreenWindow()
         case .openTab:
-            screenWindow.open(stage: stage, from: splitView, title: window.title,
-                              tabbedWith: window)
+            openScreenTab()
         case .stop:
             stopMirroring()
         case .reconnect:
@@ -1760,6 +1781,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func openScreenTab() {
         screenWindow.open(stage: stage, from: splitView, title: window.title, tabbedWith: window)
+        if let w = screenWindow.window { applyNakedChrome(to: w); sizeWindowToMirror(w) }
     }
 
     @objc private func togglePin() { perform(MirrorView.Command.pin) }
