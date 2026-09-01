@@ -52,6 +52,15 @@ final class DeviceSidebar: NSView {
     /// AVD name per emulator serial, fetched once — the row reads "Emulator · <name>", which is
     /// what a person calls it, rather than the sdk_gphone model string.
     private var avdNames: [String: String] = [:]
+
+    /// The name the row shows for a device — the AVD name for an emulator once known. The app
+    /// titles its window with this, so window and row agree.
+    func friendlyName(for device: AdbDevice) -> String {
+        guard device.isEmulator, let avd = avdNames[device.serial], !avd.isEmpty else {
+            return device.displayName
+        }
+        return "Emulator · \(avd)"
+    }
     private var selectedSerial: String?
     /// Set while we are rebuilding the table ourselves. `reloadData()` drops the selection and
     /// AppKit reports that as a user selection change — which nils `selectedSerial` before the
@@ -241,6 +250,10 @@ final class DeviceSidebar: NSView {
                     if !release.isEmpty { self.versions[serial] = release }
                     if !avd.isEmpty { self.avdNames[serial] = avd }
                     if !release.isEmpty || !avd.isEmpty { self.tableView.reloadData() }
+                    if !avd.isEmpty, self.selectedSerial == serial,
+                       let device = self.devices.first(where: { $0.serial == serial }) {
+                        self.onSelect?(device)
+                    }
                 }
             }
         }
@@ -396,10 +409,7 @@ extension DeviceSidebar: NSTableViewDataSource, NSTableViewDelegate {
         glyph.contentTintColor = .secondaryLabelColor
         glyph.translatesAutoresizingMaskIntoConstraints = false
 
-        let title = device.isEmulator
-            ? (avdNames[device.serial].map { "Emulator · \($0)" } ?? device.displayName)
-            : device.displayName
-        let name = NSTextField(labelWithString: title)
+        let name = NSTextField(labelWithString: friendlyName(for: device))
         name.font = .systemFont(ofSize: 13)
         name.lineBreakMode = .byTruncatingTail
 

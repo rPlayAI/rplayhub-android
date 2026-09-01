@@ -327,10 +327,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             deviceTitleDetail.stringValue = ""
             return
         }
-        window.title = "rPlayHub — \(device.displayName)"
-        deviceTitleName.stringValue = device.displayName
+        let name = sidebar.friendlyName(for: device)     // "Emulator · <avd>" once known
+        window.title = "rPlayHub — \(name)"
+        deviceTitleName.stringValue = name
         deviceTitleDetail.stringValue = device.isReady ? device.serial : device.state
-        mirror.deviceName = device.displayName
+        mirror.deviceName = name
         mirror.deviceSubtitle = device.isReady ? device.serial : device.state
         inspector.serial = device.isReady ? device.serial : nil
         guard device.isReady, propertiesForSerial != device.serial else { return }
