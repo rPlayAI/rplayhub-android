@@ -251,7 +251,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         screenWindow.onClose = { [weak self] in
             guard let self else { return }
             self.strip.isHidden = false
-            self.removeFusionTitlebar()
+            self.removeFusionHover()
             self.mirror.borderless = false   // the main stage gets its device bezel back
             self.mirror.nakedBackground = false   // and its Device-Hub white surround
             self.stageMinWidth?.isActive = true   // the split view needs its width floor back
@@ -264,7 +264,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.stripMinHeight?.constant = 50
             self.stripZeroHeight?.isActive = false
             if self.currentDisplayId != 0, self.createdDisplayIds.contains(self.currentDisplayId) {
-                self.closeVirtualDisplay()
+                self.closeStageVirtualDisplay()
             }
         }
         // The device commands move from the mirror pane to the device's row in the sidebar.
@@ -358,6 +358,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         if twinActive { exitTwin() }   // the new session's decoder starts back in native output
+        discardFusionWindow()          // its virtual display dies with the old agent
         session?.stop()
         mirror.reset()
         mirror.autoReveal = reveal          // reset() set it true; a prepared session stays gated
@@ -370,13 +371,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         refreshMirrorToggle()
         s.onState = { [weak self] state in self?.sessionStateChanged(state) }
         s.onAgentLog = { line in AppBuild.log("agent: \(line)") }
-        s.decoder.onFrame = { [weak self] picture in
+        s.decoder.onFrame = stageSink()
+        s.start(maxVideoSize: maxVideoSize)
+    }
+
+    /// Where the main stage's display comes out: the mirror, and the twin when it is up.
+    private func stageSink() -> (CVPixelBuffer) -> Void {
+        { [weak self] picture in
             guard let self else { return }
             self.mirror.displayLayer.present(picture)
             self.twin?.present(picture)   // one lock and out when the mode is off
-            if self.fusionRecorder.isRecording { self.fusionRecorder.append(picture) }
         }
-        s.start(maxVideoSize: maxVideoSize)
     }
 
     private func sessionStateChanged(_ state: AgentSession.State) {
@@ -400,7 +405,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if pendingFusionPackage != nil || desktopModeRequested, !fusionRequested,
                let control = session?.control {
                 fusionRequested = true
-                control.send(ControlMessage.stopVideoStream(displayId: currentDisplayId))
                 control.send(ControlMessage.createNewDisplay(width: 1920, height: 1080, dpi: 240,
                                                              decorations: desktopModeRequested))
                 AppBuild.log("fusion: requested a display for \(pendingFusionPackage ?? "desktop mode")")
@@ -449,11 +453,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let session, let video = session.video else { return }
         mirror.control = session.control
         loadDisplayShape(session.serial)
-        video.onFormat = { [weak self] size in self?.mirror.videoSize = size }
+        video.primaryDisplayId = 0
+        video.onFormat = { [weak self] id, size in
+            guard let self else { return }
+            if let fw = self.fusionWindow, fw.displayId == id { fw.mirror.videoSize = size }
+            else if id == self.currentDisplayId { self.mirror.videoSize = size }
+        }
         video.onGeometry = { [weak self] header in
-            self?.adoptDisplay(header.displayId)
-            self?.mirror.apply(header: header)
-            self?.twin?.apply(header: header)
+            guard let self else { return }
+            let id = header.displayId
+            if let fw = self.fusionWindow, fw.displayId == id {
+                fw.mirror.apply(header: header)
+                return
+            }
+            // A display we asked for (fusion / Desktop Mode) announces itself by its first
+            // packets: an id that is neither the phone's nor what the stage already shows.
+            if id != 0, id != self.currentDisplayId, self.fusionWindow == nil,
+               self.pendingFusionPackage != nil || self.desktopModeRequested {
+                self.openFusionWindow(displayId: id)
+                self.fusionWindow?.mirror.apply(header: header)
+                return
+            }
+            self.adoptDisplay(id)
+            self.mirror.apply(header: header)
+            self.twin?.apply(header: header)
         }
         // Both closures check the stream is still the current one: after a reconnect, a stale
         // stream's last gasp arrives on the main queue behind the new session's startup and
@@ -493,9 +516,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Desktop Mode: fusion without an app — the 1920×1080 display's own desktop shell (wallpaper,
     /// taskbar, launcher) IS the content, in a chromeless window titled "Desktop".
     private var desktopModeRequested = false
-    /// The fusion window's title-bar controls (Wake / Screenshot / Record), attached while a
-    /// fusion window is up so a chromeless app window still has those actions.
-    private var fusionTitlebar: FusionTitlebar?
+    /// The virtual display's own window (fusion or Desktop Mode), while one is up. It watches
+    /// that display's stream; the main stage keeps the phone's.
+    private var fusionWindow: FusionWindow?
     /// Host-side recorder for the fusion display (Android's screenrecord can't capture a virtual
     /// display). Fed the decoded frames while active.
     private let fusionRecorder = FrameRecorder()
@@ -547,7 +570,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// virtual display). Toggles: first press asks where to save and starts; second stops.
     private func toggleFusionRecording() {
         if fusionRecorder.isRecording {
-            fusionTitlebar?.setRecording(false)
+            fusionWindow?.setRecording(false)
             fusionRecorder.stop { [weak self] url in
                 self?.window.subtitle = url != nil ? "recording saved" : "recording failed"
                 AppBuild.log(url != nil ? "fusion recording saved to \(url!.path)" : "fusion recording failed")
@@ -557,16 +580,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let panel = NSSavePanel()
         // No .mp4 here — allowedContentTypes appends it, and a name that already carries the
         // extension would double it.
-        panel.nameFieldStringValue = screenWindow.window?.title ?? "recording"
+        guard let fw = fusionWindow else { return }
+        panel.nameFieldStringValue = fw.title
         panel.allowedContentTypes = [.mpeg4Movie]
-        let host: NSWindow = screenWindow.window ?? window
-        panel.beginSheetModal(for: host) { [weak self] response in
+        panel.beginSheetModal(for: fw.window) { [weak self] response in
             guard let self, response == .OK, let url = panel.url else { return }
-            let size = self.mirror.videoSize
+            let size = fw.mirror.videoSize
             let w = size.width > 0 ? Int(size.width) : 1920
             let h = size.height > 0 ? Int(size.height) : 1080
             self.fusionRecorder.start(to: url, width: w, height: h)
-            self.fusionTitlebar?.setRecording(true)
+            fw.setRecording(true)
             self.window.subtitle = "recording"
         }
     }
@@ -576,26 +599,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// `device` targets a specific phone (the sidebar row's context menu); nil means the current
     /// session or the selected device — Desktop Mode is per-device, like everything else here.
     private func requestDesktopMode(on device: AdbDevice?) {
-        desktopModeRequested = true
+        pendingFusionPackage = nil
         if let device, session?.serial != device.serial {
-            startSession(for: device, reveal: true)   // the .running hook fires the request
+            desktopModeRequested = true
+            startSession(for: device, reveal: false)   // the .running hook fires the request
             return
         }
-        // Same device as the current session — reveal its mirror and wake it now (the fresh-device
-        // path above reveals via reveal:true, and wakes on adopt).
-        revealCurrentMirror()
         wakeDevice()
-        if let control = session?.control {
-            control.send(ControlMessage.stopVideoStream(displayId: currentDisplayId))
-            control.send(ControlMessage.createNewDisplay(width: 1920, height: 1080, dpi: 240,
-                                                         decorations: true))
-            AppBuild.log("fusion: requested a desktop-mode display")
-        } else if let device = sidebar.selected ?? sidebar.devices.first(where: { $0.isReady }) {
-            startSession(for: device, reveal: true)   // the .running hook fires the request
-        } else {
-            desktopModeRequested = false
-            present(message: "No device", detail: "Connect a device first, then try Desktop Mode again.")
+        if let fw = fusionWindow {
+            if fw.decorated {                          // already a desktop window: that is it
+                fw.window.makeKeyAndOrderFront(nil)
+                return
+            }
+            fw.close()   // an app's bare display has no taskbar or launcher; a desktop needs one
         }
+        desktopModeRequested = true
+        requestFusionDisplay(decorations: true, what: "desktop mode")
     }
 
     /// "com.google.android.youtube" → "Youtube": the last segment stands in for the real label
@@ -623,48 +642,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let label = line.components(separatedBy: "\t").first?
                 .trimmingCharacters(in: .whitespaces) ?? ""
             guard !label.isEmpty, label != package else { return }
-            DispatchQueue.main.async { self?.screenWindow.window?.title = label }
+            DispatchQueue.main.async { self?.fusionWindow?.title = label }
         }
-    }
-
-    /// The fusion window treatment: chromeless (no control strip — it drives the phone), named
-    /// for what it shows, and sized snugly around the 16:9 picture rather than inheriting the
-    /// stage's tall frame with fat empty margins. Resizes keep the aspect, so it stays snug.
-    private func dressFusionWindow(title: String) {
-        if !screenWindow.isOpen { openScreenWindow() }
-        strip.isHidden = true
-        mirror.borderless = true            // raw picture, no device bezel
-        stageTopPad?.constant = 0           // and no stage padding or strip space around it
-        stageLeadPad?.constant = 0
-        stageTrailPad?.constant = 0
-        stripMinHeight?.constant = 0
-        stripZeroHeight?.isActive = true
-        // The fusion display mirrors the phone's keyguard when the phone sits locked — a clock
-        // over wallpaper you cannot enter. The phone has adb access, so dismiss it.
-        if let serial = session?.serial {
-            DispatchQueue.global(qos: .userInitiated).async {
-                _ = try? Adb.shell(serial, "wm dismiss-keyguard")
-            }
-        }
-        guard let w = screenWindow.window else { return }
-        w.title = title
-        // No contentAspectRatio lock: it would fight the fullSizeContentView toggle and jump the
-        // window size on every hover. MirrorView letterboxes internally, so the picture stays
-        // correct at any window ratio.
-        w.setContentSize(NSSize(width: 1152, height: 648))
-        applyNakedChrome(to: w)
-        // Controls the naked window still needs: Wake, Screenshot, Record. Rebuilt each time so it
-        // never stacks; recording state seeds from whether a recording is live.
-        if let existing = fusionTitlebar { w.removeTitlebarAccessoryViewController(at: existing.position) }
-        let bar = FusionTitlebar(
-            onWake: { [weak self] in self?.wakeDevice() },
-            onScreenshot: { [weak self] in self?.saveScreenshot() },
-            onRecord: { [weak self] in self?.toggleFusionRecording() })
-        bar.setRecording(fusionRecorder.isRecording)
-        w.addTitlebarAccessoryViewController(bar)
-        bar.position = (w.titlebarAccessoryViewControllers.count - 1)
-        fusionTitlebar = bar
-        setFusionChrome(visible: false, animated: false)   // start naked, hiding the new accessory too
     }
 
     /// Make a screen window "naked": the picture fills edge to edge under a transparent title bar
@@ -716,8 +695,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// so the picture doesn't jump. Without this the bars eat into the picture and letterbox it.
     private func applyNakedLayout(chromeVisible: Bool) {
         guard let w = screenWindow.window, nakedPictureSize.width > 0 else { return }
-        let stripHeight: CGFloat = (chromeVisible && fusionTitlebar == nil)
-            ? max(strip.fittingSize.height, 50) : 0
+        let stripHeight: CGFloat = chromeVisible ? max(strip.fittingSize.height, 50) : 0
         let content = NSSize(width: nakedPictureSize.width,
                              height: nakedPictureSize.height + stripHeight)
         let top = w.frame.maxY
@@ -746,25 +724,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         w.titlebarAppearsTransparent = !visible
         w.titleVisibility = visible ? .visible : .hidden
         for b in lights { b?.isHidden = !visible }
-        fusionTitlebar?.view.isHidden = !visible
-        // For the plain mirror pop-out (no fusion accessory), the bottom control strip is a "bar"
-        // too — hide it in raw mode so only the phone shows, bring it back on approach. In fusion
-        // the strip stays hidden either way (it drives the phone, not the fused app).
-        // The mirror pop-out swaps the WHOLE look: raw phone (clear surround, no bezel, strip
-        // floating and hidden) ⇄ the ordinary window (white surround, device bezel, control strip
-        // under the picture). A fusion window is a desktop, so it keeps its edgeless look.
-        if fusionTitlebar == nil {
-            mirror.borderless = !visible
-            mirror.nakedBackground = !visible
-            w.isOpaque = visible
-            w.backgroundColor = visible ? .windowBackgroundColor : .clear
-            strip.isHidden = !visible
-            stripTopToMirror?.isActive = visible
-            mirrorBottomToStage?.isActive = !visible
-            // The raw window is only as wide as the phone, which is too narrow for the control
-            // strip's buttons — widen it while the strip is up, and give the width back after.
-            widenForStrip(w, visible: visible)
-        }
+        // The bottom control strip is a "bar" too — hidden in raw mode so only the phone shows,
+        // back on approach. The pop-out swaps the WHOLE look: raw phone (clear surround, no
+        // bezel, strip floating and hidden) ⇄ the ordinary window (white surround, device bezel,
+        // control strip under the picture).
+        mirror.borderless = !visible
+        mirror.nakedBackground = !visible
+        w.isOpaque = visible
+        w.backgroundColor = visible ? .windowBackgroundColor : .clear
+        strip.isHidden = !visible
+        stripTopToMirror?.isActive = visible
+        mirrorBottomToStage?.isActive = !visible
+        // The raw window is only as wide as the phone, which is too narrow for the control
+        // strip's buttons — widen it while the strip is up, and give the width back after.
+        widenForStrip(w, visible: visible)
 
         let changed = visible != fusionChromeShown
         fusionChromeShown = visible
@@ -772,11 +745,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // A soft fade on the transition.
         let a: CGFloat = visible ? 1 : 0
         for b in lights { b?.alphaValue = visible ? 0 : 1 }
-        fusionTitlebar?.view.alphaValue = visible ? 0 : 1
         NSAnimationContext.runAnimationGroup { ctx in
             ctx.duration = 0.12
             for b in lights { b?.animator().alphaValue = a }
-            self.fusionTitlebar?.view.animator().alphaValue = a
         }
     }
 
@@ -834,46 +805,110 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         setFusionChrome(visible: near)
     }
 
-    private func removeFusionTitlebar() {
-        removeFusionHover()
-        guard let bar = fusionTitlebar, let w = screenWindow.window,
-              bar.position < w.titlebarAccessoryViewControllers.count else { fusionTitlebar = nil; return }
-        w.removeTitlebarAccessoryViewController(at: bar.position)
-        fusionTitlebar = nil
-    }
 
     private func startFusion(package: String) {
-        // Opening an app on a virtual display also brings the session fully up: reveal the mirror
-        // (as View Screen would) and wake the phone, so nothing is left prepared-but-hidden and
-        // the fusion display — which shares the phone's power state — is awake to render.
-        revealCurrentMirror()
-        wakeDevice()
-        // Already showing a fusion display: reuse it. Launching onto the existing display is
-        // instant, while a second create-while-streaming can bounce the agent (it recovers via
-        // the queued request, but that costs ~15 seconds and leaks the first display).
-        if currentDisplayId != 0, createdDisplayIds.contains(currentDisplayId),
-           let serial = session?.serial {
-            let id = currentDisplayId
+        wakeDevice()   // the fusion display shares the phone's power state; it must be awake to render
+        // A fusion window is already up: reuse its display. Launching onto it is instant, while
+        // a second create-while-streaming can bounce the agent (it recovers via the queued
+        // request, but that costs ~15 seconds and leaks the first display).
+        if let fw = fusionWindow, let serial = session?.serial {
+            let id = fw.displayId
             AppBuild.log("fusion: reusing display \(id) for \(package)")
             DispatchQueue.global(qos: .userInitiated).async {
                 try? Adb.launch(serial, package: package, displayId: id)
             }
-            dressFusionWindow(title: fusionTitle(for: package))
+            fw.title = fusionTitle(for: package)
+            fw.window.makeKeyAndOrderFront(nil)
             fetchAppLabel(package: package)
             return
         }
         pendingFusionPackage = package
-        if let control = session?.control {
-            control.send(ControlMessage.stopVideoStream(displayId: currentDisplayId))
+        desktopModeRequested = false
+        requestFusionDisplay(decorations: false, what: package)
+    }
+
+    /// Ask the agent for a virtual display; its first packets open the window (attachStream's
+    /// geometry hook). Starts a session first if none is running — prepared, not revealed: the
+    /// new window is the picture, and the main stage stays exactly as it was.
+    private func requestFusionDisplay(decorations: Bool, what: String) {
+        if let session, sessionReachedRunning, let control = session.control {
+            fusionRequested = true
             control.send(ControlMessage.createNewDisplay(width: 1920, height: 1080, dpi: 240,
-                                                         decorations: false))
-            AppBuild.log("fusion: requested a display for \(package)")
+                                                         decorations: decorations))
+            AppBuild.log("fusion: requested a display for \(what)")
+        } else if let session, case .deploying = session.state {
+            // Still coming up: the .running hook fires the request.
         } else if let device = sidebar.selected ?? sidebar.devices.first(where: { $0.isReady }) {
-            startSession(for: device, reveal: true)   // the .running hook fires the request
+            startSession(for: device, reveal: false)
         } else {
             pendingFusionPackage = nil
-            present(message: "No device", detail: "Connect a device first, then try Fusion again.")
+            desktopModeRequested = false
+            present(message: "No device", detail: "Connect a device first, then try again.")
         }
+    }
+
+    /// The requested display's first frames arrived: give it a window of its own, wired to
+    /// that display's decoder, and put the app on it (or nothing — Desktop Mode's own shell is
+    /// the content).
+    private func openFusionWindow(displayId id: Int32) {
+        guard let session, let video = session.video else { return }
+        let package = pendingFusionPackage
+        let fw = FusionWindow(displayId: id,
+                              title: package.map(fusionTitle(for:)) ?? "Desktop",
+                              decorated: desktopModeRequested,
+                              onWake: { [weak self] in self?.wakeDevice() },
+                              onScreenshot: { [weak self] in self?.saveScreenshot(displayId: id) },
+                              onRecord: { [weak self] in self?.toggleFusionRecording() })
+        fw.mirror.control = session.control
+        fw.onClose = { [weak self] in self?.fusionWindowClosed(id) }
+        video.decoder(for: id).onFrame = { [weak self, weak fw] picture in
+            guard let self, let fw else { return }
+            fw.mirror.displayLayer.present(picture)
+            if self.fusionRecorder.isRecording { self.fusionRecorder.append(picture) }
+        }
+        fusionWindow = fw
+        createdDisplayIds.insert(id)
+        closeDisplayItem?.isHidden = false
+        inspector.apps.launchDisplayId = id       // Apps-tab launches go to the window while it is up
+        fusionRequested = false
+        pendingFusionPackage = nil
+        desktopModeRequested = false
+        let serial = session.serial
+        DispatchQueue.global(qos: .userInitiated).async {
+            // The display mirrors the phone's keyguard when the phone sits locked — a clock
+            // over wallpaper you cannot enter. The phone has adb access, so dismiss it.
+            _ = try? Adb.shell(serial, "wm dismiss-keyguard")
+            if let package { try? Adb.launch(serial, package: package, displayId: id) }
+        }
+        if let package {
+            AppBuild.log("fusion: launching \(package) on display \(id)")
+            fetchAppLabel(package: package)
+        } else {
+            AppBuild.log("fusion: desktop mode on display \(id)")
+        }
+    }
+
+    /// The window was closed: the display goes with it. The stage is untouched.
+    private func fusionWindowClosed(_ id: Int32) {
+        guard fusionWindow?.displayId == id else { return }
+        if fusionRecorder.isRecording { toggleFusionRecording() }
+        fusionWindow = nil
+        session?.control?.send(ControlMessage.destroyNewDisplay(displayId: id))
+        session?.video?.forgetDisplay(id)
+        createdDisplayIds.remove(id)
+        closeDisplayItem?.isHidden = !createdDisplayIds.contains(currentDisplayId)
+        inspector.apps.launchDisplayId = currentDisplayId
+        AppBuild.log("fusion: closed display \(id)")
+    }
+
+    /// The session is going away (restart, stop, failure): the window's display dies with the
+    /// agent, so there is nothing to tell it — just take the window down.
+    private func discardFusionWindow() {
+        guard let fw = fusionWindow else { return }
+        if fusionRecorder.isRecording { toggleFusionRecording() }
+        fw.onClose = nil
+        fusionWindow = nil
+        fw.close()
     }
 
     @objc private func createVirtualDisplay(_ sender: NSMenuItem) {
@@ -890,6 +925,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func closeVirtualDisplay() {
+        if let fw = fusionWindow { fw.close(); return }   // its onClose destroys the display
+        closeStageVirtualDisplay()
+    }
+
+    /// The stage itself is on a virtual display (New Virtual Display): destroy it and go back
+    /// to the phone's screen.
+    private func closeStageVirtualDisplay() {
         guard let session, let control = session.control,
               createdDisplayIds.contains(currentDisplayId) else { return }
         control.send(ControlMessage.destroyNewDisplay(displayId: currentDisplayId))
@@ -918,26 +960,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let session {
             if id == 0 { loadDisplayShape(session.serial) } else { mirror.displayShape = nil }
             session.control?.send(ControlMessage.displayConfigurationRequest())
+            // The stage follows this display's decoder from now on.
+            session.video?.decoder(for: id).onFrame = stageSink()
+            session.video?.primaryDisplayId = id
         }
         AppBuild.log("now showing display \(id)")
-        // Fusion: the virtual display's frames arrived and the viewer adopted it — put the chosen
-        // app on it and pop the stage into its own resizable window: chromeless (no control
-        // strip — that strip drives the PHONE, and this window is the app), titled with the app.
-        if id != 0, let package = pendingFusionPackage, let serial = session?.serial {
-            pendingFusionPackage = nil
-            fusionRequested = false
-            AppBuild.log("fusion: launching \(package) on display \(id)")
-            DispatchQueue.global(qos: .userInitiated).async {
-                try? Adb.launch(serial, package: package, displayId: id)
-            }
-            dressFusionWindow(title: fusionTitle(for: package))
-            fetchAppLabel(package: package)
-        } else if id != 0, desktopModeRequested {
-            // Desktop Mode: nothing to launch — the display's own desktop shell is the content.
-            desktopModeRequested = false
-            fusionRequested = false
-            dressFusionWindow(title: "Desktop")
-        }
     }
 
     // MARK: - pause, and picking a display
@@ -1386,7 +1413,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func perform(_ command: MirrorView.Command) {
         switch command {
         case .twin:       toggleTwin()
-        case .screenshot: saveScreenshot()
+        case .screenshot: saveScreenshot(displayId: currentDisplayId)
         case .record:     toggleRecording()
         case .home:       perform(ControlStrip.Action.home)
         case .back:       perform(ControlStrip.Action.back)
@@ -1420,7 +1447,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func perform(_ action: ControlStrip.Action) {
         // Screenshot and record go over adb, not the control channel, so they are handled before
         // the guard that requires a live control connection.
-        if action == .screenshot { saveScreenshot(); return }
+        if action == .screenshot { saveScreenshot(displayId: currentDisplayId); return }
         if action == .record { toggleRecording(); return }
         guard let control = session?.control else { return }
         switch action {
@@ -1455,12 +1482,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Screenshots go through `screencap` rather than grabbing the decoded picture: the picture
     /// we have has been through a lossy encoder at whatever bit rate the agent settled on, and a
     /// screenshot is the one thing where that is visible.
-    private func saveScreenshot() {
+    private func saveScreenshot(displayId: Int32) {
         guard let serial = session?.serial else { return }
         let panel = NSSavePanel()
         panel.nameFieldStringValue = "screenshot.png"
         panel.allowedContentTypes = [.png]
-        panel.beginSheetModal(for: window) { response in
+        let host: NSWindow = fusionWindow?.displayId == displayId ? fusionWindow!.window : window
+        panel.beginSheetModal(for: host) { response in
             guard response == .OK, let url = panel.url else { return }
             DispatchQueue.global(qos: .userInitiated).async {
                 do {
@@ -1469,7 +1497,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     // SurfaceFlinger id, not the logical one the app tracks, so for the fusion
                     // virtual display resolve it by name; display 0 needs no -d.
                     let cmd: String
-                    if self.currentDisplayId != 0 {
+                    if displayId != 0 {
                         cmd = "phys=$(dumpsys SurfaceFlinger --display-id | grep rplayhub.display"
                             + " | tail -1 | grep -oE '^Display [0-9]+' | grep -oE '[0-9]+');"
                             + " screencap ${phys:+-d $phys} -p \(remote)"
@@ -1508,7 +1536,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         recordingSerial = serial
         strip.setRecording(true)
         mirror.setRecording(true)
-        fusionTitlebar?.setRecording(true)
         AppBuild.log("recording started")
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let socket = try? Adb.shellStream(
@@ -1529,7 +1556,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         recordingSerial = nil
         strip.setRecording(false)
         mirror.setRecording(false)
-        fusionTitlebar?.setRecording(false)
         let socket = recordingSocket
         recordingSocket = nil
 
@@ -1753,15 +1779,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Reveal the current session's mirror (what "View Screen" does) without needing a device
     /// object — used by fusion, so opening an app on a virtual display also turns the prepared
     /// session into a live, ungated one.
-    private func revealCurrentMirror() {
-        guard session != nil, !mirrorRevealed else { return }
-        mirror.reveal()
-        mirrorRevealed = true
-        strip.setSessionActive(true)
-        window.subtitle = "mirroring"
-        refreshMirrorToggle()
-    }
-
     private func revealMirror(for device: AdbDevice) {
         if let session, session.serial == device.serial {
             mirror.reveal()              // agent already running — show the buffered stream now
@@ -1789,6 +1806,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func stopMirroring() {
         if twinActive { exitTwin() }
+        discardFusionWindow()
         session?.stop()
         session = nil
         mirrorRevealed = false

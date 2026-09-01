@@ -7,6 +7,11 @@
 //  to VideoDecoder. Nothing is dropped between here and the decoder — display-side skipping is
 //  VideoLayer's business, where it is free.
 //
+//  The agent streams every started display down this one channel, tagging each packet with its
+//  display id, so the stream keeps one decode pipeline per display: its own parameter sets,
+//  format, keyframe gate and decoder. A fusion window watches a virtual display while the main
+//  stage keeps the phone's own — neither has to stop for the other.
+//
 //  Keyframe gating is kept from ~/rplay-hub and matters just as much here. Parameter sets alone
 //  are not enough to start: without an IRAP every P-frame references pictures the decoder never
 //  saw, and VideoToolbox's response to that is a black window with no error at all.
@@ -28,15 +33,17 @@ final class VideoStream {
     private(set) var framesEnqueued = 0
     private(set) var packetsReceived = 0
     private(set) var bytesReceived = 0
-    private(set) var framesBeforeKeyframe = 0
-    private(set) var awaitingKeyframe = true
 
-    var framesDecoded: Int { decoder.framesDecoded }
-    var decodeFailures: Int { decoder.decodeFailures }
-    var lastError: String? { decoder.lastError }
+    /// The display the health readout describes — whichever the main stage shows.
+    var primaryDisplayId: Int32 = 0
+    var framesBeforeKeyframe: Int { pipeline(for: primaryDisplayId).framesBeforeKeyframe }
+    var awaitingKeyframe: Bool { pipeline(for: primaryDisplayId).awaitingKeyframe }
+    var framesDecoded: Int { decoder(for: primaryDisplayId).framesDecoded }
+    var decodeFailures: Int { decoder(for: primaryDisplayId).decodeFailures }
+    var lastError: String? { decoder(for: primaryDisplayId).lastError }
 
-    /// Coded frame size from the parameter sets, once known. Main queue.
-    var onFormat: ((CGSize) -> Void)?
+    /// Coded frame size from a display's parameter sets, once known. Main queue.
+    var onFormat: ((Int32, CGSize) -> Void)?
     /// Every packet's header, so the view can follow rotation and resize. Main queue, coalesced
     /// to changes only — this would otherwise fire at the frame rate.
     var onGeometry: ((VideoPacketHeader) -> Void)?
@@ -48,16 +55,47 @@ final class VideoStream {
     var onDesync: ((String) -> Void)?
 
     private let socket: TCPSocket
+    /// Display 0's decoder — the session creates it so the app can hook its frames before the
+    /// channel is even open.
     let decoder: VideoDecoder
     private var thread: Thread?
     private var stopping = false
 
-    private var parameterSets: [Int: Data] = [:]
-    private var format: CMVideoFormatDescription?
-    private var framesSubmitted: Int64 = 0
-    private var lastGeometry: (w: Int32, h: Int32, rot: UInt8)?
-    private var lastFrameNumber: UInt32?
-    private var lastDisplayId: Int32?
+    /// Everything that is per display: the reference chain lives here.
+    private final class Pipeline {
+        let decoder: VideoDecoder
+        var parameterSets: [Int: Data] = [:]
+        var format: CMVideoFormatDescription?
+        var framesSubmitted: Int64 = 0
+        var framesBeforeKeyframe = 0
+        var awaitingKeyframe = true
+        var lastGeometry: (w: Int32, h: Int32, rot: UInt8)?
+        var lastFrameNumber: UInt32?
+        init(decoder: VideoDecoder) { self.decoder = decoder }
+    }
+    private var pipelines: [Int32: Pipeline] = [:]
+    private let pipelinesLock = NSLock()
+
+    /// The pipeline for a display, made on first sight. The reader thread and the main thread
+    /// both come through here, hence the lock; the pipeline itself is only ever driven by the
+    /// reader thread once it exists.
+    private func pipeline(for displayId: Int32) -> Pipeline {
+        pipelinesLock.lock(); defer { pipelinesLock.unlock() }
+        if let p = pipelines[displayId] { return p }
+        let p = Pipeline(decoder: displayId == 0 ? decoder : VideoDecoder())
+        pipelines[displayId] = p
+        return p
+    }
+
+    /// Where a display's frames come out. Set `onFrame` on it to watch that display.
+    func decoder(for displayId: Int32) -> VideoDecoder { pipeline(for: displayId).decoder }
+
+    /// The display is gone (its virtual display was destroyed): drop its pipeline.
+    func forgetDisplay(_ displayId: Int32) {
+        pipelinesLock.lock(); defer { pipelinesLock.unlock() }
+        guard displayId != 0, let p = pipelines.removeValue(forKey: displayId) else { return }
+        p.decoder.invalidate()
+    }
 
     /// `RPLAYHUB_VIDEO_STALL="<packet>:<seconds>[:<count>]"` stops reading the socket for
     /// <seconds> before each of the <count> packets starting at <packet> (count defaults to 1).
@@ -92,6 +130,10 @@ final class VideoStream {
     func stop() {
         stopping = true
         socket.shutdownAndClose()
+        pipelinesLock.lock()
+        let all = Array(pipelines.values)
+        pipelinesLock.unlock()
+        all.forEach { $0.decoder.invalidate() }
         decoder.invalidate()
     }
 
@@ -138,7 +180,7 @@ final class VideoStream {
 
                 packetsReceived += 1
                 bytesReceived += VideoPacketHeader.size + payload.count
-                lastHeader = header
+                if header.displayId == primaryDisplayId { lastHeader = header }
                 publishGeometry(header)
                 handle(header: header, payload: payload)
             }
@@ -181,26 +223,24 @@ final class VideoStream {
             return "protocol desync: implausible orientation \(header.displayOrientation)"
                 + "/\(header.displayOrientationCorrection)"
         }
-        // Each display's streamer numbers its own frames, so switching displays legitimately
-        // resets the count; within one display the sequence stays nearly monotonic.
-        if header.displayId != lastDisplayId {
-            lastDisplayId = header.displayId
-            lastFrameNumber = nil
-        }
-        if let last = lastFrameNumber,
+        // Each display's streamer numbers its own frames; within one display the sequence stays
+        // nearly monotonic.
+        let p = pipeline(for: header.displayId)
+        if let last = p.lastFrameNumber,
            !(header.frameNumber >= last && header.frameNumber <= last &+ 64) {
             return "protocol desync: frame number jumped \(last) → \(header.frameNumber)"
         }
-        lastFrameNumber = header.frameNumber
+        p.lastFrameNumber = header.frameNumber
         return nil
     }
 
     /// Only on change — the header is identical on every frame of a still screen, and posting it
     /// to the main queue at the frame rate would be pure overhead.
     private func publishGeometry(_ header: VideoPacketHeader) {
+        let p = pipeline(for: header.displayId)
         let now = (header.displayWidth, header.displayHeight, header.displayOrientation)
-        if let last = lastGeometry, last == now { return }
-        lastGeometry = now
+        if let last = p.lastGeometry, last == now { return }
+        p.lastGeometry = now
         DispatchQueue.main.async { [weak self] in self?.onGeometry?(header) }
     }
 
@@ -208,6 +248,7 @@ final class VideoStream {
         guard !payload.isEmpty else { return }
         let nals = AnnexB.split(payload)
         guard !nals.isEmpty else { return }
+        let p = pipeline(for: header.displayId)
 
         var picture: [Data] = []
         var sawKeyframe = false
@@ -216,8 +257,8 @@ final class VideoStream {
         for nal in nals where nal.count > codec.headerLength {
             let type = codec.nalType(nal)
             if codec.isParameterSet(type) {
-                if parameterSets[type] != nal {
-                    parameterSets[type] = nal
+                if p.parameterSets[type] != nal {
+                    p.parameterSets[type] = nal
                     newParameterSet = true
                 }
                 continue
@@ -229,37 +270,38 @@ final class VideoStream {
 
         // A changed parameter set means a new resolution: rebuild the format description, and
         // make the decoder rebuild its session against it on the next access unit.
-        if newParameterSet { rebuildFormat() }
+        if newParameterSet { rebuildFormat(p, displayId: header.displayId) }
 
         // A config packet (presentation timestamp zero) carries parameter sets and no picture.
         guard !picture.isEmpty else { return }
 
         if sawKeyframe {
-            awaitingKeyframe = false
-        } else if awaitingKeyframe {
-            framesBeforeKeyframe += 1
+            p.awaitingKeyframe = false
+        } else if p.awaitingKeyframe {
+            p.framesBeforeKeyframe += 1
             return
         }
 
-        guard let format else { return }
-        guard let sample = makeSampleBuffer(AnnexB.lengthPrefixed(picture), format: format) else {
+        guard let format = p.format else { return }
+        guard let sample = makeSampleBuffer(AnnexB.lengthPrefixed(picture), format: format,
+                                            pipeline: p) else {
             return
         }
-        let status = decoder.decode(sample)
+        let status = p.decoder.decode(sample)
         if status == kVTVideoDecoderBadDataErr {
             // The data was bad, not the session — rebuilding it would not help. What does help
             // is a clean restart of the reference chain: drop everything until the next IRAP
             // instead of decoding damaged pictures against damaged pictures.
-            awaitingKeyframe = true
+            p.awaitingKeyframe = true
         }
         framesEnqueued += 1
     }
 
     // MARK: - format description
 
-    private func rebuildFormat() {
+    private func rebuildFormat(_ p: Pipeline, displayId: Int32) {
         let wanted = codec.parameterSetTypes
-        let sets = wanted.compactMap { parameterSets[$0] }
+        let sets = wanted.compactMap { p.parameterSets[$0] }
         guard sets.count == wanted.count else { return }   // still waiting for one
 
         var desc: CMVideoFormatDescription?
@@ -288,14 +330,15 @@ final class VideoStream {
             AppBuild.log("could not build \(codec.rawValue) format description (status \(status))")
             return
         }
-        format = desc
+        p.format = desc
         // Fresh parameter sets mean the reference chain restarts; wait for the IRAP that goes
         // with them rather than feeding the new session the tail of the old GOP.
-        awaitingKeyframe = true
+        p.awaitingKeyframe = true
         let dims = CMVideoFormatDescriptionGetDimensions(desc)
         let size = CGSize(width: CGFloat(dims.width), height: CGFloat(dims.height))
-        AppBuild.log("coded frame is \(Int(size.width))x\(Int(size.height)) \(codec.rawValue)")
-        DispatchQueue.main.async { [weak self] in self?.onFormat?(size) }
+        AppBuild.log("coded frame is \(Int(size.width))x\(Int(size.height)) \(codec.rawValue)"
+                     + (displayId == 0 ? "" : " (display \(displayId))"))
+        DispatchQueue.main.async { [weak self] in self?.onFormat?(displayId, size) }
     }
 
     /// Hold every parameter set as a C pointer for the duration of one call, rather than nesting
@@ -321,8 +364,8 @@ final class VideoStream {
         }
     }
 
-    private func makeSampleBuffer(_ payload: Data,
-                                  format: CMVideoFormatDescription) -> CMSampleBuffer? {
+    private func makeSampleBuffer(_ payload: Data, format: CMVideoFormatDescription,
+                                  pipeline p: Pipeline) -> CMSampleBuffer? {
         var block: CMBlockBuffer?
         var status = CMBlockBufferCreateWithMemoryBlock(
             allocator: kCFAllocatorDefault,
@@ -349,9 +392,9 @@ final class VideoStream {
         // timing. The agent's own presentation timestamps are not used for the same reason.
         var timing = CMSampleTimingInfo(
             duration: CMTime(value: 1, timescale: 60),
-            presentationTimeStamp: CMTime(value: framesSubmitted, timescale: 60),
+            presentationTimeStamp: CMTime(value: p.framesSubmitted, timescale: 60),
             decodeTimeStamp: .invalid)
-        framesSubmitted += 1
+        p.framesSubmitted += 1
 
         var sample: CMSampleBuffer?
         var size = payload.count

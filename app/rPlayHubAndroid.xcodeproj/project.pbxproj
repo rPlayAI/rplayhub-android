@@ -27,28 +27,29 @@
 		1A0000000000000000001024 /* FinderMount.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001023 /* FinderMount.swift */; };
 		1A0000000000000000001026 /* FrameRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001025 /* FrameRecorder.swift */; };
 		1A0000000000000000001028 /* FusionTitlebar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001027 /* FusionTitlebar.swift */; };
-		1A000000000000000000102A /* IconTabBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001029 /* IconTabBar.swift */; };
-		1A000000000000000000102C /* InspectorPane.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000000000000000000102B /* InspectorPane.swift */; };
-		1A000000000000000000102E /* LogcatPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000000000000000000102D /* LogcatPanel.swift */; };
-		1A0000000000000000001030 /* LogcatWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000000000000000000102F /* LogcatWindow.swift */; };
-		1A0000000000000000001032 /* MirrorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001031 /* MirrorView.swift */; };
-		1A0000000000000000001034 /* Palette.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001033 /* Palette.swift */; };
-		1A0000000000000000001036 /* ScreenWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001035 /* ScreenWindow.swift */; };
-		1A0000000000000000001038 /* SensorStream.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001037 /* SensorStream.swift */; };
-		1A000000000000000000103A /* SettingsPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001039 /* SettingsPanel.swift */; };
-		1A000000000000000000103C /* TCPSocket.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000000000000000000103B /* TCPSocket.swift */; };
-		1A000000000000000000103E /* TwinView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000000000000000000103D /* TwinView.swift */; };
-		1A0000000000000000001040 /* VideoDecoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000000000000000000103F /* VideoDecoder.swift */; };
-		1A0000000000000000001042 /* VideoPacket.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001041 /* VideoPacket.swift */; };
-		1A0000000000000000001044 /* VideoStream.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001043 /* VideoStream.swift */; };
-		1A0000000000000000001046 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001045 /* main.swift */; };
+		1A000000000000000000102A /* FusionWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001029 /* FusionWindow.swift */; };
+		1A000000000000000000102C /* IconTabBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000000000000000000102B /* IconTabBar.swift */; };
+		1A000000000000000000102E /* InspectorPane.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000000000000000000102D /* InspectorPane.swift */; };
+		1A0000000000000000001030 /* LogcatPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000000000000000000102F /* LogcatPanel.swift */; };
+		1A0000000000000000001032 /* LogcatWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001031 /* LogcatWindow.swift */; };
+		1A0000000000000000001034 /* MirrorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001033 /* MirrorView.swift */; };
+		1A0000000000000000001036 /* Palette.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001035 /* Palette.swift */; };
+		1A0000000000000000001038 /* ScreenWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001037 /* ScreenWindow.swift */; };
+		1A000000000000000000103A /* SensorStream.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001039 /* SensorStream.swift */; };
+		1A000000000000000000103C /* SettingsPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000000000000000000103B /* SettingsPanel.swift */; };
+		1A000000000000000000103E /* TCPSocket.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000000000000000000103D /* TCPSocket.swift */; };
+		1A0000000000000000001040 /* TwinView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000000000000000000103F /* TwinView.swift */; };
+		1A0000000000000000001042 /* VideoDecoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001041 /* VideoDecoder.swift */; };
+		1A0000000000000000001044 /* VideoPacket.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001043 /* VideoPacket.swift */; };
+		1A0000000000000000001046 /* VideoStream.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001045 /* VideoStream.swift */; };
+		1A0000000000000000001048 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001047 /* main.swift */; };
 		1A0000000000000000008002 /* FileProviderExtension.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000008001 /* FileProviderExtension.swift */; };
 		1A0000000000000000008004 /* PathIndex.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000008003 /* PathIndex.swift */; };
 		1A0000000000000000008006 /* PhoneEnumerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000008005 /* PhoneEnumerator.swift */; };
 		1A0000000000000000008008 /* PhoneItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000008007 /* PhoneItem.swift */; };
 		1A0000000000000000008009 /* Adb.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001001 /* Adb.swift */; };
 		1A000000000000000000800A /* AdbFiles.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001003 /* AdbFiles.swift */; };
-		1A000000000000000000800B /* TCPSocket.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000000000000000000103B /* TCPSocket.swift */; };
+		1A000000000000000000800B /* TCPSocket.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000000000000000000103D /* TCPSocket.swift */; };
 		1A0000000000000000002004 /* AppIcon.icns in Resources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000002003 /* AppIcon.icns */; };
 		1A000000000000000000700E /* FinderMount.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000007003 /* FinderMount.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
@@ -98,21 +99,22 @@
 		1A0000000000000000001023 /* FinderMount.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FinderMount.swift; sourceTree = "<group>"; };
 		1A0000000000000000001025 /* FrameRecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FrameRecorder.swift; sourceTree = "<group>"; };
 		1A0000000000000000001027 /* FusionTitlebar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FusionTitlebar.swift; sourceTree = "<group>"; };
-		1A0000000000000000001029 /* IconTabBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IconTabBar.swift; sourceTree = "<group>"; };
-		1A000000000000000000102B /* InspectorPane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InspectorPane.swift; sourceTree = "<group>"; };
-		1A000000000000000000102D /* LogcatPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogcatPanel.swift; sourceTree = "<group>"; };
-		1A000000000000000000102F /* LogcatWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogcatWindow.swift; sourceTree = "<group>"; };
-		1A0000000000000000001031 /* MirrorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MirrorView.swift; sourceTree = "<group>"; };
-		1A0000000000000000001033 /* Palette.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Palette.swift; sourceTree = "<group>"; };
-		1A0000000000000000001035 /* ScreenWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenWindow.swift; sourceTree = "<group>"; };
-		1A0000000000000000001037 /* SensorStream.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SensorStream.swift; sourceTree = "<group>"; };
-		1A0000000000000000001039 /* SettingsPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsPanel.swift; sourceTree = "<group>"; };
-		1A000000000000000000103B /* TCPSocket.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TCPSocket.swift; sourceTree = "<group>"; };
-		1A000000000000000000103D /* TwinView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TwinView.swift; sourceTree = "<group>"; };
-		1A000000000000000000103F /* VideoDecoder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoDecoder.swift; sourceTree = "<group>"; };
-		1A0000000000000000001041 /* VideoPacket.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoPacket.swift; sourceTree = "<group>"; };
-		1A0000000000000000001043 /* VideoStream.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoStream.swift; sourceTree = "<group>"; };
-		1A0000000000000000001045 /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
+		1A0000000000000000001029 /* FusionWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FusionWindow.swift; sourceTree = "<group>"; };
+		1A000000000000000000102B /* IconTabBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IconTabBar.swift; sourceTree = "<group>"; };
+		1A000000000000000000102D /* InspectorPane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InspectorPane.swift; sourceTree = "<group>"; };
+		1A000000000000000000102F /* LogcatPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogcatPanel.swift; sourceTree = "<group>"; };
+		1A0000000000000000001031 /* LogcatWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogcatWindow.swift; sourceTree = "<group>"; };
+		1A0000000000000000001033 /* MirrorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MirrorView.swift; sourceTree = "<group>"; };
+		1A0000000000000000001035 /* Palette.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Palette.swift; sourceTree = "<group>"; };
+		1A0000000000000000001037 /* ScreenWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenWindow.swift; sourceTree = "<group>"; };
+		1A0000000000000000001039 /* SensorStream.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SensorStream.swift; sourceTree = "<group>"; };
+		1A000000000000000000103B /* SettingsPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsPanel.swift; sourceTree = "<group>"; };
+		1A000000000000000000103D /* TCPSocket.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TCPSocket.swift; sourceTree = "<group>"; };
+		1A000000000000000000103F /* TwinView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TwinView.swift; sourceTree = "<group>"; };
+		1A0000000000000000001041 /* VideoDecoder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoDecoder.swift; sourceTree = "<group>"; };
+		1A0000000000000000001043 /* VideoPacket.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoPacket.swift; sourceTree = "<group>"; };
+		1A0000000000000000001045 /* VideoStream.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoStream.swift; sourceTree = "<group>"; };
+		1A0000000000000000001047 /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
 		1A0000000000000000002001 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		1A0000000000000000002003 /* AppIcon.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = AppIcon.icns; sourceTree = "<group>"; };
 		1A0000000000000000002002 /* rPlayHubAndroid.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = rPlayHubAndroid.entitlements; sourceTree = "<group>"; };
@@ -176,21 +178,22 @@
 				1A0000000000000000001023 /* FinderMount.swift */,
 				1A0000000000000000001025 /* FrameRecorder.swift */,
 				1A0000000000000000001027 /* FusionTitlebar.swift */,
-				1A0000000000000000001029 /* IconTabBar.swift */,
-				1A000000000000000000102B /* InspectorPane.swift */,
-				1A000000000000000000102D /* LogcatPanel.swift */,
-				1A000000000000000000102F /* LogcatWindow.swift */,
-				1A0000000000000000001031 /* MirrorView.swift */,
-				1A0000000000000000001033 /* Palette.swift */,
-				1A0000000000000000001035 /* ScreenWindow.swift */,
-				1A0000000000000000001037 /* SensorStream.swift */,
-				1A0000000000000000001039 /* SettingsPanel.swift */,
-				1A000000000000000000103B /* TCPSocket.swift */,
-				1A000000000000000000103D /* TwinView.swift */,
-				1A000000000000000000103F /* VideoDecoder.swift */,
-				1A0000000000000000001041 /* VideoPacket.swift */,
-				1A0000000000000000001043 /* VideoStream.swift */,
-				1A0000000000000000001045 /* main.swift */,
+				1A0000000000000000001029 /* FusionWindow.swift */,
+				1A000000000000000000102B /* IconTabBar.swift */,
+				1A000000000000000000102D /* InspectorPane.swift */,
+				1A000000000000000000102F /* LogcatPanel.swift */,
+				1A0000000000000000001031 /* LogcatWindow.swift */,
+				1A0000000000000000001033 /* MirrorView.swift */,
+				1A0000000000000000001035 /* Palette.swift */,
+				1A0000000000000000001037 /* ScreenWindow.swift */,
+				1A0000000000000000001039 /* SensorStream.swift */,
+				1A000000000000000000103B /* SettingsPanel.swift */,
+				1A000000000000000000103D /* TCPSocket.swift */,
+				1A000000000000000000103F /* TwinView.swift */,
+				1A0000000000000000001041 /* VideoDecoder.swift */,
+				1A0000000000000000001043 /* VideoPacket.swift */,
+				1A0000000000000000001045 /* VideoStream.swift */,
+				1A0000000000000000001047 /* main.swift */,
 				1A0000000000000000002003 /* AppIcon.icns */,
 				1A0000000000000000002001 /* Info.plist */,
 				1A0000000000000000002002 /* rPlayHubAndroid.entitlements */,
@@ -331,21 +334,22 @@
 				1A0000000000000000001024 /* FinderMount.swift in Sources */,
 				1A0000000000000000001026 /* FrameRecorder.swift in Sources */,
 				1A0000000000000000001028 /* FusionTitlebar.swift in Sources */,
-				1A000000000000000000102A /* IconTabBar.swift in Sources */,
-				1A000000000000000000102C /* InspectorPane.swift in Sources */,
-				1A000000000000000000102E /* LogcatPanel.swift in Sources */,
-				1A0000000000000000001030 /* LogcatWindow.swift in Sources */,
-				1A0000000000000000001032 /* MirrorView.swift in Sources */,
-				1A0000000000000000001034 /* Palette.swift in Sources */,
-				1A0000000000000000001036 /* ScreenWindow.swift in Sources */,
-				1A0000000000000000001038 /* SensorStream.swift in Sources */,
-				1A000000000000000000103A /* SettingsPanel.swift in Sources */,
-				1A000000000000000000103C /* TCPSocket.swift in Sources */,
-				1A000000000000000000103E /* TwinView.swift in Sources */,
-				1A0000000000000000001040 /* VideoDecoder.swift in Sources */,
-				1A0000000000000000001042 /* VideoPacket.swift in Sources */,
-				1A0000000000000000001044 /* VideoStream.swift in Sources */,
-				1A0000000000000000001046 /* main.swift in Sources */,
+				1A000000000000000000102A /* FusionWindow.swift in Sources */,
+				1A000000000000000000102C /* IconTabBar.swift in Sources */,
+				1A000000000000000000102E /* InspectorPane.swift in Sources */,
+				1A0000000000000000001030 /* LogcatPanel.swift in Sources */,
+				1A0000000000000000001032 /* LogcatWindow.swift in Sources */,
+				1A0000000000000000001034 /* MirrorView.swift in Sources */,
+				1A0000000000000000001036 /* Palette.swift in Sources */,
+				1A0000000000000000001038 /* ScreenWindow.swift in Sources */,
+				1A000000000000000000103A /* SensorStream.swift in Sources */,
+				1A000000000000000000103C /* SettingsPanel.swift in Sources */,
+				1A000000000000000000103E /* TCPSocket.swift in Sources */,
+				1A0000000000000000001040 /* TwinView.swift in Sources */,
+				1A0000000000000000001042 /* VideoDecoder.swift in Sources */,
+				1A0000000000000000001044 /* VideoPacket.swift in Sources */,
+				1A0000000000000000001046 /* VideoStream.swift in Sources */,
+				1A0000000000000000001048 /* main.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

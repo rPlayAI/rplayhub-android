@@ -23,11 +23,14 @@ enum AppBuild {
         set { UserDefaults.standard.set(newValue, forKey: "TwinEnabled") }
     }
 
-    static let stamp: String = {
+    private static let stampFormatter: DateFormatter = {
         let f = DateFormatter()
         f.dateFormat = "yyyy-MM-dd HH:mm:ss"
-        return f.string(from: Date())
+        return f
     }()
+
+    /// Now, for a log line. (Was a `let`, so every line carried the launch time.)
+    static var stamp: String { stampFormatter.string(from: Date()) }
 
     private static let handle: FileHandle? = {
         guard let dir = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask).first
