@@ -755,6 +755,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             strip.isHidden = !visible
             stripTopToMirror?.isActive = visible
             mirrorBottomToStage?.isActive = !visible
+            // The raw window is only as wide as the phone, which is too narrow for the control
+            // strip's buttons — widen it while the strip is up, and give the width back after.
+            widenForStrip(w, visible: visible)
         }
 
         let changed = visible != fusionChromeShown
@@ -769,6 +772,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             for b in lights { b?.animator().alphaValue = a }
             self.fusionTitlebar?.view.animator().alphaValue = a
         }
+    }
+
+    /// Grow the standalone window to fit the control strip when it appears, and shrink back to the
+    /// phone's width when it goes. Anchored at the top-left so the window doesn't wander.
+    private func widenForStrip(_ w: NSWindow, visible: Bool) {
+        guard nakedPictureSize.width > 0 else { return }
+        let wanted = visible
+            ? max(nakedPictureSize.width, strip.fittingSize.width + 24)
+            : nakedPictureSize.width
+        guard abs(w.frame.width - wanted) > 1 else { return }
+        let top = w.frame.maxY, left = w.frame.minX
+        var f = w.frame
+        f.size.width = wanted
+        f.origin = NSPoint(x: left, y: top - f.height)
+        w.setFrame(f, display: true)
     }
 
     /// Poll the cursor while a naked window is up: chrome appears when it nears the top edge, hides
