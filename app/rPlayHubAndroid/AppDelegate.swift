@@ -476,6 +476,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         video.onGeometry = { [weak self] header in
             guard let self else { return }
             let id = header.displayId
+            // A packet still arriving for a fusion display we just closed: drop it, so the stage
+            // does not adopt the destroyed display's geometry.
+            if self.closedFusionDisplays.contains(id) { return }
             if let fw = self.fusionWindows[id] {
                 fw.mirror.apply(header: header)
                 return
@@ -512,6 +515,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         currentDisplayId = 0
         mirror.displayId = 0
         createdDisplayIds = []           // virtual displays die with the previous agent
+        closedFusionDisplays = []        // and so does any memory of closed ones
         closeDisplayItem?.isHidden = true
         inspector.apps.launchDisplayId = 0
         session.control?.onDisplays = { [weak self] displays in
@@ -534,6 +538,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Every virtual display that has a window of its own, by display id. The main stage keeps
     /// the phone's display; these run beside it, as many as the user opens.
     private var fusionWindows: [Int32: FusionWindow] = [:]
+    /// Display ids whose fusion window has closed (and the display destroyed). A few video
+    /// packets can still be in flight for such a display; without this the main stage would
+    /// adopt that dead display's geometry (e.g. a 1920×1080 fusion display leaks its landscape
+    /// size onto the portrait phone mirror). Ignored on arrival.
+    private var closedFusionDisplays: Set<Int32> = []
     private var fusionWindowsOpened = 0     // for cascading new windows
     private var debugFused = false
     /// Polls the cursor to reveal the naked window's chrome near the top edge (a timer, not a
@@ -906,6 +915,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if fw.recorder.isRecording { toggleFusionRecording(fw) }
         session?.control?.send(ControlMessage.destroyNewDisplay(displayId: id))
         session?.video?.forgetDisplay(id)
+        closedFusionDisplays.insert(id)
         createdDisplayIds.remove(id)
         closeDisplayItem?.isHidden = fusionWindows.isEmpty
             && !createdDisplayIds.contains(currentDisplayId)
