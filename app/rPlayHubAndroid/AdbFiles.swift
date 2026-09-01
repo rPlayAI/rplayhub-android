@@ -247,6 +247,14 @@ extension Adb {
 
     /// Install an APK: push it to a staging path, `pm install -r`, then clean up. This is what
     /// `adb install` does, and doing it ourselves keeps everything on the one socket protocol.
+    /// Is a package present on the device?
+    static func isInstalled(_ serial: String, package: String) -> Bool {
+        let out = (try? shell(serial, "pm list packages \(package)")) ?? ""
+        return out.split(separator: "\n").contains {
+            $0.trimmingCharacters(in: .whitespaces) == "package:\(package)"
+        }
+    }
+
     static func install(_ serial: String, apkPath: String) throws {
         let staged = "/data/local/tmp/rplayhub-install-\(UUID().uuidString.prefix(8)).apk"
         try push(serial, localPath: apkPath, remotePath: staged, mode: 0o644)

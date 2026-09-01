@@ -235,6 +235,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         sidebar.isMirroring = { [weak self] in self?.mirrorRevealed ?? false }
         sidebar.onDesktopMode = { [weak self] device in self?.requestDesktopMode(on: device) }
         sidebar.onShowInFinder = { device in FinderMount.reveal(serial: device.serial) }
+        sidebar.onInstallCompanion = { [weak self] device in self?.installCompanion(on: device) }
         mirror.onViewScreen = { [weak self] in
             guard let self else { return }
             // Fall back to the only device there is. Requiring a selection when there is
@@ -1716,6 +1717,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                         action: #selector(showInFinder), keyEquivalent: "e")
         finder.keyEquivalentModifierMask = [.command, .shift]
         finder.target = self
+        deviceMenu.addItem(withTitle: "Install Companion App on Device",
+                           action: #selector(installCompanionFromMenu), keyEquivalent: "").target = self
         deviceMenu.addItem(.separator())
         deviceMenu.addItem(withTitle: "Refresh Devices", action: #selector(refreshFromMenu),
                            keyEquivalent: "r").target = self
@@ -1867,6 +1870,58 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// The phone's storage as a Finder location — where a photo gets dragged out of.
+    /// The bundled companion APK (ai.rplay.rplayhub.share), or the built one in dev.
+    static let companionPackage = ShareInbox.helperPackage
+    private func companionApkPath() -> String? {
+        let candidates = [
+            Bundle.main.resourceURL?.appendingPathComponent("companion.apk").path,
+            NSString(string: "~/rplay-hub-android/helper/app/build/outputs/apk/debug/app-debug.apk")
+                .expandingTildeInPath,
+        ].compactMap { $0 }
+        return candidates.first { FileManager.default.fileExists(atPath: $0) }
+    }
+
+    @objc private func installCompanionFromMenu() {
+        let ready = sidebar.devices.filter { $0.isReady }
+        guard let device = sidebar.selected ?? (ready.count == 1 ? ready.first : nil) else {
+            present(message: "No device selected", detail: "Pick a device in the sidebar first.")
+            return
+        }
+        installCompanion(on: device)
+    }
+
+    /// Install (or update) the companion Share app on the device, then tell the user how to use
+    /// it. Bundled in the app, so no adb by hand.
+    private func installCompanion(on device: AdbDevice) {
+        guard device.isReady else {
+            present(message: "\(device.displayName) is \(device.state)",
+                    detail: "The device is not ready for adb commands.")
+            return
+        }
+        guard let apk = companionApkPath() else {
+            present(message: "Companion app not bundled",
+                    detail: "This build has no companion APK. Build it with tools/build-helper.sh.")
+            return
+        }
+        window.subtitle = "installing companion app"
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            do {
+                try Adb.install(device.serial, apkPath: apk)
+                DispatchQueue.main.async {
+                    self?.window.subtitle = ""
+                    self?.present(message: "rPlayHub Share installed on \(device.displayName)",
+                                  detail: "In any app on the phone, tap Share ▸ Send to Mac. "
+                                        + "The item appears here, ready to drag out.")
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    self?.window.subtitle = ""
+                    self?.present(message: "Couldn't install the companion app", detail: "\(error)")
+                }
+            }
+        }
+    }
+
     @objc private func showInFinder() {
         let ready = sidebar.devices.filter { $0.isReady }
         guard let device = sidebar.selected ?? (ready.count == 1 ? ready.first : nil) else {

@@ -20,6 +20,8 @@ final class DeviceSidebar: NSView {
     var onDesktopMode: ((AdbDevice) -> Void)?
     /// Open the device's storage in Finder.
     var onShowInFinder: ((AdbDevice) -> Void)?
+    /// Install the companion Share app on the device.
+    var onInstallCompanion: ((AdbDevice) -> Void)?
     /// Whether a mirror session is currently live — drives the toggle entry's title/behaviour.
     var isMirroring: (() -> Bool)?
 
@@ -147,6 +149,8 @@ final class DeviceSidebar: NSView {
                      keyEquivalent: "").target = self
         menu.addItem(withTitle: "Show Files in Finder", action: #selector(showInFinderFromMenu),
                      keyEquivalent: "").target = self
+        menu.addItem(withTitle: "Install Companion App", action: #selector(installCompanionFromMenu),
+                     keyEquivalent: "").target = self
         menu.addItem(.separator())
         menu.addItem(withTitle: "Copy Serial", action: #selector(copySerial), keyEquivalent: "")
             .target = self
@@ -269,6 +273,10 @@ final class DeviceSidebar: NSView {
 
     @objc private func showInFinderFromMenu() {
         if let device = clickedOrSelected() { onShowInFinder?(device) }
+    }
+
+    @objc private func installCompanionFromMenu() {
+        if let device = clickedOrSelected() { onInstallCompanion?(device) }
     }
 
     @objc private func desktopModeFromMenu() {

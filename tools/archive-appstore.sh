@@ -27,6 +27,12 @@ AGENT_DIR="${RPLAYHUB_AGENT_DIR:-$ROOT/build/agent}"
 [ -f "$AGENT_DIR/screen-sharing-agent.jar" ] || {
     echo "archive-appstore: no built agent at $AGENT_DIR — run tools/build-agent.sh" >&2; exit 1; }
 
+COMPANION="$ROOT/helper/app/build/outputs/apk/debug/app-debug.apk"
+if [ ! -f "$COMPANION" ]; then
+    echo "archive-appstore: building the companion apk"
+    "$ROOT/tools/build-helper.sh"
+fi
+
 echo "archive-appstore: regenerating the project"
 python3 "$ROOT/tools/gen-xcodeproj.py" >/dev/null
 

@@ -90,6 +90,12 @@ for c in "${ANDROID_HOME:-}/platform-tools/adb" \
 done
 if [[ -n "$ADB_BIN" ]]; then
     cp "$ADB_BIN" "$APP/Contents/MacOS/adb"
+fi
+COMPANION="$ROOT/helper/app/build/outputs/apk/debug/app-debug.apk"
+if [[ -f "$COMPANION" ]]; then
+    cp "$COMPANION" "$APP/Contents/Resources/companion.apk"
+else
+    say "note: no companion apk (tools/build-helper.sh) — Install Companion App will be unavailable"
 else
     say "WARNING: no adb binary found to bundle — the target machine will need platform-tools"
 fi

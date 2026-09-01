@@ -138,6 +138,12 @@ if [ -n "$ADB" ]; then
   codesign --force --sign "${EXPANDED_CODE_SIGN_IDENTITY:--}" --options runtime --entitlements "$ROOT/app/rPlayHubAndroid/adb-inherit.entitlements" "$APP/Contents/MacOS/adb"
 else
   echo "warning: no adb binary found to bundle"
+fi
+COMPANION="$ROOT/helper/app/build/outputs/apk/debug/app-debug.apk"
+if [ -f "$COMPANION" ]; then
+  cp "$COMPANION" "$APP/Contents/Resources/companion.apk"
+else
+  echo "warning: no companion apk (run tools/build-helper.sh) - Install Companion App will be unavailable"
 fi'''
 SHELL_SCRIPT = (SHELL_SCRIPT_RAW.replace(chr(92), chr(92)*2)
                 .replace(chr(34), chr(92)+chr(34)).replace(chr(10), chr(92)+'n'))
