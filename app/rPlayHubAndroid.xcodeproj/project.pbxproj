@@ -433,7 +433,7 @@
 		1A0000000000000000006005 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				CODE_SIGN_ENTITLEMENTS = rPlayHubAndroid/rPlayHubAndroid.entitlements;
+				CODE_SIGN_ENTITLEMENTS = rPlayHubAndroid/rPlayHubAndroid-dev.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;

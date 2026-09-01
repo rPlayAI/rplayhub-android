@@ -88,8 +88,7 @@ common = """				ALWAYS_SEARCH_USER_PATHS = NO;
 				SDKROOT = macosx;
 				SWIFT_VERSION = 5.0;"""
 
-target_common = """				CODE_SIGN_ENTITLEMENTS = rPlayHubAndroid/rPlayHubAndroid.entitlements;
-				CODE_SIGN_STYLE = Automatic;
+target_common = """				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -373,6 +372,7 @@ pbx = f"""// !$*UTF8*$!
 		{CFG_TD} /* Debug */ = {{
 			isa = XCBuildConfiguration;
 			buildSettings = {{
+				CODE_SIGN_ENTITLEMENTS = rPlayHubAndroid/rPlayHubAndroid-dev.entitlements;
 {target_common}
 			}};
 			name = Debug;
@@ -380,6 +380,7 @@ pbx = f"""// !$*UTF8*$!
 		{CFG_TR} /* Release */ = {{
 			isa = XCBuildConfiguration;
 			buildSettings = {{
+				CODE_SIGN_ENTITLEMENTS = rPlayHubAndroid/rPlayHubAndroid.entitlements;
 {target_common}
 			}};
 			name = Release;

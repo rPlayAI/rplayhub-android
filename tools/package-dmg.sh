@@ -100,13 +100,16 @@ fi
 APPEX="$APP/Contents/PlugIns/FinderMount.appex"
 if [[ -n "$SIGN_ID" ]]; then
     [[ -f "$APP/Contents/Resources/adb/adb" ]] && \
-        codesign --force --sign "$SIGN_ID" --timestamp --options=runtime "$APP/Contents/Resources/adb/adb"
+        codesign --force --sign "$SIGN_ID" --timestamp --options=runtime \
+            --entitlements "$ROOT/app/rPlayHubAndroid/adb-inherit.entitlements" \
+            "$APP/Contents/Resources/adb/adb"
     [[ -d "$APPEX" ]] && \
         codesign --force --sign "$SIGN_ID" --timestamp --options=runtime \
             --preserve-metadata=entitlements "$APPEX"
     codesign --force --sign "$SIGN_ID" --timestamp --options=runtime "$APP"
 else
-    [[ -f "$APP/Contents/Resources/adb/adb" ]] && codesign --force --sign - "$APP/Contents/Resources/adb/adb"
+    [[ -f "$APP/Contents/Resources/adb/adb" ]] && codesign --force --sign - \
+        --entitlements "$ROOT/app/rPlayHubAndroid/adb-inherit.entitlements" "$APP/Contents/Resources/adb/adb"
     [[ -d "$APPEX" ]] && codesign --force --sign - --preserve-metadata=entitlements "$APPEX"
     codesign --force --sign - "$APP"
 fi

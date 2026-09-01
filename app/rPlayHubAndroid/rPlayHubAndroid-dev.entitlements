@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	  DEBUG ONLY — not sandboxed, so the dev loop can point RPLAYHUB_AGENT_DIR at an external
+	  build/agent and read it. The shipping (Release) build is sandboxed for the App Store; see
+	  rPlayHubAndroid.entitlements. Keep these two in step on the network side.
+	-->
+	<key>com.apple.security.network.client</key>
+	<true/>
+	<key>com.apple.security.network.server</key>
+	<true/>
+</dict>
+</plist>

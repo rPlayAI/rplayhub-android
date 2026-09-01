@@ -3,17 +3,23 @@
 <plist version="1.0">
 <dict>
 	<!--
-	  Not sandboxed. The app connects to the adb server on 127.0.0.1:5037 and opens its own
-	  loopback listener for the agent to dial back into; a sandboxed app can do the first with
-	  the network-client entitlement but not the second, and there is no entitlement for it.
-	  Same conclusion as ~/rplay-hub reached for a different reason (see its DISTRIBUTION.md):
-	  Developer ID and notarization, not the App Store.
+	  Sandboxed for the Mac App Store. The same shape AndroMeld ships: talk to the adb server
+	  over loopback (network.client), be the reverse-tunnel listener the agent dials back into
+	  (network.server), reach a USB-attached phone (device.usb), and read/write the files the
+	  user picks in a save/open panel plus the Downloads folder (where shared items land). The
+	  bundled adb runs as a child that inherits this sandbox — see adb-inherit.entitlements.
 	-->
 	<key>com.apple.security.app-sandbox</key>
-	<false/>
+	<true/>
 	<key>com.apple.security.network.client</key>
 	<true/>
 	<key>com.apple.security.network.server</key>
+	<true/>
+	<key>com.apple.security.device.usb</key>
+	<true/>
+	<key>com.apple.security.files.user-selected.read-write</key>
+	<true/>
+	<key>com.apple.security.files.downloads.read-write</key>
 	<true/>
 </dict>
 </plist>

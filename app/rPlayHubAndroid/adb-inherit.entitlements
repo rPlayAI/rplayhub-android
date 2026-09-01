@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- The bundled adb is a child of the sandboxed app; inherit makes it run in that same
+	     sandbox rather than being rejected. Nothing else — its powers come from the parent. -->
+	<key>com.apple.security.app-sandbox</key>
+	<true/>
+	<key>com.apple.security.inherit</key>
+	<true/>
+</dict>
+</plist>
