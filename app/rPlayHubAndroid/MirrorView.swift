@@ -105,12 +105,12 @@ final class MirrorView: NSView, NSMenuItemValidation {
     /// to the window's edge. The main stage keeps its device bezel.
     var borderless = false { didSet { if borderless != oldValue { needsLayout = true } } }
 
-    /// Naked windows paint the surround black (seamless with the phone's bezel) instead of the
-    /// Device-Hub white, so no white shows around the phone in a raw window.
+    /// Naked windows paint the surround CLEAR, so any space around the rounded picture is
+    /// transparent (the desktop shows through) rather than a white or black box.
     var nakedBackground = false {
         didSet {
             guard nakedBackground != oldValue else { return }
-            layer?.backgroundColor = (nakedBackground ? NSColor.black : NSColor.white).cgColor
+            layer?.backgroundColor = (nakedBackground ? NSColor.clear : NSColor.white).cgColor
         }
     }
 
@@ -389,6 +389,10 @@ final class MirrorView: NSView, NSMenuItemValidation {
         return ((raw % 4) + 4) % 4
     }
 
+    /// The size the picture is actually presented at (display size turned to match the frame).
+    /// A window sized to this aspect fits the mirror exactly, with no dead space around it.
+    var presentedSize: CGSize { rotatedDisplaySize }
+
     private var rotatedDisplaySize: CGSize {
         guard displaySize.width > 0 else { return CGSize(width: 9, height: 19.5) }
         // The bezel must match what is actually DRAWN, and the drawn aspect is the coded frame's,
@@ -474,7 +478,9 @@ final class MirrorView: NSView, NSMenuItemValidation {
         CATransaction.setDisableActions(true)     // no interpolation: this resizes with the pane
 
         clipLayer.frame = rect
-        clipLayer.cornerRadius = borderless ? 0 : cornerRadius(for: rect)
+        // Rounded even when borderless: the phone's screen has rounded corners, and a naked window
+        // should show that shape (with a transparent surround), not a hard rectangle.
+        clipLayer.cornerRadius = cornerRadius(for: rect)
         // Device Hub keeps a black bezel around the live screen, not a hairline — it is what
         // makes the picture read as a phone rather than as a rectangle of video. The idle
         // mockup's bezel stays proportional to its own small size.

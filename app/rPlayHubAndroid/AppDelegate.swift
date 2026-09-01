@@ -164,7 +164,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // pour all the new space into the picture, so its constraint must lose to everything.
             resting.priority = NSLayoutConstraint.Priority(pane === middle ? 250 : 700)
             resting.isActive = true
-            pane.widthAnchor.constraint(greaterThanOrEqualToConstant: width - 60).isActive = true
+            let minWidth = pane.widthAnchor.constraint(greaterThanOrEqualToConstant: width - 60)
+            minWidth.isActive = true
+            // Kept so a naked window can drop it: this floor (460pt) otherwise stops the window
+            // from shrinking to the phone's true aspect, letterboxing the picture.
+            if pane === middle { stageMinWidth = minWidth }
         }
 
         // A soft shadow cast outward from each side pane, in place of a divider line — the same
@@ -243,6 +247,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.removeFusionTitlebar()
             self.mirror.borderless = false   // the main stage gets its device bezel back
             self.mirror.nakedBackground = false   // and its Device-Hub white surround
+            self.stageMinWidth?.isActive = true   // the split view needs its width floor back
+            if let w = self.screenWindow.window { w.isOpaque = true; w.backgroundColor = .windowBackgroundColor }
             self.stageTopPad?.constant = 16
             self.stageLeadPad?.constant = 12
             self.stageTrailPad?.constant = -12
@@ -487,6 +493,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// mouse-moved monitor, which only fires while the window is key and accepts moved events).
     private var fusionHoverTimer: Timer?
     private var fusionChromeShown = false
+    /// The picture's size in a naked window; the window is resized around it so the picture never
+    /// changes size when the chrome toggles.
+    private var nakedPictureSize: NSSize = .zero
     // The stage's padding around the picture and the strip's reserved height — collapsed to zero
     // while a fusion window is up, restored when it closes.
     private var stageTopPad: NSLayoutConstraint?
@@ -494,6 +503,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var stageTrailPad: NSLayoutConstraint?
     private var stripMinHeight: NSLayoutConstraint?
     private var stripZeroHeight: NSLayoutConstraint?
+    private var stageMinWidth: NSLayoutConstraint?
 
     /// Fuse whatever app is selected in the Apps tab — the keyboard path to what the Apps-list
     /// right-click "Open on Virtual Display" does, so fusion is drivable without the mouse.
@@ -649,11 +659,52 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         w.titlebarAppearsTransparent = true
         w.titleVisibility = .hidden
         w.styleMask.insert(.fullSizeContentView)
-        w.backgroundColor = .black               // no white showing around the phone
+        // Transparent window: whatever isn't the rounded picture simply isn't drawn, so there is
+        // no white or black padding around the phone — the desktop shows through.
+        w.isOpaque = false
+        w.backgroundColor = .clear
+        w.hasShadow = true
         mirror.nakedBackground = true
+        mirror.borderless = true                 // no device bezel, no inset — the screen IS the window
+        stageMinWidth?.isActive = false          // let the window shrink to the phone's true aspect
         fusionChromeShown = true                 // force the first setFusionChrome to take effect
         setFusionChrome(visible: false, animated: false)
         installFusionHover()
+    }
+
+    /// Size a naked window's content to EXACTLY the mirror's presented aspect, so the picture fills
+    /// it with no dead space — portrait phone → portrait window, rotated → landscape.
+    private func sizeWindowToMirror(_ w: NSWindow) {
+        let p = mirror.presentedSize
+        let longest: CGFloat = 820
+        let picture: NSSize
+        if p.width > 0, p.height > 0 {
+            picture = p.height >= p.width
+                ? NSSize(width: (longest * p.width / p.height).rounded(), height: longest)
+                : NSSize(width: longest, height: (longest * p.height / p.width).rounded())
+        } else {
+            picture = NSSize(width: 380, height: 820)
+        }
+        nakedPictureSize = picture
+        applyNakedLayout(chromeVisible: fusionChromeShown)
+    }
+
+    /// Keep the PICTURE the same size in both modes by resizing the window around it: in raw mode
+    /// the content is exactly the picture; when the chrome comes back, the window grows by the
+    /// title bar (outside the content) and the control strip (inside it), anchored at the top-left
+    /// so the picture doesn't jump. Without this the bars eat into the picture and letterbox it.
+    private func applyNakedLayout(chromeVisible: Bool) {
+        guard let w = screenWindow.window, nakedPictureSize.width > 0 else { return }
+        let stripHeight: CGFloat = (chromeVisible && fusionTitlebar == nil)
+            ? max(strip.fittingSize.height, 50) : 0
+        let content = NSSize(width: nakedPictureSize.width,
+                             height: nakedPictureSize.height + stripHeight)
+        let top = w.frame.maxY
+        let left = w.frame.minX
+        w.setContentSize(content)
+        var f = w.frame                       // frame now includes the title bar when shown
+        f.origin = NSPoint(x: left, y: top - f.height)
+        w.setFrame(f, display: true)
     }
 
     /// Fully show/hide the naked window's chrome — the three traffic lights AND our accessory — as
@@ -667,16 +718,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // the picture fills everything) and the traditional window (a real title-bar strip above
         // the picture, app name, traffic lights, and our controls) — the same window that existed
         // before raw mode. Enforced every call because macOS restores chrome on activation.
-        if visible { w.styleMask.remove(.fullSizeContentView) }
-        else { w.styleMask.insert(.fullSizeContentView) }
-        w.titlebarAppearsTransparent = !visible
+        // fullSizeContentView stays ON in both modes so the WINDOW NEVER CHANGES SIZE: the title
+        // bar floats over the top of the picture when shown, rather than pushing it down.
+        w.styleMask.insert(.fullSizeContentView)
+        w.titlebarAppearsTransparent = true
         w.titleVisibility = visible ? .visible : .hidden
         for b in lights { b?.isHidden = !visible }
         fusionTitlebar?.view.isHidden = !visible
         // For the plain mirror pop-out (no fusion accessory), the bottom control strip is a "bar"
         // too — hide it in raw mode so only the phone shows, bring it back on approach. In fusion
         // the strip stays hidden either way (it drives the phone, not the fused app).
-        if fusionTitlebar == nil { strip.isHidden = !visible }
+        if fusionTitlebar == nil {
+            strip.isHidden = !visible
+            stripZeroHeight?.isActive = !visible    // and give up its reserved band in raw mode
+        }
 
         let changed = visible != fusionChromeShown
         fusionChromeShown = visible
@@ -1684,20 +1739,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         screenWindow.open(stage: stage, from: splitView, title: window.title, tabbedWith: nil)
         if let w = screenWindow.window {
             applyNakedChrome(to: w)
-            // Size follows the mirroring: match the stream's aspect (portrait phone → portrait
-            // window; rotated → landscape), so the phone fills the window with no dead space.
-            let vs = mirror.videoSize
-            if vs.width > 0, vs.height > 0 {
-                if vs.width > vs.height {
-                    let w0: CGFloat = 900
-                    w.setContentSize(NSSize(width: w0, height: (w0 * vs.height / vs.width).rounded()))
-                } else {
-                    let h0: CGFloat = 820
-                    w.setContentSize(NSSize(width: (h0 * vs.width / vs.height).rounded(), height: h0))
-                }
-            } else {
-                w.setContentSize(NSSize(width: 380, height: 820))
-            }
+            sizeWindowToMirror(w)
             w.center()
         }
     }
