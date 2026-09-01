@@ -242,6 +242,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.strip.isHidden = false
             self.removeFusionTitlebar()
             self.mirror.borderless = false   // the main stage gets its device bezel back
+            self.mirror.nakedBackground = false   // and its Device-Hub white surround
             self.stageTopPad?.constant = 16
             self.stageLeadPad?.constant = 12
             self.stageTrailPad?.constant = -12
@@ -648,6 +649,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         w.titlebarAppearsTransparent = true
         w.titleVisibility = .hidden
         w.styleMask.insert(.fullSizeContentView)
+        w.backgroundColor = .black               // no white showing around the phone
+        mirror.nakedBackground = true
         fusionChromeShown = true                 // force the first setFusionChrome to take effect
         setFusionChrome(visible: false, animated: false)
         installFusionHover()
@@ -1681,12 +1684,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         screenWindow.open(stage: stage, from: splitView, title: window.title, tabbedWith: nil)
         if let w = screenWindow.window {
             applyNakedChrome(to: w)
-            // Size to the phone: a snug portrait window, not a big landscape frame with empty
-            // sides. Match the mirror's aspect when known, else a sensible portrait default.
+            // Size follows the mirroring: match the stream's aspect (portrait phone → portrait
+            // window; rotated → landscape), so the phone fills the window with no dead space.
             let vs = mirror.videoSize
-            let ratio = (vs.width > 0 && vs.height > 0) ? vs.height / vs.width : 2.1
-            let w0: CGFloat = 380
-            w.setContentSize(NSSize(width: w0, height: (w0 * ratio).rounded()))
+            if vs.width > 0, vs.height > 0 {
+                if vs.width > vs.height {
+                    let w0: CGFloat = 900
+                    w.setContentSize(NSSize(width: w0, height: (w0 * vs.height / vs.width).rounded()))
+                } else {
+                    let h0: CGFloat = 820
+                    w.setContentSize(NSSize(width: (h0 * vs.width / vs.height).rounded(), height: h0))
+                }
+            } else {
+                w.setContentSize(NSSize(width: 380, height: 820))
+            }
             w.center()
         }
     }

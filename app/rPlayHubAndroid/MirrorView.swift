@@ -105,6 +105,15 @@ final class MirrorView: NSView, NSMenuItemValidation {
     /// to the window's edge. The main stage keeps its device bezel.
     var borderless = false { didSet { if borderless != oldValue { needsLayout = true } } }
 
+    /// Naked windows paint the surround black (seamless with the phone's bezel) instead of the
+    /// Device-Hub white, so no white shows around the phone in a raw window.
+    var nakedBackground = false {
+        didSet {
+            guard nakedBackground != oldValue else { return }
+            layer?.backgroundColor = (nakedBackground ? NSColor.black : NSColor.white).cgColor
+        }
+    }
+
     /// The view is deliberately flipped. AppKit flips the backing layer's geometry for a
     /// non-flipped view, which flips manually added sublayers' content too and renders the video
     /// upside down; flipping the view fixes that and gives a top-left origin matching the
