@@ -1955,8 +1955,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             present(message: "No device selected", detail: "Pick a USB-connected device first.")
             return
         }
-        // A network serial (host:port) has no USB link; AOA needs the cable.
-        guard !device.serial.contains(":") else {
+        // AOA needs a USB cable: not a network serial (host:port), and not an emulator.
+        guard !device.serial.contains(":"), !device.isEmulator else {
             present(message: "HID needs USB",
                     detail: "\(device.displayName) is connected over the network. AOA HID rides "
                           + "the USB cable — plug the phone in and select that entry.")

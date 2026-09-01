@@ -29,8 +29,15 @@ struct AdbDevice: Equatable {
 
     var isReady: Bool { state == "device" }
 
-    /// What the sidebar shows. `model` comes back with underscores for spaces.
+    /// An Android Emulator instance (adb names them emulator-<console port>). It is a device
+    /// like any other to adb and the agent; only the sidebar treats it as its own kind.
+    var isEmulator: Bool { serial.hasPrefix("emulator-") }
+
+    /// What the sidebar shows. `model` comes back with underscores for spaces. An emulator's
+    /// model is the meaningless "sdk_gphone64_arm64"; the sidebar replaces this with the AVD's
+    /// name once it has asked the device for it.
     var displayName: String {
+        if isEmulator { return "Android Emulator" }
         guard let model, !model.isEmpty else { return serial }
         return model.replacingOccurrences(of: "_", with: " ")
     }

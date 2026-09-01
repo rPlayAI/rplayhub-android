@@ -49,6 +49,9 @@ final class DeviceSidebar: NSView {
     /// Android version per serial, fetched once per device and cached. Device Hub shows the OS
     /// version right-aligned on every row, and one getprop per device per poll would be absurd.
     private var versions: [String: String] = [:]
+    /// AVD name per emulator serial, fetched once — the row reads "Emulator · <name>", which is
+    /// what a person calls it, rather than the sdk_gphone model string.
+    private var avdNames: [String: String] = [:]
     private var selectedSerial: String?
     /// Set while we are rebuilding the table ourselves. `reloadData()` drops the selection and
     /// AppKit reports that as a user selection change — which nils `selectedSerial` before the
@@ -218,17 +221,26 @@ final class DeviceSidebar: NSView {
         isReloading = false
     }
 
-    /// One getprop per device we have not seen before, off the main queue.
+    /// One getprop per device we have not seen before, off the main queue. An emulator also
+    /// gets asked for its AVD name (ro.boot.qemu.avd_name; older images use ro.kernel.qemu.*).
     private func loadMissingVersions() {
         for device in devices where device.isReady && versions[device.serial] == nil {
             let serial = device.serial
             versions[serial] = ""        // claim it, so the next poll does not queue a second
+            let wantsAvdName = device.isEmulator && avdNames[serial] == nil
+            if wantsAvdName { avdNames[serial] = "" }
             DispatchQueue.global(qos: .utility).async { [weak self] in
                 let release = (try? Adb.getprop(serial, "ro.build.version.release")) ?? ""
+                var avd = ""
+                if wantsAvdName {
+                    avd = (try? Adb.getprop(serial, "ro.boot.qemu.avd_name")) ?? ""
+                    if avd.isEmpty { avd = (try? Adb.getprop(serial, "ro.kernel.qemu.avd_name")) ?? "" }
+                }
                 DispatchQueue.main.async {
-                    guard let self, !release.isEmpty else { return }
-                    self.versions[serial] = release
-                    self.tableView.reloadData()
+                    guard let self else { return }
+                    if !release.isEmpty { self.versions[serial] = release }
+                    if !avd.isEmpty { self.avdNames[serial] = avd }
+                    if !release.isEmpty || !avd.isEmpty { self.tableView.reloadData() }
                 }
             }
         }
@@ -250,13 +262,19 @@ final class DeviceSidebar: NSView {
         }
         }
         filtered = result
-        // Rebuild the flat row list: available devices first under their header, then the rest.
-        let available = result.filter { $0.isReady }
+        // Rebuild the flat row list: real devices first under their header, then emulators
+        // under theirs (as Device Hub sets simulators apart), then whatever is not ready.
+        let available = result.filter { $0.isReady && !$0.isEmulator }
+        let emulators = result.filter { $0.isReady && $0.isEmulator }
         let unavailable = result.filter { !$0.isReady }
         var built: [Row] = []
         if !available.isEmpty {
             built.append(.header("Available"))
             built.append(contentsOf: available.map { Row.device($0) })
+        }
+        if !emulators.isEmpty {
+            built.append(.header("Emulators"))
+            built.append(contentsOf: emulators.map { Row.device($0) })
         }
         if !unavailable.isEmpty {
             built.append(.header("Unavailable"))
@@ -378,7 +396,10 @@ extension DeviceSidebar: NSTableViewDataSource, NSTableViewDelegate {
         glyph.contentTintColor = .secondaryLabelColor
         glyph.translatesAutoresizingMaskIntoConstraints = false
 
-        let name = NSTextField(labelWithString: device.displayName)
+        let title = device.isEmulator
+            ? (avdNames[device.serial].map { "Emulator · \($0)" } ?? device.displayName)
+            : device.displayName
+        let name = NSTextField(labelWithString: title)
         name.font = .systemFont(ofSize: 13)
         name.lineBreakMode = .byTruncatingTail
 
@@ -454,6 +475,7 @@ extension DeviceSidebar: NSTableViewDataSource, NSTableViewDelegate {
     }
 
     private func symbol(for device: AdbDevice) -> String {
+        if device.isEmulator { return "desktopcomputer" }
         let name = (device.model ?? "").lowercased()
         if name.contains("tab") || name.contains("pad") { return "ipad" }
         if name.contains("watch") { return "applewatch" }
