@@ -1783,6 +1783,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let gh = helpMenu.addItem(withTitle: "rPlayHub Android on GitHub",
                                   action: #selector(openGitHub), keyEquivalent: "")
         gh.target = self
+        let sdk = helpMenu.addItem(withTitle: "rPlayHub Android SDK on GitHub",
+                                   action: #selector(openSDK), keyEquivalent: "")
+        sdk.target = self
         helpItem.submenu = helpMenu
         NSApp.helpMenu = helpMenu   // routes the Help-menu search field and ⌘? here
 
@@ -1804,6 +1807,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// as a real page rather than as source.
     private static let helpURL = "https://rplayai.github.io/rplayhub-android/help.html"
     private static let repoURL = "https://github.com/rPlayAI/rplayhub-android"
+    /// The programmable half: drive the phone from code (adb client, MCP server, agent samples).
+    private static let sdkURL = "https://github.com/rPlayAI/rplayhub-android-sdk"
 
     @objc private func openHelp() {
         if let url = URL(string: Self.helpURL) { NSWorkspace.shared.open(url) }
@@ -1811,6 +1816,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func openGitHub() {
         if let url = URL(string: Self.repoURL) { NSWorkspace.shared.open(url) }
+    }
+
+    @objc private func openSDK() {
+        if let url = URL(string: Self.sdkURL) { NSWorkspace.shared.open(url) }
     }
 
     @objc private func followDeviceRotation() {
