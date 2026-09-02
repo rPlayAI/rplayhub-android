@@ -21,6 +21,17 @@ enum AppBuild {
         return UserDefaults.standard.bool(forKey: "HidEnabled")
     }
 
+    /// Host an Android Emulator through its gRPC (Android Studio's embedded model: headless
+    /// engine, no virtual display, no agent) instead of mirroring it like a device over adb.
+    /// Experimental; `RPLAYHUB_EMU=1` or the "EmulatorHostEnabled" default. Needs the bundled
+    /// emulator-bridge and an emulator started with gRPC on.
+    static var emulatorHostEnabled: Bool {
+        if let env = ProcessInfo.processInfo.environment["RPLAYHUB_EMU"] {
+            return env == "1" || env.lowercased() == "true"
+        }
+        return UserDefaults.standard.bool(forKey: "EmulatorHostEnabled")
+    }
+
     static var twinEnabled: Bool {
         get {
             if let env = ProcessInfo.processInfo.environment["RPLAYHUB_TWIN"] {

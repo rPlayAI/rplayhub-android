@@ -84,9 +84,11 @@ if [[ -n "$SIGN_ID" ]]; then
     /usr/libexec/PlistBuddy -c "Delete :NSExtension:NSExtensionFileProviderDocumentGroup" \
         "$APPEX/Contents/Info.plist" 2>/dev/null || true
 
-    [[ -f "$APP/Contents/MacOS/adb" ]] && \
-        codesign --force --sign "$SIGN_ID" --timestamp --options=runtime \
-            --entitlements "$ROOT/app/rPlayHubAndroid/adb-inherit.entitlements" "$APP/Contents/MacOS/adb"
+    for helper in adb emulator-bridge; do
+        [[ -f "$APP/Contents/MacOS/$helper" ]] && \
+            codesign --force --sign "$SIGN_ID" --timestamp --options=runtime \
+                --entitlements "$ROOT/app/rPlayHubAndroid/adb-inherit.entitlements" "$APP/Contents/MacOS/$helper"
+    done
     codesign --force --sign "$SIGN_ID" --timestamp --options=runtime \
         --entitlements "$ENT_DIR/appex.entitlements" "$APPEX"
     codesign --force --sign "$SIGN_ID" --timestamp --options=runtime \
@@ -99,8 +101,8 @@ fi
 # ---------------------------------------------------------------- verify
 say "verifying signature and bundled pieces"
 codesign --verify --deep --strict --verbose=2 "$APP" 2>&1 | sed 's/^/    /'
-for f in "Contents/MacOS/adb" "Contents/Resources/agent/screen-sharing-agent.jar" \
-         "Contents/Resources/companion.apk"; do
+for f in "Contents/MacOS/adb" "Contents/MacOS/emulator-bridge" \
+         "Contents/Resources/agent/screen-sharing-agent.jar" "Contents/Resources/companion.apk"; do
     [[ -e "$APP/$f" ]] && echo "    bundled: $f" || say "WARNING: missing $f"
 done
 if codesign -d --entitlements :- "$APP/Contents/MacOS/adb" 2>/dev/null | grep -q inherit; then

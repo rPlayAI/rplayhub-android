@@ -51,6 +51,11 @@ final class MirrorView: NSView, NSMenuItemValidation {
 
     /// Where control messages go. Nil until the session is up, which is also what gates input.
     var control: ControlSender?
+    /// A hosted emulator (Android Studio's model): touches and keys go to its gRPC bridge instead
+    /// of an agent control channel. Set in place of `control`, never alongside it.
+    var emulator: EmulatorSession?
+    /// Input is live once either path is up.
+    private var inputLive: Bool { control != nil || emulator != nil }
 
     /// Which device display the picture (and with it every touch) belongs to. 0 is built-in.
     var displayId: Int32 = 0
@@ -226,7 +231,7 @@ final class MirrorView: NSView, NSMenuItemValidation {
               let command = Command(rawValue: raw) else { return true }
         switch command {
         case .pin, .openWindow, .openTab, .reconnect: return true
-        default:                                      return control != nil
+        default:                                      return inputLive
         }
     }
 
@@ -350,6 +355,19 @@ final class MirrorView: NSView, NSMenuItemValidation {
         if isGated, autoReveal { isGated = false }
     }
 
+    /// A hosted emulator's frame: a whole display at native size, already oriented. There is no
+    /// packet header to describe it, so the frame is its own geometry. The emulator's rotation
+    /// changes the frame's aspect (a rotated guest streams landscape), which the layout follows.
+    func present(picture: CVPixelBuffer, size: CGSize) {
+        if size != videoSize {
+            videoSize = size
+            displaySize = size
+            AppBuild.log("emulator: frame \(Int(size.width))x\(Int(size.height))")
+        }
+        if isGated, autoReveal { isGated = false }
+        displayLayer.present(picture)
+    }
+
     /// Show a prepared session's picture now — the user pressed View Screen / Start Mirroring.
     func reveal() {
         autoReveal = true
@@ -364,6 +382,7 @@ final class MirrorView: NSView, NSMenuItemValidation {
         displayOrientation = 0
         orientationCorrection = 0
         control = nil
+        emulator = nil
         displayShape = nil
         displayLayer.flushAndRemoveImage()
         needsLayout = true
@@ -649,9 +668,13 @@ final class MirrorView: NSView, NSMenuItemValidation {
     /// array on UP yields a MotionEvent with pointer_count 0, which is malformed, so the gesture
     /// never completes and every tap is a DOWN that is never released.
     private func sendMotion(_ point: CGPoint, action: Int32) {
-        guard let control else { return }
         let x = Int32(max(0, min(displaySize.width - 1, point.x)))
         let y = Int32(max(0, min(displaySize.height - 1, point.y)))
+        if let emulator {
+            emulator.sendTouch(x: x, y: y, down: action != MotionAction.up, display: displayId)
+            return
+        }
+        guard let control else { return }
         control.send(ControlMessage.motionEvent(pointers: [.init(x: x, y: y)], action: action,
                                                 displayId: displayId))
     }
@@ -669,7 +692,7 @@ final class MirrorView: NSView, NSMenuItemValidation {
         // Only the View Screen button starts a session. Treating a click anywhere in the panel
         // as "start mirroring" meant merely focusing the window, or clicking past the mockup to
         // reach the pane, kicked off an agent deploy nobody asked for.
-        guard control != nil else { return }
+        guard inputLive else { return }
         guard let p = devicePoint(convert(event.locationInWindow, from: nil)) else { return }
         lastDevicePoint = p
         sendMotion(p, action: MotionAction.down)
@@ -712,16 +735,20 @@ final class MirrorView: NSView, NSMenuItemValidation {
     }
 
     override func keyDown(with event: NSEvent) {
-        guard let control else { super.keyDown(with: event); return }
+        guard inputLive else { super.keyDown(with: event); return }
         if let key = AndroidKeyMap.keycode(for: event) {
-            control.send(ControlMessage.keyEvent(action: KeyAction.downAndUp, keycode: key))
+            if let emulator {
+                if let dom = EmulatorSession.domKey(for: key) { emulator.press(dom) }
+            } else {
+                control?.send(ControlMessage.keyEvent(action: KeyAction.downAndUp, keycode: key))
+            }
             return
         }
         // Anything that produces text goes as text, so the device's own IME and layout apply
         // rather than us guessing a keycode per character.
         if let text = event.characters, !text.isEmpty,
            text.unicodeScalars.allSatisfy({ !CharacterSet.controlCharacters.contains($0) }) {
-            control.send(ControlMessage.textInput(text))
+            if let emulator { emulator.type(text) } else { control?.send(ControlMessage.textInput(text)) }
             return
         }
         super.keyDown(with: event)

@@ -4,7 +4,12 @@
 //   Protocol (app <-> bridge):
 //     bridge -> app (stdout, binary): repeated frames, each = 4-byte BE length + PNG bytes.
 //     app -> bridge (stdin, text):    one JSON object per line:
-//        {"tap":{"x":540,"y":1200,"display":0}}   {"key":"KEYCODE_HOME"}   {"quit":true}
+//        {"touch":{"x":540,"y":1200,"down":true,"display":0}}   one finger; down:false releases
+//        {"tap":{"x":540,"y":1200,"display":0}}                  press + release
+//        {"press":"GoHome"}      DOM key value (GoBack, AppSwitch, Power, AudioVolumeUp, Enter …)
+//        {"text":"hello"}        typed through the emulator's key sender
+//        {"rotate":-90}          device rotation around Z in degrees (0 portrait, -90 landscape)
+//        {"key":"KEYCODE_HOME"}  legacy; {"quit":true}
 //
 //   usage: emulator-bridge <grpc-port>
 import Foundation
@@ -26,10 +31,21 @@ func log(_ s: String) { FileHandle.standardError.write(Data((s + "\n").utf8)) }
     guard let d = line.data(using: .utf8),
           let obj = try? JSONSerialization.jsonObject(with: d) as? [String: Any] else { return }
     do {
-        if let t = obj["tap"] as? [String: Any],
+        if let t = obj["touch"] as? [String: Any],
+           let x = t["x"] as? Int, let y = t["y"] as? Int {
+            try await EmulatorTransport.touch(c, x: Int32(x), y: Int32(y),
+                                              down: t["down"] as? Bool ?? true,
+                                              display: Int32(t["display"] as? Int ?? 0))
+        } else if let t = obj["tap"] as? [String: Any],
            let x = t["x"] as? Int, let y = t["y"] as? Int {
             try await EmulatorTransport.tap(c, x: Int32(x), y: Int32(y),
                                             display: Int32(t["display"] as? Int ?? 0))
+        } else if let k = obj["press"] as? String {
+            try await EmulatorTransport.pressKey(c, k)
+        } else if let s = obj["text"] as? String {
+            try await EmulatorTransport.typeText(c, s)
+        } else if let z = obj["rotate"] as? Double {
+            try await EmulatorTransport.rotate(c, degreesZ: Float(z))
         } else if let k = obj["key"] as? String {
             try await EmulatorTransport.key(c, k)
         } else if obj["quit"] != nil {

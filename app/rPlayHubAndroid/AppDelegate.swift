@@ -107,6 +107,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         shareInbox.stop()
         session?.stop()
+        emulatorSession?.stop()
         FinderMount.removeAll()
     }
 
@@ -375,6 +376,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         mirror.autoReveal = reveal          // reset() set it true; a prepared session stays gated
         strip.setSessionActive(false)
         sessionReachedRunning = false
+        emulatorSession?.stop()
+        emulatorSession = nil
+
+        // An emulator is hosted, not mirrored, when the gate is on and its gRPC is reachable:
+        // the same instance stays on adb for every tool, but its picture and input bypass it.
+        if device.isEmulator, AppBuild.emulatorHostEnabled {
+            if startEmulatorHost(for: device) { return }
+            AppBuild.log("emulator: no gRPC endpoint or bridge for \(device.serial); mirroring over adb")
+        }
 
         let s = AgentSession(serial: device.serial)
         session = s
@@ -384,6 +394,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         s.onAgentLog = { line in AppBuild.log("agent: \(line)") }
         s.decoder.onFrame = stageSink()
         s.start(maxVideoSize: maxVideoSize)
+    }
+
+    // MARK: - hosted emulator (Android Studio's model)
+
+    private var emulatorSession: EmulatorSession?
+
+    /// Host `device` through its gRPC bridge. False when there is nothing to connect to — the
+    /// caller falls back to mirroring it over adb like any device.
+    private func startEmulatorHost(for device: AdbDevice) -> Bool {
+        guard let port = EmulatorSession.discoverGrpcPort(serial: device.serial),
+              let bridge = EmulatorSession.bridgeURL else { return false }
+        let e = EmulatorSession(bridge: bridge, port: port)
+        emulatorSession = e
+        mirror.emulator = e
+        mirrorRevealed = true
+        refreshMirrorToggle()
+        window.subtitle = "connecting to emulator"
+        var announced = false
+        e.onFrame = { [weak self] picture, size in
+            DispatchQueue.main.async {
+                guard let self, self.emulatorSession === e else { return }
+                self.mirror.present(picture: picture, size: size)
+                if !announced {
+                    announced = true
+                    self.window.subtitle = "hosting"
+                    self.strip.setSessionActive(true)
+                }
+            }
+        }
+        e.onExit = { [weak self] reason in
+            DispatchQueue.main.async {
+                guard let self, self.emulatorSession === e else { return }
+                self.emulatorSession = nil
+                self.window.subtitle = "failed"
+                self.strip.setSessionActive(false)
+                self.mirror.reset()
+                self.present(message: "Emulator host ended", detail: reason)
+            }
+        }
+        e.start()
+        return true
     }
 
     /// Where the main stage's display comes out: the mirror, and the twin when it is up.
@@ -1494,6 +1545,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // the guard that requires a live control connection.
         if action == .screenshot { saveScreenshot(displayId: currentDisplayId); return }
         if action == .record { toggleRecording(); return }
+        if let emulator = emulatorSession {
+            emulator.perform(action, currentOrientation: mirror.displayOrientation)
+            return
+        }
         guard let control = session?.control else { return }
         switch action {
         case .back:

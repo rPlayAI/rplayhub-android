@@ -139,6 +139,16 @@ if [ -n "$ADB" ]; then
 else
   echo "warning: no adb binary found to bundle"
 fi
+BRIDGE=""
+for c in "$ROOT/emulator-transport/.build/arm64-apple-macosx/release/emulator-bridge" "$ROOT/emulator-transport/.build/arm64-apple-macosx/debug/emulator-bridge"; do
+  if [ -x "$c" ]; then BRIDGE="$c"; break; fi
+done
+if [ -n "$BRIDGE" ]; then
+  cp "$BRIDGE" "$APP/Contents/MacOS/emulator-bridge"
+  codesign --force --sign "${EXPANDED_CODE_SIGN_IDENTITY:--}" --options runtime --entitlements "$ROOT/app/rPlayHubAndroid/adb-inherit.entitlements" "$APP/Contents/MacOS/emulator-bridge"
+else
+  echo "warning: no emulator-bridge (cd emulator-transport && swift build -c release --product emulator-bridge) - emulator hosting will fall back to adb"
+fi
 COMPANION="$ROOT/helper/app/build/outputs/apk/debug/app-debug.apk"
 if [ -f "$COMPANION" ]; then
   cp "$COMPANION" "$APP/Contents/Resources/companion.apk"
