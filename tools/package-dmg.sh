@@ -52,6 +52,23 @@ say() { printf '\033[1m==>\033[0m %s\n' "$*"; }
 [[ -f "$ROOT/helper/app/build/outputs/apk/debug/app-debug.apk" ]] || \
     say "note: no companion apk (tools/build-helper.sh) — Install Companion App will be unavailable"
 
+# The emulator bridge is a SwiftPM product, not part of the xcodeproj, and the Release bundle
+# phase only COPIES whatever is already built. Packaging from a clean checkout would therefore
+# ship a DMG with no emulator hosting and only a warning buried in the build log, so build it
+# here. Skipped when the emulator track is not wanted (RPLAYHUB_NO_BRIDGE=1).
+BRIDGE_BIN="$ROOT/emulator-transport/.build/arm64-apple-macosx/release/emulator-bridge"
+if [[ "${RPLAYHUB_NO_BRIDGE:-0}" == "1" ]]; then
+    say "RPLAYHUB_NO_BRIDGE=1 — not building emulator-bridge (emulator hosting will be absent)"
+elif [[ -f "$BRIDGE_BIN" && -z "${REBUILD_BRIDGE:-}" ]]; then
+    say "emulator-bridge already built ($(basename "$BRIDGE_BIN")); REBUILD_BRIDGE=1 to rebuild"
+elif command -v swift >/dev/null 2>&1; then
+    say "building emulator-bridge (SwiftPM)"
+    ( cd "$ROOT/emulator-transport" && swift build -c release --product emulator-bridge ) \
+        || say "WARNING: emulator-bridge failed to build — the DMG will have no emulator hosting"
+else
+    say "WARNING: no swift toolchain — cannot build emulator-bridge; the DMG will have no emulator hosting"
+fi
+
 say "building $APP_NAME $VERSION (Release)"
 rm -rf "$STAGE" "$DMG"
 mkdir -p "$STAGE"
@@ -141,9 +158,12 @@ if codesign -d --entitlements :- "$APP" 2>/dev/null | grep -q app-sandbox; then
     fi
 else
     echo "    app is not sandboxed (+ Emulator available behind RPLAYHUB_EMU)"
-    if codesign -d --entitlements :- "$APP/Contents/MacOS/adb" 2>/dev/null | grep -q inherit; then
-        say "WARNING: bundled adb carries sandbox+inherit under an unsandboxed app — it will not exec"
-    fi
+    for helper in adb emulator-bridge; do
+        [[ -f "$APP/Contents/MacOS/$helper" ]] || continue
+        if codesign -d --entitlements :- "$APP/Contents/MacOS/$helper" 2>/dev/null | grep -q inherit; then
+            say "WARNING: bundled $helper carries sandbox+inherit under an unsandboxed app — it will not exec"
+        fi
+    done
 fi
 if [[ -n "$SIGN_ID" ]]; then
     if spctl --assess --type execute --verbose "$APP" 2>&1 | sed 's/^/    /'; then
