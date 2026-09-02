@@ -198,7 +198,10 @@ final class EmulatorLauncher {
                 let values = AndroidSdk.iniValues(at: dir.appendingPathComponent(name))
                 guard let pidText = name.dropFirst("pid_".count).split(separator: ".").first,
                       let pid = Int32(pidText), kill(pid, 0) == 0 || errno == EPERM,   // still alive
-                      let avd = values["avd.name"] ?? values["avd.id"],
+                      // avd.id is the name `-avd` takes and the one Avd.name carries; avd.name in
+                      // this file is the DISPLAY name ("rplay complete" for id "rplay_complete"),
+                      // so preferring it made every running VM fail to match its own row.
+                      let avd = values["avd.id"] ?? values["avd.name"],
                       let port = values["port.serial"] else { continue }
                 running[avd] = "emulator-\(port)"
             }

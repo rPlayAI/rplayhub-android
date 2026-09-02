@@ -240,6 +240,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         sidebar.onShowInFinder = { device in FinderMount.reveal(serial: device.serial) }
         sidebar.onInstallCompanion = { [weak self] device in self?.installCompanion(on: device) }
         sidebar.onShutDownEmulator = { [weak self] device in self?.shutDownEmulator(device) }
+        sidebar.onStartAvd = { [weak self] avd in self?.launchEmulator(avd) }
+        sidebar.onRemoveAvd = { [weak self] avd in self?.removeAvd(avd, serial: nil) }
+        sidebar.onRemoveEmulator = { [weak self] device, name in
+            guard let self else { return }
+            let avd = Avd.all().first { $0.name == name }
+                ?? Avd(name: name, displayName: name.isEmpty ? device.displayName : name,
+                       device: nil, apiLevel: nil, abi: nil,
+                       directory: AndroidSdk.avdHome.appendingPathComponent("\(name).avd"))
+            self.removeAvd(avd, serial: device.serial)
+        }
         EmulatorLauncher.shared.onPhase = { [weak self] serial, phase in
             guard let self, let launch = EmulatorLauncher.shared.launches[serial] else { return }
             self.sidebar.setLaunching(serial: serial, avdName: launch.avd.name, phase: phase)
@@ -322,6 +332,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     self.propertiesForSerial = nil
                 }
                 for device in captured.0 where device.isReady { self.loadApiLevel(device.serial) }
+                // Every VM on this Mac belongs in the list, running or not — that is what lets a
+                // row's own Start cover booting and viewing in one step.
+                if AppBuild.emulatorLaunchEnabled {
+                    self.sidebar.update(avds: Avd.all(), running: EmulatorLauncher.runningAvds())
+                }
                 FinderMount.sync(devices: captured.0)
                 if let serial = self.pendingEmulatorSerial,
                    let device = captured.0.first(where: { $0.serial == serial && $0.isReady }) {
@@ -2377,36 +2392,8 @@ extension AppDelegate {
                                   action: #selector(createAndroidVM), keyEquivalent: "")
         create.target = self
         create.toolTip = "Download the Android emulator and a system image from Google, then build a VM"
-        menu.addItem(.separator())
-        let heading = menu.addItem(withTitle: "Start Emulator", action: nil, keyEquivalent: "")
-        heading.isEnabled = false
-        let avds = Avd.all()
-        let running = EmulatorLauncher.runningAvds()
-        if AndroidSdk.emulatorBinary == nil {
-            menu.addItem(withTitle: "Android SDK emulator not found", action: nil, keyEquivalent: "")
-                .isEnabled = false
-        } else if avds.isEmpty {
-            let none = menu.addItem(withTitle: "No AVDs in \(AndroidSdk.avdHome.path)",
-                                    action: nil, keyEquivalent: "")
-            none.isEnabled = false
-        }
-        for avd in avds {
-            let item = menu.addItem(withTitle: avd.displayName, action: #selector(launchEmulatorFromMenu(_:)),
-                                    keyEquivalent: "")
-            item.target = self
-            item.representedObject = avd.name
-            item.indentationLevel = 1
-            var detail = avd.subtitle
-            if let serial = running[avd.name] {
-                item.isEnabled = false
-                item.state = .on
-                detail = "running as \(serial)"
-            } else if EmulatorLauncher.shared.launches.values.contains(where: { $0.avd.name == avd.name }) {
-                item.isEnabled = false
-                detail = "starting…"
-            }
-            if #available(macOS 14.4, *) { item.subtitle = detail } else { item.toolTip = detail }
-        }
+        // No list of VMs to start here: every VM is a row in the sidebar now, and a row's own
+        // menu starts it. "+" is for bringing something new into the list.
         menu.addItem(.separator())
         let locate = menu.addItem(withTitle: "Locate Android SDK…", action: #selector(locateAndroidSdk),
                                   keyEquivalent: "")
@@ -2491,6 +2478,37 @@ extension AppDelegate {
         if let serial {
             sidebar.setLaunching(serial: serial, avdName: avd.name, phase: "starting the engine…")
         }
+    }
+
+    /// Delete a virtual device, after asking. Destructive and not undoable, so it is a sheet with
+    /// the consequence spelled out rather than a menu item that just does it.
+    private func removeAvd(_ avd: Avd, serial: String?) {
+        let alert = NSAlert()
+        alert.messageText = "Remove \(avd.displayName)?"
+        alert.informativeText = "The virtual device and everything on it — apps, files, settings — "
+            + "will be deleted. The Android system image it was built from is kept, so making "
+            + "another VM from it needs no download."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Remove")
+        alert.addButton(withTitle: "Cancel")
+        let go = { [weak self] (response: NSApplication.ModalResponse) in
+            guard let self, response == .alertFirstButtonReturn else { return }
+            // A running VM has its disks open; shut it down and give it a moment before deleting.
+            if let serial {
+                if self.hostedSerial == serial { self.stopMirroring() }
+                EmulatorLauncher.shared.shutDown(serial: serial)
+            }
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + (serial == nil ? 0 : 3)) {
+                do { try AvdCreator.remove(name: avd.name) } catch {
+                    DispatchQueue.main.async {
+                        self.present(message: "Could not remove \(avd.displayName)", detail: "\(error)")
+                    }
+                    return
+                }
+                DispatchQueue.main.async { self.refreshDevices() }
+            }
+        }
+        alert.beginSheetModal(for: window, completionHandler: go)
     }
 
     /// Shut the engine down. If it is the one being hosted, take the host down first so the

@@ -73,6 +73,10 @@ actor SdkInstaller {
         let destination = root.appendingPathComponent(package.installSubpath, isDirectory: true)
         AppBuild.log("sdk: unpacking \(package.path) into \(destination.path)")
         try Self.unpack(zip, to: destination)
+        // Written LAST, so it exists only if everything before it succeeded. This is what makes
+        // "already installed" trustworthy: a download or extraction that died half way leaves no
+        // stamp and is fetched again, instead of being reused for ever.
+        try? Self.stamp(package, at: destination)
         await MainActor.run { progress(.done) }
         return destination
     }
@@ -212,12 +216,36 @@ actor SdkInstaller {
         try (hash + "\n").write(to: dir.appendingPathComponent(id), atomically: true, encoding: .utf8)
     }
 
-    /// Is this package already installed under `root`? A cheap existence check, which is all the
-    /// UI needs to say "Installed" instead of offering a 2 GB download again.
+    /// The file that records a completed install, and what it holds.
+    static let stampName = ".rplayhub-install"
+
+    private static func stamp(_ package: SdkPackage, at destination: URL) throws {
+        let body = "path=\(package.path)\nrevision=\(package.revision)\nchecksum=\(package.checksum)\n"
+        try body.write(to: destination.appendingPathComponent(stampName),
+                       atomically: true, encoding: .utf8)
+    }
+
+    /// Is this package already installed under `root`? This is what stops a second VM on the same
+    /// image re-fetching two gigabytes, so it has to be right in both directions.
+    ///
+    /// "The directory is not empty" was not right. A system image whose extraction stopped part
+    /// way still has plenty of files in it, and one such install was happily reused to build VMs
+    /// that could never boot. An install we made is therefore believed only if it carries the
+    /// stamp written after the last step, and at the revision we would install now.
+    ///
+    /// An install we did NOT make — a user's existing SDK, or one from sdkmanager or Studio — has
+    /// no stamp and is trusted on its own terms: `source.properties` is the file those tools
+    /// write, and re-downloading someone's working SDK would be worse than believing it.
     static func isInstalled(_ package: SdkPackage, root: URL) -> Bool {
         let dir = root.appendingPathComponent(package.installSubpath, isDirectory: true)
-        guard let contents = try? FileManager.default.contentsOfDirectory(atPath: dir.path)
+        let fm = FileManager.default
+        guard let contents = try? fm.contentsOfDirectory(atPath: dir.path), !contents.isEmpty
         else { return false }
-        return !contents.isEmpty
+
+        let values = AndroidSdk.iniValues(at: dir.appendingPathComponent(stampName))
+        if let revision = values["revision"] {
+            return revision == package.revision
+        }
+        return contents.contains("source.properties")
     }
 }

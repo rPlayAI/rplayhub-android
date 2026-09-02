@@ -24,6 +24,8 @@ final class DeviceSidebar: NSView {
     var onInstallCompanion: ((AdbDevice) -> Void)?
     /// Shut an emulator down (the Disconnect entry, retitled for an emulator row).
     var onShutDownEmulator: ((AdbDevice) -> Void)?
+    /// Delete an emulator's virtual device entirely. Destructive; the caller confirms.
+    var onRemoveEmulator: ((AdbDevice, String) -> Void)?
     /// Whether a mirror session is currently live — drives the toggle entry's title/behaviour.
     var isMirroring: (() -> Bool)?
 
@@ -47,6 +49,9 @@ final class DeviceSidebar: NSView {
         /// An emulator the app is starting: shown under Emulators with a spinner until adb lists
         /// it (a `.device` row with the same serial replaces it) or the launch fails.
         case launching(serial: String, name: String, phase: String)
+        /// A virtual device that exists but is not running. Device Hub lists shut-down simulators
+        /// the same way, which is what lets one "Start" cover both booting and viewing.
+        case avd(name: String)
     }
 
     private var rows: [Row] = []
@@ -59,6 +64,22 @@ final class DeviceSidebar: NSView {
     private var avdNames: [String: String] = [:]
     /// Emulators being started from "+ Emulator", by the serial they will have.
     private var launching: [String: (name: String, phase: String)] = [:]
+    /// AVDs on this Mac, and which of them are running (AVD name -> adb serial).
+    private var avds: [Avd] = []
+    private var runningAvds: [String: String] = [:]
+
+    /// Start a virtual device that is not running.
+    var onStartAvd: ((Avd) -> Void)?
+    /// Delete a virtual device that is not running.
+    var onRemoveAvd: ((Avd) -> Void)?
+
+    /// The AVD list, refreshed by the app's poll.
+    func update(avds: [Avd], running: [String: String]) {
+        guard avds != self.avds || running != runningAvds else { return }
+        self.avds = avds
+        runningAvds = running
+        rebuildKeepingSelection()
+    }
 
     /// The name the row shows for a device — the AVD name for an emulator once known. The app
     /// titles its window with this, so window and row agree.
@@ -156,26 +177,62 @@ final class DeviceSidebar: NSView {
     /// The row's context menu. Exposed because the device commands that used to live on the
     /// mirror pane get appended to it — they act on the device, so this is where they belong.
     private(set) var rowContextMenu = NSMenu()
+    private var removeItem: NSMenuItem?
+    private var startItem: NSMenuItem?
+    private var mirrorToggle: NSMenuItem?
+    private var disconnectItem: NSMenuItem?
+
+    /// SF Symbols on the row menu, the same vocabulary Device Hub uses: a play triangle to start,
+    /// a trash can to remove. Templates, so they follow the menu's own tint and dark mode.
+    private static func symbol(_ name: String) -> NSImage? {
+        guard let image = NSImage(systemSymbolName: name, accessibilityDescription: nil) else { return nil }
+        image.isTemplate = true
+        return image
+    }
 
     private func rowMenu() -> NSMenu {
         let menu = rowContextMenu
         menu.delegate = self          // retitle the toggle just before the menu opens
         menu.removeAllItems()
         // One entry that toggles — its title is set in menuNeedsUpdate from the live state.
-        menu.addItem(withTitle: "Start Screen Mirroring", action: #selector(toggleMirrorFromMenu),
-                     keyEquivalent: "").target = self
-        menu.addItem(withTitle: "Desktop Mode", action: #selector(desktopModeFromMenu),
-                     keyEquivalent: "").target = self
-        menu.addItem(withTitle: "Show Files in Finder", action: #selector(showInFinderFromMenu),
-                     keyEquivalent: "").target = self
-        menu.addItem(withTitle: "Install Companion App", action: #selector(installCompanionFromMenu),
-                     keyEquivalent: "").target = self
+        // Device Hub's wording. For a VM that is not running this is the whole story: it boots
+        // and then shows itself, so there is no separate "start mirroring" step to think about.
+        startItem = menu.addItem(withTitle: "Start", action: #selector(startFromMenu),
+                                 keyEquivalent: "")
+        startItem?.target = self
+        startItem?.image = Self.symbol("play.fill")
+        mirrorToggle = menu.addItem(withTitle: "Start Screen Mirroring",
+                                    action: #selector(toggleMirrorFromMenu), keyEquivalent: "")
+        mirrorToggle?.target = self
+        mirrorToggle?.image = Self.symbol("play.rectangle")
+        let desktop = menu.addItem(withTitle: "Desktop Mode", action: #selector(desktopModeFromMenu),
+                                   keyEquivalent: "")
+        desktop.target = self
+        desktop.image = Self.symbol("macwindow.on.rectangle")
+        let finder = menu.addItem(withTitle: "Show Files in Finder", action: #selector(showInFinderFromMenu),
+                                  keyEquivalent: "")
+        finder.target = self
+        finder.image = Self.symbol("folder")
+        let companion = menu.addItem(withTitle: "Install Companion App",
+                                     action: #selector(installCompanionFromMenu), keyEquivalent: "")
+        companion.target = self
+        companion.image = Self.symbol("square.and.arrow.down")
         menu.addItem(.separator())
-        menu.addItem(withTitle: "Copy Serial", action: #selector(copySerial), keyEquivalent: "")
-            .target = self
+        let copy = menu.addItem(withTitle: "Copy Serial", action: #selector(copySerial),
+                                keyEquivalent: "")
+        copy.target = self
+        copy.image = Self.symbol("doc.on.doc")
         menu.addItem(.separator())
-        menu.addItem(withTitle: "Disconnect", action: #selector(disconnectFromMenu),
-                     keyEquivalent: "").target = self
+        disconnectItem = menu.addItem(withTitle: "Disconnect", action: #selector(disconnectFromMenu),
+                                      keyEquivalent: "")
+        disconnectItem?.target = self
+        disconnectItem?.image = Self.symbol("power")
+        // Device Hub removes a simulator from its row's menu; an emulator is removed from here.
+        // Hidden for real devices, which have nothing for us to delete.
+        removeItem = menu.addItem(withTitle: "Remove…", action: #selector(removeFromMenu),
+                                  keyEquivalent: "")
+        removeItem?.target = self
+        removeItem?.image = Self.symbol("trash")
         return menu
     }
 
@@ -317,12 +374,22 @@ final class DeviceSidebar: NSView {
         let starting = launching
             .filter { serial, _ in !result.contains { $0.serial == serial && $0.isReady } }
             .sorted { $0.key < $1.key }
-        if !emulators.isEmpty || !starting.isEmpty {
+        // AVDs that exist but are not running. A name that adb already shows, or that we are
+        // starting, is not repeated here.
+        let liveNames = Set(emulators.compactMap { avdNames[$0.serial] }.filter { !$0.isEmpty })
+        let startingNames = Set(launching.values.map { $0.name })
+        let idle = avds.filter {
+            !liveNames.contains($0.name) && !startingNames.contains($0.name)
+                && runningAvds[$0.name] == nil
+                && (query.isEmpty || $0.displayName.lowercased().contains(query))
+        }
+        if !emulators.isEmpty || !starting.isEmpty || !idle.isEmpty {
             built.append(.header("Emulators"))
             built.append(contentsOf: emulators.map { Row.device($0) })
             built.append(contentsOf: starting.map {
                 Row.launching(serial: $0.key, name: $0.value.name, phase: $0.value.phase)
             })
+            built.append(contentsOf: idle.map { Row.avd(name: $0.name) })
         }
         if !unavailable.isEmpty {
             built.append(.header("Unavailable"))
@@ -364,9 +431,20 @@ final class DeviceSidebar: NSView {
         let live = isMirroring?() == true
         for item in menu.items where item.action == #selector(toggleMirrorFromMenu) {
             item.title = live ? "Stop Screen Mirroring" : "Start Screen Mirroring"
+            item.image = Self.symbol(live ? "stop.rectangle" : "play.rectangle")
         }
-        // Disconnect is an adb notion; what an emulator row can do is shut the engine down.
+        // Three kinds of row, three shapes of menu. A VM that is not running can only be started
+        // or removed; everything else acts on a live device.
+        let idle = clickedAvd()
         let emulator = clickedOrSelected()?.isEmulator == true
+        startItem?.isHidden = idle == nil
+        mirrorToggle?.isHidden = idle != nil
+        removeItem?.isHidden = !(emulator || idle != nil)
+        for item in menu.items where item !== startItem && item !== removeItem {
+            if idle != nil { item.isHidden = true }
+            else if item !== mirrorToggle && item.isHidden && item.action != nil { item.isHidden = false }
+        }
+        if idle != nil { mirrorToggle?.isHidden = true }
         for item in menu.items where item.action == #selector(disconnectFromMenu) {
             item.title = emulator ? "Shut Down Emulator" : "Disconnect"
         }
@@ -375,6 +453,13 @@ final class DeviceSidebar: NSView {
     @objc private func mirrorFromMenu() {
         guard let device = clickedOrSelected() else { return }
         onMirror?(device)
+    }
+
+    /// The idle AVD under the pointer, if the clicked row is one.
+    private func clickedAvd() -> Avd? {
+        let row = tableView.clickedRow >= 0 ? tableView.clickedRow : tableView.selectedRow
+        guard row >= 0, row < rows.count, case .avd(let name) = rows[row] else { return nil }
+        return avds.first { $0.name == name }
     }
 
     private func clickedOrSelected() -> AdbDevice? {
@@ -386,6 +471,16 @@ final class DeviceSidebar: NSView {
         guard let device = clickedOrSelected() else { return }
         if device.isEmulator { onShutDownEmulator?(device); return }
         DispatchQueue.global(qos: .utility).async { _ = try? Adb.disconnect(device.serial) }
+    }
+
+    @objc private func startFromMenu() {
+        if let avd = clickedAvd() { onStartAvd?(avd) }
+    }
+
+    @objc private func removeFromMenu() {
+        if let avd = clickedAvd() { onRemoveAvd?(avd); return }
+        guard let device = clickedOrSelected(), device.isEmulator else { return }
+        onRemoveEmulator?(device, avdNames[device.serial] ?? "")
     }
 
     @objc private func copySerial() {
@@ -407,7 +502,8 @@ extension DeviceSidebar: NSTableViewDataSource, NSTableViewDelegate {
 
     /// Headers are labels, not selectable rows.
     func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool {
-        device(at: row) != nil
+        if case .avd = rows[row] { return true }     // selectable, but starts no session
+        return device(at: row) != nil
     }
 
     func tableView(_ tableView: NSTableView, isGroupRow row: Int) -> Bool {
@@ -418,6 +514,51 @@ extension DeviceSidebar: NSTableViewDataSource, NSTableViewDelegate {
     func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
         if case .header = rows[row] { return 24 }
         return 42
+    }
+
+    /// A virtual device that exists but is not running: same shape as a live row, greyed.
+    private func idleAvdCell(name: String) -> NSView {
+        let cell = NSTableCellView()
+        let dot = NSView()
+        dot.wantsLayer = true
+        dot.layer?.cornerRadius = 4
+        dot.layer?.backgroundColor = NSColor.tertiaryLabelColor.cgColor
+        dot.translatesAutoresizingMaskIntoConstraints = false
+
+        let glyph = NSImageView(image: NSImage(systemSymbolName: "desktopcomputer",
+                                               accessibilityDescription: nil) ?? NSImage())
+        glyph.contentTintColor = .tertiaryLabelColor
+        glyph.translatesAutoresizingMaskIntoConstraints = false
+
+        let avd = avds.first { $0.name == name }
+        let title = NSTextField(labelWithString: "Emulator · \(avd?.displayName ?? name)")
+        title.font = .systemFont(ofSize: 13)
+        title.textColor = .secondaryLabelColor
+        title.lineBreakMode = .byTruncatingTail
+        let detail = NSTextField(labelWithString: (avd?.subtitle.isEmpty == false) ? avd!.subtitle : "Not running")
+        detail.font = .systemFont(ofSize: 11)
+        detail.textColor = .tertiaryLabelColor
+        detail.lineBreakMode = .byTruncatingTail
+        let text = NSStackView(views: [title, detail])
+        text.orientation = .vertical
+        text.alignment = .leading
+        text.spacing = 1
+        text.translatesAutoresizingMaskIntoConstraints = false
+
+        cell.addSubview(dot); cell.addSubview(glyph); cell.addSubview(text)
+        NSLayoutConstraint.activate([
+            dot.widthAnchor.constraint(equalToConstant: 8),
+            dot.heightAnchor.constraint(equalToConstant: 8),
+            dot.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 6),
+            dot.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+            glyph.leadingAnchor.constraint(equalTo: dot.trailingAnchor, constant: 8),
+            glyph.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+            glyph.widthAnchor.constraint(equalToConstant: 16),
+            text.leadingAnchor.constraint(equalTo: glyph.trailingAnchor, constant: 8),
+            text.trailingAnchor.constraint(lessThanOrEqualTo: cell.trailingAnchor, constant: -10),
+            text.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+        ])
+        return cell
     }
 
     /// The row for an emulator that is still starting: a spinner where the status dot goes, the
@@ -485,6 +626,9 @@ extension DeviceSidebar: NSTableViewDataSource, NSTableViewDelegate {
         }
         if case .launching(_, let name, let phase) = rows[row] {
             return launchingCell(name: name, phase: phase)
+        }
+        if case .avd(let name) = rows[row] {
+            return idleAvdCell(name: name)
         }
         guard let device = device(at: row) else { return nil }
         let cell = NSTableCellView()

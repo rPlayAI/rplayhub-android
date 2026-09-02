@@ -78,6 +78,22 @@ enum AvdCreator {
         return candidate
     }
 
+    /// Delete an AVD: both the `<name>.ini` pointer and the `<name>.avd` directory holding its
+    /// disks. The system image is left alone — it is shared with every other AVD built on it, and
+    /// re-downloading two gigabytes because someone removed one VM would be indefensible.
+    static func remove(name: String) throws {
+        let fm = FileManager.default
+        let home = AndroidSdk.avdHome
+        let pointer = home.appendingPathComponent("\(name).ini")
+        let directory = home.appendingPathComponent("\(name).avd", isDirectory: true)
+        var failure: Error?
+        for url in [pointer, directory] where fm.fileExists(atPath: url.path) {
+            do { try fm.removeItem(at: url) } catch { failure = error }
+        }
+        if let failure { throw failure }
+        AppBuild.log("avd: removed \(name)")
+    }
+
     /// Create an AVD for an installed system image.
     ///
     /// - Parameters:
