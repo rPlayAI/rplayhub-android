@@ -219,11 +219,25 @@ final class EmulatorSession {
         send(line)
     }
 
+    /// Which quadrant the emulator is currently turned to (0 portrait, 1 landscape…).
+    ///
+    /// The session has to own this. `setPhysicalModel(ROTATION, …)` takes an ABSOLUTE angle, and
+    /// nothing tells us the guest's orientation on the way back: a hosted emulator sends frames,
+    /// not the agent's packet header, so `MirrorView.displayOrientation` stays 0 for ever. Asking
+    /// the mirror for the current quadrant therefore always answered 0, every Rotate press sent
+    /// the same -90, and the picture turned once and then stuck.
+    private(set) var rotationQuadrant = 0
+
     /// Rotation quadrant as the mirror counts it (0 portrait, 1 landscape…), in the emulator's
     /// physical-model degrees.
-    func rotate(toQuadrant q: Int) { send(#"{"rotate":\#(-90 * (q % 4))}"#) }
+    func rotate(toQuadrant q: Int) {
+        let quadrant = ((q % 4) + 4) % 4
+        rotationQuadrant = quadrant
+        send(#"{"rotate":\#(-90 * quadrant)}"#)
+    }
 
     /// A control-strip button, by the DOM key value the emulator's key sender understands.
+    /// `currentOrientation` is the mirror's idea of the angle; rotation ignores it deliberately.
     func perform(_ action: ControlStrip.Action, currentOrientation: Int) {
         switch action {
         case .back:       press("GoBack")
@@ -232,7 +246,8 @@ final class EmulatorSession {
         case .power:      press("Power")
         case .volumeUp:   press("AudioVolumeUp")
         case .volumeDown: press("AudioVolumeDown")
-        case .rotate:     rotate(toQuadrant: currentOrientation + 1)
+        // Advance from what we last set, not from the mirror: see `rotationQuadrant`.
+        case .rotate:     rotate(toQuadrant: rotationQuadrant + 1)
         case .screenshot, .record: break        // over adb, handled by the caller
         }
     }
