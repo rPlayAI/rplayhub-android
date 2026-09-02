@@ -105,7 +105,7 @@ if [[ -n "$SIGN_ID" ]]; then
     for helper in adb emulator-bridge; do
         [[ -f "$APP/Contents/MacOS/$helper" ]] && \
             codesign --force --sign "$SIGN_ID" --timestamp --options=runtime \
-                "${HELPER_ENT[@]}" "$APP/Contents/MacOS/$helper"
+                ${HELPER_ENT[@]+"${HELPER_ENT[@]}"} "$APP/Contents/MacOS/$helper"
     done
     codesign --force --sign "$SIGN_ID" --timestamp --options=runtime \
         --entitlements "$ENT_DIR/appex.entitlements" "$APPEX"
