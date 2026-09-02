@@ -107,6 +107,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         shareInbox.stop()
         session?.stop()
+        legacySession?.stop()
         emulatorSession?.stop()
         EmulatorLauncher.shared.shutDownAll()
         FinderMount.removeAll()
@@ -314,6 +315,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
                 self.sidebar.update(devices: captured.0, note: captured.1)
+                for device in captured.0 where device.isReady { self.loadApiLevel(device.serial) }
                 FinderMount.sync(devices: captured.0)
                 if let serial = self.pendingEmulatorSerial,
                    let device = captured.0.first(where: { $0.serial == serial && $0.isReady }) {
@@ -392,6 +394,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         sessionReachedRunning = false
         emulatorSession?.stop()
         emulatorSession = nil
+        legacySession?.stop()
+        legacySession = nil
+
+        // Android 5.0-7.1 cannot run the agent at all (it is minSdk 26). Those boards get our
+        // own small Java agent instead, so they mirror rather than showing a version error.
+        if let sdk = sidebarSdk(for: device.serial), sdk < 26 {
+            startLegacySession(for: device, reveal: reveal)
+            return
+        }
 
         // An emulator is hosted, not mirrored, when the gate is on and its gRPC is reachable:
         // the same instance stays on adb for every tool, but its picture and input bypass it.
@@ -415,6 +426,61 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var emulatorSession: EmulatorSession?
     /// The serial `emulatorSession` hosts, so reveal/stop can tell it from an agent session.
     private var hostedSerial: String?
+    // MARK: - legacy devices (API 21-25)
+
+    private var legacySession: LegacySession?
+    /// API level per serial, learned once, so the session path can branch without blocking.
+    private var apiLevels: [String: Int] = [:]
+
+    private func sidebarSdk(for serial: String) -> Int? { apiLevels[serial] }
+
+    /// Learn the API level as soon as a device appears, so `startSession` can branch on it.
+    private func loadApiLevel(_ serial: String) {
+        guard apiLevels[serial] == nil else { return }
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            guard let text = try? Adb.getprop(serial, "ro.build.version.sdk"),
+                  let sdk = Int(text) else { return }
+            DispatchQueue.main.async { self?.apiLevels[serial] = sdk }
+        }
+    }
+
+    /// Mirror a pre-Oreo device with the legacy agent.
+    private func startLegacySession(for device: AdbDevice, reveal: Bool) {
+        let l = LegacySession(serial: device.serial)
+        legacySession = l
+        mirror.legacy = l
+        mirrorRevealed = reveal
+        mirror.autoReveal = reveal
+        refreshMirrorToggle()
+        window.subtitle = "starting the legacy agent"
+        l.onSize = { [weak self] size in
+            guard let self, self.legacySession === l else { return }
+            self.mirror.displaySize = size
+        }
+        var announced = false
+        l.onFrame = { [weak self] picture in
+            DispatchQueue.main.async {
+                guard let self, self.legacySession === l else { return }
+                if !announced {
+                    announced = true
+                    self.window.subtitle = "mirroring (legacy)"
+                    self.strip.setSessionActive(true)
+                    if self.mirror.autoReveal { self.mirror.reveal() }
+                }
+                self.mirror.displayLayer.present(picture)
+            }
+        }
+        l.onState = { [weak self] state in
+            guard let self, self.legacySession === l else { return }
+            if case .failed(let why) = state {
+                self.window.subtitle = "failed"
+                self.strip.setSessionActive(false)
+                self.present(message: "Could not mirror \(device.displayName)", detail: why)
+            }
+        }
+        l.start()
+    }
+
     /// The serial of an emulator we launched ("+ Emulator") and will host as soon as adb lists it.
     private var pendingEmulatorSerial: String?
     /// Held for the length of the download/creation flow.
@@ -1619,6 +1685,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             emulator.perform(action, currentOrientation: mirror.displayOrientation)
             return
         }
+        if let legacy = legacySession {
+            legacy.perform(action)
+            return
+        }
         guard let control = session?.control else { return }
         switch action {
         case .back:
@@ -1998,6 +2068,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         discardFusionWindows()
         session?.stop()
         session = nil
+        legacySession?.stop()
+        legacySession = nil
         emulatorSession?.stop()
         emulatorSession = nil
         hostedSerial = nil

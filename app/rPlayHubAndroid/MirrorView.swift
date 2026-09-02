@@ -54,8 +54,10 @@ final class MirrorView: NSView, NSMenuItemValidation {
     /// A hosted emulator (Android Studio's model): touches and keys go to its gRPC bridge instead
     /// of an agent control channel. Set in place of `control`, never alongside it.
     var emulator: EmulatorSession?
+    /// A pre-Oreo device driven by the legacy agent; input goes to it when set.
+    var legacy: LegacySession?
     /// Input is live once either path is up.
-    private var inputLive: Bool { control != nil || emulator != nil }
+    private var inputLive: Bool { control != nil || emulator != nil || legacy != nil }
 
     /// Which device display the picture (and with it every touch) belongs to. 0 is built-in.
     var displayId: Int32 = 0
@@ -386,6 +388,7 @@ final class MirrorView: NSView, NSMenuItemValidation {
         orientationCorrection = 0
         control = nil
         emulator = nil
+        legacy = nil
         displayShape = nil
         displayLayer.flushAndRemoveImage()
         needsLayout = true
@@ -673,6 +676,12 @@ final class MirrorView: NSView, NSMenuItemValidation {
     private func sendMotion(_ point: CGPoint, action: Int32) {
         let x = Int32(max(0, min(displaySize.width - 1, point.x)))
         let y = Int32(max(0, min(displaySize.height - 1, point.y)))
+        if let legacy {
+            // 1 down, 2 move, 0 up — the legacy agent's touch phases.
+            let phase = action == MotionAction.down ? 1 : (action == MotionAction.up ? 0 : 2)
+            legacy.touch(x: Int(x), y: Int(y), phase: phase)
+            return
+        }
         if let emulator {
             emulator.sendTouch(x: x, y: y, down: action != MotionAction.up, display: displayId)
             return
@@ -740,7 +749,9 @@ final class MirrorView: NSView, NSMenuItemValidation {
     override func keyDown(with event: NSEvent) {
         guard inputLive else { super.keyDown(with: event); return }
         if let key = AndroidKeyMap.keycode(for: event) {
-            if let emulator {
+            if let legacy {
+                legacy.key(key)
+            } else if let emulator {
                 if let dom = EmulatorSession.domKey(for: key) { emulator.press(dom) }
             } else {
                 control?.send(ControlMessage.keyEvent(action: KeyAction.downAndUp, keycode: key))
