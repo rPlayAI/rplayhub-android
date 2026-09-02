@@ -425,7 +425,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Android 5.0-7.1 cannot run the agent at all (it is minSdk 26). Those boards get our
         // own small Java agent instead, so they mirror rather than showing a version error.
-        if let sdk = sidebarSdk(for: device.serial), sdk < 26 {
+        //
+        // The level is learned by the poll, which may not have answered yet for a device just
+        // plugged in — and guessing "modern" there sent an Android 5 box down the agent path and
+        // straight into the version error it is meant to avoid. Ask for it, then decide.
+        guard let known = sidebarSdk(for: device.serial) else {
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                let text = (try? Adb.getprop(device.serial, "ro.build.version.sdk")) ?? ""
+                // Anything unreadable is recorded as modern so this can never loop.
+                let sdk = Int(text).map { $0 > 0 ? $0 : 99 } ?? 99
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    self.apiLevels[device.serial] = sdk
+                    self.startSession(for: device, reveal: reveal)
+                }
+            }
+            return
+        }
+        if known < 26 {
             startLegacySession(for: device, reveal: reveal)
             return
         }
@@ -923,6 +940,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func applyNakedLayout(chromeVisible: Bool) {
         guard let w = screenWindow.window, nakedPictureSize.width > 0 else { return }
         let stripHeight: CGFloat = chromeVisible ? max(strip.fittingSize.height, 50) : 0
+        // Work from the size the window actually has, not the canonical one, or every toggle
+        // throws away a resize the user made. Height carries the intent and the aspect gives the
+        // width back, which also stops the width drifting as the chrome comes and goes.
+        let previousStrip: CGFloat = fusionChromeShown ? max(strip.fittingSize.height, 50) : 0
+        let live = w.contentView?.bounds.size ?? .zero
+        let shown = mirror.presentedSize
+        if live.height - previousStrip > 80, shown.width > 0, shown.height > 0 {
+            let height = (live.height - previousStrip).rounded()
+            nakedPictureSize = NSSize(width: (height * shown.width / shown.height).rounded(),
+                                      height: height)
+        }
         // The raw window is only as wide as the phone, which is too narrow for the strip's
         // buttons, so the window widens while the chrome is up and gives the width back after.
         let width = chromeVisible
@@ -966,14 +994,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         strip.isHidden = !visible
         stripTopToMirror?.isActive = visible
         mirrorBottomToStage?.isActive = !visible
-        // Resize the window around the picture for the new chrome state. Without this the title
-        // bar (which stops overlaying the content once fullSizeContentView is removed) and the
-        // control strip both eat into the same frame, and the mirrored screen visibly shrinks
-        // every time the pointer approaches the edge — worst on a landscape device like a
-        // 1024x600 box, where the picture is short to begin with.
-        applyNakedLayout(chromeVisible: visible)
-
+        // Resize the window around the picture, but ONLY on a real transition. The cursor timer
+        // calls this several times a second, and resizing every tick reverted any resize the
+        // user made a moment later — the window appeared to refuse being made bigger.
         let changed = visible != fusionChromeShown
+        if changed {
+            // Without this the title bar (which stops overlaying the content once
+            // fullSizeContentView is removed) and the control strip eat into the same frame, and
+            // the mirrored screen shrinks whenever the pointer nears the edge.
+            applyNakedLayout(chromeVisible: visible)
+        }
         fusionChromeShown = visible
         guard changed, animated else { return }
         // A soft fade on the transition.

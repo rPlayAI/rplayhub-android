@@ -92,6 +92,15 @@ final class MirrorView: NSView, NSMenuItemValidation {
 
     let displayLayer = VideoLayer()
     private let clipLayer = CALayer()
+    /// The black surround, drawn BEHIND and slightly larger than the picture.
+    ///
+    /// It used to be `clipLayer.borderWidth`, but a CALayer border is drawn INSIDE the layer's
+    /// bounds, so it painted over the outer 14 points of the picture on every edge — the top of
+    /// the mirrored screen (the status bar, and anything else at the very edge) was simply
+    /// hidden. Sitting behind the picture keeps the same look and shows the whole screen, and it
+    /// leaves `displayRect()` as the exact on-screen rectangle of the display, which is what
+    /// `devicePoint` maps touches through.
+    private let bezelLayer = CALayer()
     private let cutoutLayer = CAShapeLayer()
 
     /// The black surround drawn around a live picture, in points.
@@ -264,8 +273,9 @@ final class MirrorView: NSView, NSMenuItemValidation {
     /// A glowing accent ring around the picture while a file hovers, so the drop target reads. The
     /// bezel's own border is restored by the next layout(); a manual layout() call repaints it.
     private func setDropHighlight(_ on: Bool) {
-        clipLayer.borderColor = on ? NSColor.controlAccentColor.cgColor : NSColor.black.cgColor
-        clipLayer.borderWidth = on ? max(3, Self.bezelWidth) : (borderless ? 0 : Self.bezelWidth)
+        // Tint the bezel rather than drawing a border over the picture.
+        bezelLayer.backgroundColor = on ? NSColor.controlAccentColor.cgColor : NSColor.black.cgColor
+        needsLayout = true
         if !on { needsLayout = true }
     }
 
@@ -285,7 +295,8 @@ final class MirrorView: NSView, NSMenuItemValidation {
         placeholderLayer.endPoint = CGPoint(x: 1, y: 1)
 
         clipLayer.masksToBounds = true
-        clipLayer.borderColor = NSColor.black.cgColor
+        bezelLayer.backgroundColor = NSColor.black.cgColor
+        layer?.addSublayer(bezelLayer)
         clipLayer.addSublayer(placeholderLayer)
 
         displayLayer.videoGravity = .resize
@@ -512,9 +523,17 @@ final class MirrorView: NSView, NSMenuItemValidation {
         // Keep the phone's black bezel edge even in a naked window — it's what makes the floating
         // picture read as a real phone. A fusion display (no displayShape) is a desktop, not a
         // phone, so it gets no edge.
-        clipLayer.borderWidth = borderless
+        // The idle mockup keeps a drawn border (it is a picture of a phone, not a screen); a live
+        // picture gets the bezel behind it instead, so none of the screen is covered.
+        let bezel: CGFloat = borderless
             ? (displayShape != nil ? Self.bezelWidth : 0)
             : (isGated ? max(1, rect.width * 0.05) : Self.bezelWidth)
+        clipLayer.borderWidth = isGated ? bezel : 0
+        bezelLayer.isHidden = isGated || bezel <= 0
+        if !bezelLayer.isHidden {
+            bezelLayer.frame = rect.insetBy(dx: -bezel, dy: -bezel)
+            bezelLayer.cornerRadius = clipLayer.cornerRadius + bezel
+        }
         placeholderLayer.frame = clipLayer.bounds
         placeholderLayer.isHidden = !isGated
         placeholderLayer.cornerRadius = clipLayer.cornerRadius

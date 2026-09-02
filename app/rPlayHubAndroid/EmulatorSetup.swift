@@ -95,6 +95,14 @@ final class EmulatorSetup {
 
         let nameField = NSTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
         nameField.stringValue = AvdCreator.availableName(basedOn: "Android_VM")
+        // A stack view sizes its children by their intrinsic width, and a text field's is its
+        // content — so the frame above is ignored and the field comes out far too narrow to
+        // read a VM name in. Pin all three controls to the same width instead.
+        let fieldWidth: CGFloat = 320
+        for control in [versions as NSView, devices as NSView, nameField as NSView] {
+            control.translatesAutoresizingMaskIntoConstraints = false
+            control.widthAnchor.constraint(equalToConstant: fieldWidth).isActive = true
+        }
 
         func row(_ label: String, _ view: NSView) -> NSView {
             let caption = NSTextField(labelWithString: label)
@@ -118,7 +126,7 @@ final class EmulatorSetup {
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 10
-        stack.frame = NSRect(x: 0, y: 0, width: 330, height: 170)
+        stack.frame = NSRect(x: 0, y: 0, width: fieldWidth + 10, height: 190)
         alert.accessoryView = stack
         alert.window.initialFirstResponder = nameField
 
