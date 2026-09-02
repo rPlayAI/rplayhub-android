@@ -421,9 +421,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         : "The device is not ready for adb commands.")
             return
         }
-        // A device you were watching stays watched: coming back to it shows the picture rather
-        // than the mockup, while one you have never revealed still waits behind View Screen.
-        let reveal = reveal || revealedSerials.contains(device.serial)
+        // Two ways a selection should show the picture straight away rather than the mockup:
+        // this device was revealed before, or something is on screen right now. The second is the
+        // one that matters in use — once you are watching a device, clicking another is a switch
+        // between screens, and being dropped back to a View Screen button every time is wrong.
+        // `mirrorRevealed` still describes the OUTGOING device here; the teardown is below.
+        let reveal = reveal || mirrorRevealed || revealedSerials.contains(device.serial)
         if reveal { revealedSerials.insert(device.serial) }
 
         // Already running for this device? Reveal it and stop. This has to come before any
