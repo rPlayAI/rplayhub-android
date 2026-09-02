@@ -79,6 +79,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Whether the picture is actually shown. A prepared session (agent pushed + started on device
     /// select) runs with this false, hidden behind the View Screen gate, until the user reveals it.
     private var mirrorRevealed = false
+    /// Devices whose picture the user has actually asked to see.
+    ///
+    /// Selecting a device only PREPARES it (reveal: false), which is right the first time — the
+    /// picture waits behind View Screen. It is wrong on the way back: switching from a device you
+    /// were watching to another and returning showed the idle mockup again, as though nothing had
+    /// been mirroring. Remembering the ones you revealed lets the return show the picture.
+    private var revealedSerials: Set<String> = []
+
+    /// The device the stage is currently showing, whichever path is driving it.
+    private var shownSerial: String? {
+        session?.serial ?? hostedSerial ?? legacySession?.serial
+    }
     private var displayPaused = false
     private var currentDisplayId: Int32 = 0
 
@@ -409,6 +421,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         : "The device is not ready for adb commands.")
             return
         }
+        // A device you were watching stays watched: coming back to it shows the picture rather
+        // than the mockup, while one you have never revealed still waits behind View Screen.
+        let reveal = reveal || revealedSerials.contains(device.serial)
+        if reveal { revealedSerials.insert(device.serial) }
+
         // Already running for this device? Reveal it and stop. This has to come before any
         // teardown below: a selection can be re-delivered (the poll reloads the table, a row is
         // re-selected), and restarting a working session each time is what made mirroring need
@@ -2098,8 +2115,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// object — used by fusion, so opening an app on a virtual display also turns the prepared
     /// session into a live, ungated one.
     private func revealMirror(for device: AdbDevice) {
+        // Asked for explicitly, so it is remembered: coming back to this device later shows the
+        // picture instead of the mockup.
+        revealedSerials.insert(device.serial)
         if (session != nil && session?.serial == device.serial)
-            || (emulatorSession != nil && hostedSerial == device.serial) {
+            || (emulatorSession != nil && hostedSerial == device.serial)
+            || (legacySession != nil && legacySession?.serial == device.serial) {
             mirror.reveal()              // agent already running — show the buffered stream now
             mirrorRevealed = true
             strip.setSessionActive(true)
@@ -2124,6 +2145,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func stopMirroring() {
+        if let serial = shownSerial { revealedSerials.remove(serial) }
         if twinActive { exitTwin() }
         shareInbox.stop()
         discardFusionWindows()
