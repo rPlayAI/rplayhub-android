@@ -36,6 +36,17 @@ Recorded here so a resync can reapply them:
   `kVTVideoDecoderBadDataErr (-12909)`. Ending the stream lets the host reconnect cleanly.
   Candidate for upstreaming.
 
+- **Audio capture source (ours, env-gated):** `audio_streamer.cc`, `audio_record_reader.{h,cc}`,
+  `accessors/audio_record.{h,cc}`. `RPLAYHUB_AUDIO_SUBMIX=2` creates a plain `AudioRecord` on
+  `MediaRecorder.AudioSource.REMOTE_SUBMIX` (scrcpy's capture) instead of upstream's API 34+
+  `AudioPolicy` loopback sink; `=1` forces upstream's AAudio `RemoteSubmixReader`; unset =
+  upstream unchanged. Why: on a Pixel 9a / Android 17 (SDK 37) the policy sink registers, the
+  phone goes quiet, but every packet the encoder emits is a 3-byte DTX frame — the media lands
+  in the legacy submix pipe (`AHAL_StreamRemoteSubmix: outWrite: flushing … to avoid blocking`)
+  while the sink's mix reads zeros; the AAudio reader captures real audio but the policy
+  releases the submix after ~13 s. The plain REMOTE_SUBMIX record holds the route. The host
+  passes `=2` by default. Candidate for upstreaming as a fallback.
+
 - **Sensor channel (new capability, ours):** `sensor_streamer.{h,cc}` (new files), plus hooks in
   `flags.h` (`STREAM_ORIENTATION = 0x100`, kept away from upstream's bits), `agent.{h,cc}`
   (fourth socket, channel marker `'S'`, streamer lifecycle in `Run`/`Shutdown`), and

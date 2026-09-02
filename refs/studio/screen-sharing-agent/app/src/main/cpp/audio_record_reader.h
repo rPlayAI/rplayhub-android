@@ -27,7 +27,7 @@ namespace screensharing {
 class AudioRecordReader : public AudioReader {
 public:
   // Creates a new AudioRecordReader.
-  AudioRecordReader(int32_t num_channels, int32_t sample_rate);
+  AudioRecordReader(int32_t num_channels, int32_t sample_rate, AudioRecord::Source source = AudioRecord::kPolicySink);
   ~AudioRecordReader() override;
 
   virtual bool Start(CodecHandle* codec_handle) override;

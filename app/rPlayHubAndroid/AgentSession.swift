@@ -225,7 +225,14 @@ final class AgentSession {
 
         state = .deploying("starting the agent")
         let maxSize = "\(Int(maxVideoSize.width)),\(Int(maxVideoSize.height))"
-        let command = "CLASSPATH=\(Self.devicePathBase)/\(Self.jarName)"
+        // How the agent captures device audio (RPLAYHUB_AUDIO_SUBMIX, read by our patch in the
+        // agent's audio_streamer.cc). 2 = an AudioRecord on the REMOTE_SUBMIX source, scrcpy's
+        // capture, the default: upstream's API 34+ AudioPolicy loopback sink registers and reads
+        // but yields only silence (3-byte DTX packets) on tegu (Pixel 9a / Android 17), and its
+        // AAudio fallback (1) loses the route after ~13 s. 0 = upstream's behaviour unchanged.
+        let submixEnv = ProcessInfo.processInfo.environment["RPLAYHUB_AUDIO_SUBMIX"] ?? "2"
+        let audioPrefix = ["1", "2"].contains(submixEnv) ? "RPLAYHUB_AUDIO_SUBMIX=\(submixEnv) " : ""
+        let command = "\(audioPrefix)CLASSPATH=\(Self.devicePathBase)/\(Self.jarName)"
             + " app_process \(Self.devicePathBase)"
             + " com.android.tools.screensharing.Main"
             + " --socket=\(socketName)"

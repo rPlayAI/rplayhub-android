@@ -1240,7 +1240,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             lines.append("gyro      \(sensor.packetsReceived) pkts")
         }
         if let audio = session?.audio {
-            lines.append("audio     \(audio.packetsReceived) pkts"
+            lines.append("audio     \(audio.packetsReceived) pkts · peak \(audio.peakDb.isFinite ? "\(Int(audio.peakDb)) dB" : "silence")"
                          + (audio.packetsDropped > 0 ? " (\(audio.packetsDropped) dropped)" : ""))
             if let error = audio.lastError { lines.append("audio err \(error)") }
         }

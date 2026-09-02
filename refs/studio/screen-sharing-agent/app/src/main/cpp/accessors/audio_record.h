@@ -23,7 +23,12 @@ namespace screensharing {
 // Encapsulates android.media.AudioRecord.
 class AudioRecord {
 public:
-  AudioRecord(Jni jni, int32_t audio_sample_rate);
+  // How the record is created. kPolicySink is upstream's dynamic AudioPolicy loopback mix.
+  // kRemoteSubmixSource is a plain AudioRecord on MediaRecorder.AudioSource.REMOTE_SUBMIX —
+  // what scrcpy does — added by rPlayHub because on some devices the policy sink reads silence.
+  enum Source { kPolicySink, kRemoteSubmixSource };
+
+  AudioRecord(Jni jni, int32_t audio_sample_rate, Source source = kPolicySink);
   AudioRecord() noexcept = default;
   ~AudioRecord();
 

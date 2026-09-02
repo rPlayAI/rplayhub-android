@@ -39,6 +39,63 @@ constexpr int AudioMixingRule_RULE_MATCH_ATTRIBUTE_USAGE = 0x1;
 // From https://android.googlesource.com/platform/frameworks/base/+/main/media/java/android/media/AudioTimestamp.java.
 constexpr int AudioTimestamp_TIMEBASE_MONOTONIC = 0;
 
+// From https://developer.android.com/reference/android/media/MediaRecorder.AudioSource#REMOTE_SUBMIX
+constexpr int MediaRecorder_AudioSource_REMOTE_SUBMIX = 8;
+// From https://developer.android.com/reference/android/media/AudioFormat#CHANNEL_IN_STEREO
+constexpr int AudioFormat_CHANNEL_IN_STEREO = 0x4 | 0x8;
+// From https://developer.android.com/reference/android/media/AudioRecord#STATE_INITIALIZED
+constexpr int AudioRecord_STATE_INITIALIZED = 1;
+
+// rPlayHub: a plain AudioRecord on the REMOTE_SUBMIX source (scrcpy's capture). Unlike the
+// policy sink below it registers no AudioMix; the audio policy routes media into the submix for
+// as long as this record is active, and the shell uid holds CAPTURE_AUDIO_OUTPUT.
+JObject CreateRemoteSubmixAudioRecord(Jni jni, int32_t audio_sample_rate) {
+  JClass format_builder_class = jni.GetClass("android/media/AudioFormat$Builder");
+  JObject format_builder = format_builder_class.NewObject(jni, format_builder_class.GetConstructor());
+  format_builder.CallObjectMethod(
+      jni, format_builder_class.GetMethod(jni, "setSampleRate", "(I)Landroid/media/AudioFormat$Builder;"), audio_sample_rate);
+  format_builder.CallObjectMethod(
+      jni, format_builder_class.GetMethod(jni, "setEncoding", "(I)Landroid/media/AudioFormat$Builder;"), AudioFormat_ENCODING_PCM_16BIT);
+  format_builder.CallObjectMethod(
+      jni, format_builder_class.GetMethod(jni, "setChannelMask", "(I)Landroid/media/AudioFormat$Builder;"), AudioFormat_CHANNEL_IN_STEREO);
+  JObject format = format_builder.CallObjectMethod(jni, format_builder_class.GetMethod(jni, "build", "()Landroid/media/AudioFormat;"));
+
+  JClass audio_record_class = jni.GetClass("android/media/AudioRecord");
+  jmethodID min_buffer_method = audio_record_class.GetStaticMethod("getMinBufferSize", "(III)I");
+  int32_t min_buffer = audio_record_class.CallStaticIntMethod(
+      jni, min_buffer_method, audio_sample_rate, AudioFormat_CHANNEL_IN_STEREO, AudioFormat_ENCODING_PCM_16BIT);
+  if (min_buffer <= 0) {
+    Log::W("Audio: AudioRecord.getMinBufferSize returned %d", min_buffer);
+    min_buffer = audio_sample_rate * 2 * 2 / 10;  // 100 ms of stereo PCM16
+  }
+
+  JClass builder_class = jni.GetClass("android/media/AudioRecord$Builder");
+  JObject builder = builder_class.NewObject(jni, builder_class.GetConstructor());
+  builder.CallObjectMethod(
+      jni, builder_class.GetMethod(jni, "setAudioSource", "(I)Landroid/media/AudioRecord$Builder;"), MediaRecorder_AudioSource_REMOTE_SUBMIX);
+  builder.CallObjectMethod(
+      jni, builder_class.GetMethod(jni, "setAudioFormat", "(Landroid/media/AudioFormat;)Landroid/media/AudioRecord$Builder;"), format.ref());
+  builder.CallObjectMethod(
+      jni, builder_class.GetMethod(jni, "setBufferSizeInBytes", "(I)Landroid/media/AudioRecord$Builder;"), min_buffer * 4);
+  JObject audio_record = builder.CallObjectMethod(jni, builder_class.GetMethod(jni, "build", "()Landroid/media/AudioRecord;"));
+  JThrowable exception = jni.GetAndClearException();
+  if (exception.IsNotNull()) {
+    Log::E(std::move(exception), "AudioRecord.Builder.build (REMOTE_SUBMIX) threw");
+    return JObject();
+  }
+  if (audio_record.IsNull()) {
+    Log::W("Audio: unable to create the REMOTE_SUBMIX AudioRecord");
+    return JObject();
+  }
+  int32_t state = audio_record.CallIntMethod(jni, audio_record_class.GetMethod(jni, "getState", "()I"));
+  if (state != AudioRecord_STATE_INITIALIZED) {
+    Log::W("Audio: REMOTE_SUBMIX AudioRecord state %d", state);
+    return JObject();
+  }
+  Log::I("Audio: REMOTE_SUBMIX AudioRecord created, buffer %d bytes", min_buffer * 4);
+  return audio_record;
+}
+
 JObject CreateAudioRecord(Jni jni, int32_t audio_sample_rate) {
   // Create an AudioAttributes object representing an unused usage type.
   JClass audio_attributes_builder_class = jni.GetClass("android/media/AudioAttributes$Builder");
@@ -125,8 +182,9 @@ JObject CreateAudioRecord(Jni jni, int32_t audio_sample_rate) {
 
 }  // namespace
 
-AudioRecord::AudioRecord(Jni jni, int32_t audio_sample_rate)
-    : audio_record_(CreateAudioRecord(jni, audio_sample_rate).ToGlobal()) {
+AudioRecord::AudioRecord(Jni jni, int32_t audio_sample_rate, Source source)
+    : audio_record_((source == kRemoteSubmixSource ? CreateRemoteSubmixAudioRecord(jni, audio_sample_rate)
+                                                   : CreateAudioRecord(jni, audio_sample_rate)).ToGlobal()) {
   if (audio_record_.IsNull()) {
     return;
   }

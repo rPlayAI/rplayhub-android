@@ -33,9 +33,9 @@ constexpr int BUF_SIZE = 1024;
 
 }  // namespace
 
-AudioRecordReader::AudioRecordReader(int32_t num_channels, int32_t sample_rate)
+AudioRecordReader::AudioRecordReader(int32_t num_channels, int32_t sample_rate, AudioRecord::Source source)
     : AudioReader(num_channels, sample_rate) {
-  audio_record_ = AudioRecord(Jvm::GetJni(), sample_rate);
+  audio_record_ = AudioRecord(Jvm::GetJni(), sample_rate, source);
 }
 
 AudioRecordReader::~AudioRecordReader() {

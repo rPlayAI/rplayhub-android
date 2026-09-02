@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+#include <cstdlib>
+
 #include "audio_streamer.h"
 
 #include "agent.h"
@@ -163,10 +165,23 @@ bool AudioStreamer::StartAudioCapture() {
   }
 
   bool use_audio_record = Agent::feature_level() >= 34;
+  // rPlayHub divergence (env-gated, unset = upstream): RPLAYHUB_AUDIO_SUBMIX=1 forces the
+  // AAudio RemoteSubmixReader; =2 an AudioRecord on the REMOTE_SUBMIX source (scrcpy's
+  // capture). On Pixel 9a / Android 17 the policy sink below registers and reads but yields
+  // only silence (the media lands in the legacy submix pipe, which the HAL flushes), and the
+  // AAudio reader holds the route for ~13 s before the policy releases it; the plain
+  // REMOTE_SUBMIX record holds it for as long as it runs. Verified end to end there.
+  const char* force_submix = getenv("RPLAYHUB_AUDIO_SUBMIX");
+  bool submix_source = force_submix != nullptr && force_submix[0] == '2';
+  if (force_submix != nullptr && (force_submix[0] == '1' || force_submix[0] == 't')) {
+    Log::D("Audio: RPLAYHUB_AUDIO_SUBMIX set — forcing RemoteSubmixReader");
+    use_audio_record = false;
+  }
   for (;;) {
     if (use_audio_record) {
-      Log::D("Audio: using AudioRecordReader");
-      audio_reader_ = new AudioRecordReader(CHANNEL_COUNT, AUDIO_SAMPLE_RATE);
+      Log::D("Audio: using AudioRecordReader (%s)", submix_source ? "REMOTE_SUBMIX source" : "policy sink");
+      audio_reader_ = new AudioRecordReader(CHANNEL_COUNT, AUDIO_SAMPLE_RATE,
+                                            submix_source ? AudioRecord::kRemoteSubmixSource : AudioRecord::kPolicySink);
     } else {
       Log::D("Audio: using RemoteSubmixReader");
       audio_reader_ = new RemoteSubmixReader(CHANNEL_COUNT, AUDIO_SAMPLE_RATE);
