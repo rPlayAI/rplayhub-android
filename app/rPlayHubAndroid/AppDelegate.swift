@@ -423,18 +423,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func startEmulatorHost(for device: AdbDevice) -> Bool {
         guard let port = EmulatorSession.discoverGrpcPort(serial: device.serial),
               let bridge = EmulatorSession.bridgeURL else { return false }
-        let e = EmulatorSession(bridge: bridge, port: port)
+        // Studio's model: the engine scales the display to the view's size and we re-request on
+        // resize — no PNG encode on the engine, no decode here. RPLAYHUB_EMU_PNG=1 keeps the
+        // whole-display PNG path for comparison.
+        let scaled = ProcessInfo.processInfo.environment["RPLAYHUB_EMU_PNG"] == "1" ? nil : stagePixelSize()
+        let e = EmulatorSession(bridge: bridge, port: port, scaledTo: scaled)
         emulatorSession = e
         hostedSerial = device.serial
         mirror.emulator = e
+        watchStageForResize()
         mirrorRevealed = true
         refreshMirrorToggle()
         window.subtitle = "connecting to emulator"
         var announced = false
-        e.onFrame = { [weak self] picture, size in
+        e.onFrame = { [weak self] picture, size, display in
             DispatchQueue.main.async {
                 guard let self, self.emulatorSession === e else { return }
-                self.mirror.present(picture: picture, size: size)
+                self.mirror.present(picture: picture, size: size, displaySize: display)
                 if !announced {
                     announced = true
                     self.window.subtitle = "hosting"
@@ -458,6 +463,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         e.start()
         return true
+    }
+
+    /// The mirror's stage in pixels — what a scaled emulator stream is fitted to. Zero (not laid
+    /// out yet) asks for the native size.
+    private func stagePixelSize() -> CGSize {
+        let scale = mirror.window?.backingScaleFactor ?? 2
+        let b = mirror.bounds.size
+        guard b.width > 0, b.height > 0 else { return .zero }
+        return CGSize(width: (b.width * scale).rounded(), height: (b.height * scale).rounded())
+    }
+
+    private var stageResizeObserver: Any?
+    private var stageResizeWork: DispatchWorkItem?
+
+    /// Re-request the scaled stream when the stage changes size, debounced so a live window drag
+    /// does not restart the stream on every pixel.
+    private func watchStageForResize() {
+        if stageResizeObserver == nil {
+            mirror.postsFrameChangedNotifications = true
+            stageResizeObserver = NotificationCenter.default.addObserver(
+                forName: NSView.frameDidChangeNotification, object: mirror, queue: .main) { [weak self] _ in
+                guard let self, let e = self.emulatorSession, e.scaledTo != nil else { return }
+                self.stageResizeWork?.cancel()
+                let work = DispatchWorkItem { [weak self] in
+                    guard let self, let e = self.emulatorSession, e.scaledTo != nil else { return }
+                    let size = self.stagePixelSize()
+                    if size.width > 0 { e.setSize(size) }
+                }
+                self.stageResizeWork = work
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
+            }
+        }
     }
 
     /// Where the main stage's display comes out: the mirror, and the twin when it is up.

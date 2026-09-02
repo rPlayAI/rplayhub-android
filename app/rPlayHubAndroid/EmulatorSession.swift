@@ -9,17 +9,23 @@
 //  bridges it over stdio: frames come out as [4-byte BE length][PNG]; input goes in as JSON lines.
 //
 
+import Accelerate
 import AppKit
 import CoreVideo
 import ImageIO
 
 final class EmulatorSession {
-    /// A decoded frame, ready for the mirror's display layer, and its pixel size.
-    var onFrame: ((CVPixelBuffer, CGSize) -> Void)?
+    /// A frame ready for the mirror's display layer, its pixel size, and the display's native
+    /// size oriented like the frame (equal to the frame's when the stream is not scaled) — what
+    /// input coordinates must be expressed in.
+    var onFrame: ((CVPixelBuffer, CGSize, CGSize) -> Void)?
     /// The bridge ended (emulator gone, gRPC refused…). Not called after `stop()`.
     var onExit: ((String) -> Void)?
 
     let port: Int
+    /// Scaled RGB888 frames fitted to this size (Studio's model: the stream is the view's size,
+    /// re-requested on resize) instead of whole-display PNGs. nil = the PNG path.
+    let scaledTo: CGSize?
     private let bridgeURL: URL
     private let process = Process()
     private let input = Pipe()
@@ -28,9 +34,10 @@ final class EmulatorSession {
     private var stopped = false
     private let queue = DispatchQueue(label: "ai.rplay.rplayhub.emulator-frames")
 
-    init(bridge: URL, port: Int) {
+    init(bridge: URL, port: Int, scaledTo: CGSize? = nil) {
         bridgeURL = bridge
         self.port = port
+        self.scaledTo = scaledTo
     }
 
     // MARK: - discovery
@@ -90,7 +97,9 @@ final class EmulatorSession {
 
     func start() {
         process.executableURL = bridgeURL
-        process.arguments = [String(port)]
+        var arguments = [String(port)]
+        if let scaledTo { arguments += ["--rgb", "\(Int(scaledTo.width))x\(Int(scaledTo.height))"] }
+        process.arguments = arguments
         process.standardInput = input
         process.standardOutput = output
         process.standardError = FileHandle.standardError
@@ -128,10 +137,50 @@ final class EmulatorSession {
         while buffer.count >= 4 {
             let length = buffer.prefix(4).reduce(0) { ($0 << 8) | Int($1) }
             guard buffer.count >= 4 + length else { return }
-            let png = buffer.subdata(in: 4 ..< 4 + length)
+            let payload = buffer.subdata(in: 4 ..< 4 + length)
             buffer.removeSubrange(0 ..< 4 + length)
-            if let (picture, size) = Self.decode(png) { onFrame?(picture, size) }
+            if scaledTo != nil {
+                if let (picture, size, native) = Self.unpackRGB(payload) { onFrame?(picture, size, native) }
+            } else if let (picture, size) = Self.decode(payload) {
+                onFrame?(picture, size, size)
+            }
         }
+    }
+
+    /// Ask for the stream at a new size (the bridge restarts it). Scaled mode only.
+    func setSize(_ size: CGSize) {
+        guard scaledTo != nil else { return }
+        send(#"{"size":{"w":\#(Int(size.width)),"h":\#(Int(size.height))}}"#)
+    }
+
+    /// `[w][h][nativeW][nativeH]` (big-endian) + RGB888 → a BGRA pixel buffer via vImage. No
+    /// codec on either side: the engine scales and copies, we swizzle.
+    private static func unpackRGB(_ d: Data) -> (CVPixelBuffer, CGSize, CGSize)? {
+        guard d.count >= 16 else { return nil }
+        func u32(_ i: Int) -> Int { d[i ..< i + 4].reduce(0) { ($0 << 8) | Int($1) } }
+        let w = u32(0), h = u32(4), nw = u32(8), nh = u32(12)
+        guard w > 0, h > 0, d.count >= 16 + w * h * 3 else { return nil }
+        var pb: CVPixelBuffer?
+        let attrs: [CFString: Any] = [kCVPixelBufferIOSurfacePropertiesKey: [:]]
+        guard CVPixelBufferCreate(nil, w, h, kCVPixelFormatType_32BGRA, attrs as CFDictionary, &pb)
+                == kCVReturnSuccess, let pb else { return nil }
+        CVPixelBufferLockBaseAddress(pb, [])
+        defer { CVPixelBufferUnlockBaseAddress(pb, []) }
+        let ok: Bool = d.withUnsafeBytes { raw in
+            guard let base = raw.baseAddress else { return false }
+            var src = vImage_Buffer(data: UnsafeMutableRawPointer(mutating: base + 16),
+                                    height: vImagePixelCount(h), width: vImagePixelCount(w), rowBytes: w * 3)
+            var dst = vImage_Buffer(data: CVPixelBufferGetBaseAddress(pb),
+                                    height: vImagePixelCount(h), width: vImagePixelCount(w),
+                                    rowBytes: CVPixelBufferGetBytesPerRow(pb))
+            return vImageConvert_RGB888toBGRA8888(&src, nil, 255, &dst, false, vImage_Flags(kvImageNoFlags)) == kvImageNoError
+        }
+        guard ok else { return nil }
+        // The native size, oriented like the frame: a rotated guest streams landscape, and input
+        // coordinates live in that rotated framebuffer.
+        var native = CGSize(width: nw, height: nh)
+        if (w > h) != (nw > nh) { native = CGSize(width: nh, height: nw) }
+        return (pb, CGSize(width: w, height: h), native)
     }
 
     /// PNG → BGRA pixel buffer, the same kind the video decoder hands the display layer.

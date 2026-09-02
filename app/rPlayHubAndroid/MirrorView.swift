@@ -358,11 +358,14 @@ final class MirrorView: NSView, NSMenuItemValidation {
     /// A hosted emulator's frame: a whole display at native size, already oriented. There is no
     /// packet header to describe it, so the frame is its own geometry. The emulator's rotation
     /// changes the frame's aspect (a rotated guest streams landscape), which the layout follows.
-    func present(picture: CVPixelBuffer, size: CGSize) {
-        if size != videoSize {
+    /// `displaySize` is the display's real pixel size oriented like the frame — the frame
+    /// itself when the stream is native, the engine's unscaled size when it is scaled to fit the
+    /// view — and is what `devicePoint` maps input into.
+    func present(picture: CVPixelBuffer, size: CGSize, displaySize display: CGSize) {
+        if size != videoSize || display != displaySize {
             videoSize = size
-            displaySize = size
-            AppBuild.log("emulator: frame \(Int(size.width))x\(Int(size.height))")
+            displaySize = display
+            AppBuild.log("emulator: frame \(Int(size.width))x\(Int(size.height)) of display \(Int(display.width))x\(Int(display.height))")
         }
         if isGated, autoReveal { isGated = false }
         displayLayer.present(picture)

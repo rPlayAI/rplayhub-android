@@ -58,7 +58,8 @@ public enum EmulatorTransport {
         fmt.height = height
         fmt.display = UInt32(display)
         let img = try await c.getScreenshot(request: ClientRequest(message: fmt))
-        return (img.image, img.width, img.height)
+        return (img.image, img.width > 0 ? img.width : img.format.width,
+                img.height > 0 ? img.height : img.format.height)
     }
 
     /// Stream display frames as they change (server-streaming). Calls `onFrame(bytes,w,h)` per
@@ -73,9 +74,21 @@ public enum EmulatorTransport {
         fmt.format = format; fmt.width = width; fmt.height = height; fmt.display = UInt32(display)
         try await c.streamScreenshot(request: ClientRequest(message: fmt)) { response in
             for try await img in response.messages {
-                await onFrame(img.image, img.width, img.height)
+                // The engine fills format.width/height with the delivered size and leaves the
+                // top-level width/height at 0 (observed on emulator 37.1).
+                let w = img.width > 0 ? img.width : img.format.width
+                let h = img.height > 0 ? img.height : img.format.height
+                await onFrame(img.image, w, h)
             }
         }
+    }
+
+    /// The emulator's displays (0 is the main screen) with their native pixel sizes.
+    public static func displayConfigurations(
+        _ c: EmulatorController.Client<HTTP2ClientTransport.Posix>
+    ) async throws -> [Android_Emulation_Control_DisplayConfiguration] {
+        try await c.getDisplayConfigurations(
+            request: ClientRequest(message: SwiftProtobuf.Google_Protobuf_Empty())).displays
     }
 
     public static func status(

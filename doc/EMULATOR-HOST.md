@@ -28,7 +28,7 @@ Read `doc/HANDOFF.md` for the app in general; this file is only the emulator tra
 |---|---|---|
 | `EmulatorTransport` | `emulator-transport/` (SwiftPM, NOT part of the app build) | grpc-swift v2 client; pre-generated protobuf/gRPC stubs in `Sources/EmulatorTransport/Generated` (the SPM protoc plugin can't find brew protoc — don't re-add it). `EmulatorTransport.swift` = connect/screenshot/stream/status/tap/key; `Input.swift` = touch/typeText/pressKey/rotate. |
 | `emulator-bridge` | same package, executable | Spawned by the app per hosted session. gRPC ↔ stdio so **grpc-swift never links into the app**. stdout: `[4-byte BE length][PNG]` frames. stdin: JSON lines (`touch`, `tap`, `press`, `text`, `rotate`, `key`, `quit` — documented at the top of `Sources/emulator-bridge/main.swift`). |
-| `EmulatorSession` | `app/rPlayHubAndroid/EmulatorSession.swift` | App side. Discovers the gRPC port, spawns the bridge, parses frames, decodes PNG → BGRA `CVPixelBuffer` on its own queue, exposes `onFrame`/`onExit`; input helpers (`sendTouch`, `press`, `type`, `rotate`, `perform(ControlStrip.Action)`) and the AndroidKey → DOM-key map. |
+| `EmulatorSession` | `app/rPlayHubAndroid/EmulatorSession.swift` | App side. Discovers the gRPC port, spawns the bridge, parses frames → BGRA `CVPixelBuffer` on its own queue (scaled RGB888 via vImage by default, PNG when `scaledTo` is nil), exposes `onFrame(buffer, frameSize, displaySize)`/`onExit`; `setSize` re-requests the stream on resize; input helpers (`sendTouch`, `press`, `type`, `rotate`, `perform(ControlStrip.Action)`) and the AndroidKey → DOM-key map. |
 | `MirrorView` | `present(picture:size:)`, `var emulator` | The frame is its own geometry (videoSize = displaySize = frame pixels; rotation shows up as a landscape frame). Touch/keys route to `emulator` when set, else to the agent `control`. `inputLive` gates both. |
 | `AppDelegate` | `startEmulatorHost(for:)`, branch in `startSession`, `perform(action:)` | If `device.isEmulator && AppBuild.emulatorHostEnabled` and a port + bridge are found → host; otherwise falls back to the adb/agent path silently (logged). |
 | Gate | `AppBuild.emulatorHostEnabled` | `RPLAYHUB_EMU=1` env or `EmulatorHostEnabled` default. Off by default: shipping builds carry no behaviour change. |
@@ -164,8 +164,17 @@ will do; the notes above use one called `rplay-test`.
 1. ~~Launch from the app ("+ Emulator")~~ — shipped 2026-09-01, see above. Follow-ups: a
    snapshot (quick-boot) option instead of always `-no-snapshot`; "keep running after quit";
    showing the boot animation before adb is up (host on gRPC alone, with a placeholder row).
-2. **Frame path** — ask `streamScreenshot` for a smaller `RGBA8888`/`RGB888` image at the window's
-   scale (skip PNG), or move to the emulator's WebRTC/`Rtc` service for a real video stream.
+2. ~~Frame path~~ — shipped 2026-09-01. The bridge now streams **scaled RGB888** by default,
+   not whole-display PNG: `emulator-bridge <port> --rgb <w>x<h>` asks `streamScreenshot` for an
+   `RGB888` image fitted to the view (aspect kept; the engine scales and copies, no encode), and
+   the app converts RGB888→BGRA with vImage (`vImageConvert_RGB888toBGRA8888`) — no PNG decode.
+   Each frame is `[w][h][nativeW][nativeH]` (BE) + pixels; the native size (oriented like the
+   frame) is what input maps into, since the stream is smaller than the display. The app requests
+   the stage's pixel size and re-requests on resize (debounced 0.3 s; the bridge cancels and
+   restarts the stream, Studio's model). `EmulatorSession(scaledTo:)` drives it; `RPLAYHUB_EMU_PNG=1`
+   keeps the old whole-display PNG path. A ~730×1640 RGB frame is ~3.6 MB raw vs ~1.8 MB PNG but
+   costs no encode/decode; the real win is skipping PNG on both ends and only sending view-sized
+   pixels. WebRTC/`Rtc` remains an option for a true delta-coded video stream.
 3. **Input polish** — scrollWheel (currently agent-only), multi-touch, mouse buttons; the
    emulator also accepts `sendMouse`.
 4. **Auth** for emulators started elsewhere (token/JWT from the discovery file).
