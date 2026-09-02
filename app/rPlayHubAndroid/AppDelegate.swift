@@ -108,6 +108,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         shareInbox.stop()
         session?.stop()
         emulatorSession?.stop()
+        EmulatorLauncher.shared.shutDownAll()
         FinderMount.removeAll()
     }
 
@@ -237,6 +238,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         sidebar.onDesktopMode = { [weak self] device in self?.requestDesktopMode(on: device) }
         sidebar.onShowInFinder = { device in FinderMount.reveal(serial: device.serial) }
         sidebar.onInstallCompanion = { [weak self] device in self?.installCompanion(on: device) }
+        sidebar.onShutDownEmulator = { [weak self] device in self?.shutDownEmulator(device) }
+        EmulatorLauncher.shared.onPhase = { [weak self] serial, phase in
+            guard let self, let launch = EmulatorLauncher.shared.launches[serial] else { return }
+            self.sidebar.setLaunching(serial: serial, avdName: launch.avd.name, phase: phase)
+        }
         mirror.onViewScreen = { [weak self] in
             guard let self else { return }
             // Fall back to the only device there is. Requiring a selection when there is
@@ -309,6 +315,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 guard let self else { return }
                 self.sidebar.update(devices: captured.0, note: captured.1)
                 FinderMount.sync(devices: captured.0)
+                if let serial = self.pendingEmulatorSerial,
+                   let device = captured.0.first(where: { $0.serial == serial && $0.isReady }) {
+                    self.pendingEmulatorSerial = nil
+                    self.sidebar.clearLaunching(serial: serial)
+                    self.sidebar.select(serial: serial)       // prepares (hosts) it on select
+                    self.revealMirror(for: device)
+                }
                 // Nothing to choose between: select it, so the inspector has a device rather
                 // than showing "No device selected" beside a list of exactly one.
                 if self.sidebar.selected == nil {
@@ -326,6 +339,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             mirror.deviceSubtitle = nil
             deviceTitleName.stringValue = "No device"
             deviceTitleDetail.stringValue = ""
+            propertiesForSerial = nil      // the device went away; the same serial may come back
             return
         }
         let name = sidebar.friendlyName(for: device)     // "Emulator · <avd>" once known
@@ -399,6 +413,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - hosted emulator (Android Studio's model)
 
     private var emulatorSession: EmulatorSession?
+    /// The serial `emulatorSession` hosts, so reveal/stop can tell it from an agent session.
+    private var hostedSerial: String?
+    /// The serial of an emulator we launched ("+ Emulator") and will host as soon as adb lists it.
+    private var pendingEmulatorSerial: String?
 
     /// Host `device` through its gRPC bridge. False when there is nothing to connect to — the
     /// caller falls back to mirroring it over adb like any device.
@@ -407,6 +425,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
               let bridge = EmulatorSession.bridgeURL else { return false }
         let e = EmulatorSession(bridge: bridge, port: port)
         emulatorSession = e
+        hostedSerial = device.serial
         mirror.emulator = e
         mirrorRevealed = true
         refreshMirrorToggle()
@@ -420,6 +439,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     announced = true
                     self.window.subtitle = "hosting"
                     self.strip.setSessionActive(true)
+                    // adb is live on the hosted instance, so the panel's shape (corner radius,
+                    // cutout) is read the same way as a phone's — the emulator paints its
+                    // cutout into the framebuffer itself, but the corners are ours to round.
+                    self.loadDisplayShape(device.serial, waitingForBoot: true)
                 }
             }
         }
@@ -1167,11 +1190,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// The screen's physical outline — rounded corners and the camera hole. One dumpsys call,
     /// off the main queue, once per session; it cannot change while the device is plugged in.
-    private func loadDisplayShape(_ serial: String) {
+    private func loadDisplayShape(_ serial: String, waitingForBoot: Bool = false) {
         DispatchQueue.global(qos: .utility).async { [weak self] in
-            let shape = DisplayShape.query(serial: serial)
+            var shape = DisplayShape.query(serial: serial)
+            // A hosted emulator is asked as soon as its first frame arrives — seconds into boot,
+            // before system_server answers dumpsys — so keep asking until Android is up.
+            var attempts = waitingForBoot ? 45 : 0
+            while shape == nil, attempts > 0 {
+                Thread.sleep(forTimeInterval: 2)
+                shape = DisplayShape.query(serial: serial)
+                attempts -= 1
+            }
             DispatchQueue.main.async { [weak self] in
-                guard self?.session?.serial == serial else { return }
+                guard self?.session?.serial == serial || self?.hostedSerial == serial else { return }
                 self?.mirror.displayShape = shape
                 if let shape {
                     AppBuild.log("display shape: corner r=\(Int(shape.cornerRadius)) "
@@ -1897,7 +1928,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// object — used by fusion, so opening an app on a virtual display also turns the prepared
     /// session into a live, ungated one.
     private func revealMirror(for device: AdbDevice) {
-        if let session, session.serial == device.serial {
+        if (session != nil && session?.serial == device.serial)
+            || (emulatorSession != nil && hostedSerial == device.serial) {
             mirror.reveal()              // agent already running — show the buffered stream now
             mirrorRevealed = true
             strip.setSessionActive(true)
@@ -1927,6 +1959,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         discardFusionWindows()
         session?.stop()
         session = nil
+        emulatorSession?.stop()
+        emulatorSession = nil
+        hostedSerial = nil
         mirrorRevealed = false
         healthTimer?.invalidate()
         mirror.reset()
@@ -2129,8 +2164,10 @@ extension AppDelegate: NSToolbarDelegate {
                                                   dividerIndex: 1)
 
         case Self.addDeviceItem:
-            return icon("plus", "Add", "Connect a device over the network",
-                        #selector(addDeviceTapped))
+            return icon("plus", "Add",
+                        AppBuild.emulatorLaunchEnabled ? "Connect a device or start an emulator"
+                                                       : "Connect a device over the network",
+                        #selector(addDeviceTapped(_:)))
         case Self.sortItem:
             return icon("line.3.horizontal.decrease", "Sort", "Sort Devices",
                         #selector(sortDevicesTapped))
@@ -2173,7 +2210,114 @@ extension AppDelegate {
     ///
     /// Port 5555 is filled in because that is what `adb tcpip 5555` opens and what practically
     /// every network device listens on; typing a bare address should just work.
-    @objc func addDeviceTapped() {
+    @objc func addDeviceTapped(_ sender: Any?) {
+        guard AppBuild.emulatorLaunchEnabled else { connectDeviceDialog(); return }
+        let menu = NSMenu()
+        menu.addItem(withTitle: "Connect to Device over Network…",
+                     action: #selector(connectDeviceFromMenu), keyEquivalent: "").target = self
+        menu.addItem(.separator())
+        let heading = menu.addItem(withTitle: "Start Emulator", action: nil, keyEquivalent: "")
+        heading.isEnabled = false
+        let avds = Avd.all()
+        let running = EmulatorLauncher.runningAvds()
+        if AndroidSdk.emulatorBinary == nil {
+            menu.addItem(withTitle: "Android SDK emulator not found", action: nil, keyEquivalent: "")
+                .isEnabled = false
+        } else if avds.isEmpty {
+            let none = menu.addItem(withTitle: "No AVDs in \(AndroidSdk.avdHome.path)",
+                                    action: nil, keyEquivalent: "")
+            none.isEnabled = false
+        }
+        for avd in avds {
+            let item = menu.addItem(withTitle: avd.displayName, action: #selector(launchEmulatorFromMenu(_:)),
+                                    keyEquivalent: "")
+            item.target = self
+            item.representedObject = avd.name
+            item.indentationLevel = 1
+            var detail = avd.subtitle
+            if let serial = running[avd.name] {
+                item.isEnabled = false
+                item.state = .on
+                detail = "running as \(serial)"
+            } else if EmulatorLauncher.shared.launches.values.contains(where: { $0.avd.name == avd.name }) {
+                item.isEnabled = false
+                detail = "starting…"
+            }
+            if #available(macOS 14.4, *) { item.subtitle = detail } else { item.toolTip = detail }
+        }
+        menu.addItem(.separator())
+        let locate = menu.addItem(withTitle: "Locate Android SDK…", action: #selector(locateAndroidSdk),
+                                  keyEquivalent: "")
+        locate.target = self
+        locate.toolTip = AndroidSdk.root?.path ?? "No SDK with the emulator installed was found"
+        if let item = sender as? NSToolbarItem, let button = item.view {
+            menu.popUp(positioning: nil, at: NSPoint(x: 0, y: button.bounds.height), in: button)
+        } else {
+            menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
+        }
+    }
+
+    @objc private func connectDeviceFromMenu() { connectDeviceDialog() }
+
+    @objc private func launchEmulatorFromMenu(_ sender: NSMenuItem) {
+        guard let name = sender.representedObject as? String,
+              let avd = Avd.all().first(where: { $0.name == name }) else { return }
+        launchEmulator(avd)
+    }
+
+    /// Point the launcher at an SDK by hand — for an install outside the usual places.
+    @objc private func locateAndroidSdk() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.message = "Choose the Android SDK folder (the one containing emulator/ and platform-tools/)"
+        panel.prompt = "Use SDK"
+        if let current = AndroidSdk.root { panel.directoryURL = current }
+        panel.beginSheetModal(for: window) { [weak self] response in
+            guard response == .OK, let url = panel.url else { return }
+            guard AndroidSdk.hasEmulator(url) else {
+                self?.present(message: "No emulator in that folder",
+                              detail: "\(url.path) has no emulator/emulator. Install the emulator package into the SDK (sdkmanager emulator) and try again.")
+                return
+            }
+            UserDefaults.standard.set(url.path, forKey: AndroidSdk.rootDefaultsKey)
+            AppBuild.log("emulator: SDK root set to \(url.path)")
+        }
+    }
+
+    /// Start an AVD headless with gRPC and host it when it is up. The sidebar shows a
+    /// "starting…" row under Emulators meanwhile; adb lists the instance on its own once adbd
+    /// is up, and the poll then swaps the real row in and reveals the mirror.
+    private func launchEmulator(_ avd: Avd) {
+        // Captured by reference: the launcher returns the serial before any asynchronous
+        // outcome, and a synchronous failure (no SDK, no port) reports before it is set — when
+        // no row was added either.
+        var serial: String?
+        serial = EmulatorLauncher.shared.launch(avd) { [weak self] result in
+            guard let self else { return }
+            switch result {
+            case .success(let ready):
+                self.pendingEmulatorSerial = ready
+                self.refreshDevices()
+            case .failure(let error):
+                if let serial { self.sidebar.clearLaunching(serial: serial) }
+                self.present(message: "Could not start \(avd.displayName)", detail: "\(error)")
+            }
+        }
+        if let serial {
+            sidebar.setLaunching(serial: serial, avdName: avd.name, phase: "starting the engine…")
+        }
+    }
+
+    /// Shut the engine down. If it is the one being hosted, take the host down first so the
+    /// bridge's exit does not read as a failure.
+    private func shutDownEmulator(_ device: AdbDevice) {
+        if hostedSerial == device.serial { stopMirroring() }
+        EmulatorLauncher.shared.shutDown(serial: device.serial)
+    }
+
+    /// Connect a device over the network: `adb connect host:port`.
+    private func connectDeviceDialog() {
         let alert = NSAlert()
         alert.messageText = "Connect to a device"
         alert.informativeText = "The device must already have wireless debugging enabled, and "

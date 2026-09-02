@@ -32,6 +32,7 @@ Read `doc/HANDOFF.md` for the app in general; this file is only the emulator tra
 | `MirrorView` | `present(picture:size:)`, `var emulator` | The frame is its own geometry (videoSize = displaySize = frame pixels; rotation shows up as a landscape frame). Touch/keys route to `emulator` when set, else to the agent `control`. `inputLive` gates both. |
 | `AppDelegate` | `startEmulatorHost(for:)`, branch in `startSession`, `perform(action:)` | If `device.isEmulator && AppBuild.emulatorHostEnabled` and a port + bridge are found → host; otherwise falls back to the adb/agent path silently (logged). |
 | Gate | `AppBuild.emulatorHostEnabled` | `RPLAYHUB_EMU=1` env or `EmulatorHostEnabled` default. Off by default: shipping builds carry no behaviour change. |
+| `EmulatorLauncher` | `app/rPlayHubAndroid/EmulatorLauncher.swift` | "+ Emulator". `AndroidSdk` (SDK root + AVD home resolution, ini parsing), `Avd` (the list, from `<avd home>/*.ini` + `config.ini`), `EmulatorLauncher` (free ports, headless launch, wait, shut down). Gate `AppBuild.emulatorLaunchEnabled` = host gate **and not sandboxed** (`APP_SANDBOX_CONTAINER_ID` unset) — DMG-only by construction. |
 | Bundling | `tools/gen-xcodeproj.py` (Release bundle phase), `tools/package-dmg.sh` | Copies `emulator-transport/.build/arm64-apple-macosx/{release,debug}/emulator-bridge` to `Contents/MacOS/emulator-bridge`, signed with `adb-inherit.entitlements` like adb (it needs the app's `network.client` inside the sandbox). Missing binary = warning + adb fallback, never a build failure. |
 
 ## How the port is found (no configuration)
@@ -51,6 +52,68 @@ matches `port.serial` to the serial and returns `grpc.port`. `RPLAYHUB_EMU_PORT`
 `setPhysicalModel(ROTATION, [0,0,z])`, z = −90·quadrant. Touch is `sendTouch` with pressure 1
 (down/move) / 0 (up) on identifier 0; coordinates are display pixels, which is what `MirrorView`
 already produces because displaySize == frame size. Screenshot and Record stay on adb.
+
+## "+ Emulator" (launch from the app)
+
+The sidebar's `+` becomes a menu when the launch gate is on: **Connect to Device over Network…**,
+then **Start Emulator** with one entry per AVD (`displayname`, subtitle "Pixel 9 · API 35 ·
+arm64-v8a"; a running one is checked and disabled with its serial, one being started says so),
+then **Locate Android SDK…** (folder picker, saved as the `AndroidSdkRoot` default). With the gate
+off `+` is the plain connect dialog it always was.
+
+What a launch does (`EmulatorLauncher.launch`):
+
+1. SDK root = `AndroidSdkRoot` default → `$ANDROID_HOME`/`$ANDROID_SDK_ROOT` → `~/Library/Android/sdk`
+   → the homebrew `android-commandlinetools` → the SDK the found adb lives in; the first with
+   `emulator/emulator`. AVD home the way the emulator resolves it (`ANDROID_AVD_HOME`,
+   `ANDROID_USER_HOME/avd`, `ANDROID_SDK_HOME/.android/avd`, `~/.android/avd`).
+2. Ports by bind test on loopback: console = first even port in 5554–5682 with its adb port
+   (+1) free too; gRPC = first free from 8554. Fixing `-port` means the serial is known before
+   the engine is up, so the sidebar can show a row for it at once.
+3. `emulator -avd <name> -port <c> -no-window -no-snapshot -grpc <g> [-gpu host]`, stdout/err to
+   `~/Library/Logs/rPlayHubAndroid/emulator-<avd>.log`, `RPLAYHUB_*` scrubbed from its env.
+   **GPU**: with `-no-window`, `-gpu auto` resolves to software (`emuglConfig_init:
+   vulkan_mode_selected:lavapipe gles_mode_selected:swangle`). `-gpu host` headless works on
+   Apple silicon (ANGLE over Metal, "Graphics Adapter … (Apple M2 Max)"), so the launcher passes
+   `host` unless the AVD's `config.ini` pins `hw.gpu.mode` to something other than `auto`.
+4. Wait: discovery file (`pid_<pid>.ini` — the `emulator` launcher execs the engine in place, so
+   the pid is ours; falls back to matching `port.serial`) + TCP connect on the gRPC port (about
+   1 s), then `adb devices` listing the serial as `device` (about 10 s on this Mac). Meanwhile the
+   sidebar shows "Emulator · <avd>" with a spinner and the phase; adb's few seconds of `offline`
+   for that serial are hidden behind that row rather than shown as "reconnect the cable".
+5. On ready: the row is selected (prepare-on-select hosts it) and the mirror is revealed — the
+   boot animation is what you see first. Home screen at roughly 30 s after the click.
+
+Before launching, the launcher writes **`hw.keyboard=yes`** into the AVD's `config.ini` if it is
+`no`. With `no` the engine creates no keyboard input device in the guest (only `gpio-keys` and
+the `virtio_input_multi_touch_*` devices exist), so every key path is dropped silently —
+`sendKey` over gRPC *and* the console's `event send`; only touch arrives. An `avdmanager`-made
+AVD inherits `no` from the phone device profile; Studio's Device Manager writes `yes`, which is
+why Studio never sees it. Symptom: the control strip and keyboard do nothing while touch works.
+Diagnose with `dumpsys input | grep -E '^ +[0-9]+: '` — a working guest lists `qwerty2`.
+
+**Screen shape on a hosted emulator.** The punch hole in the picture is in the stream: the Pixel
+profile reports a cutout and the emulator's SystemUI overlay paints it black into the framebuffer
+(`ScreenDecorOverlay`, `touchableRegion=[485,0][595,142]`), unlike a real Pixel where the hole
+is physical. The corners are ours: `loadDisplayShape` now runs for a hosted emulator too (adb is
+live), with a retry loop because the first frame arrives seconds into boot, before system_server
+answers `dumpsys display`. rplay-test reports r=132 and a circle at (539.5, 86.5) r 42 — the mask
+lands exactly on the painted hole.
+
+Shutting down: the emulator row's context entry **Shut Down Emulator** (the Disconnect slot,
+retitled) — SIGTERM for an instance we started (the engine exits cleanly), `adb -s <serial> emu
+kill` for any other. If it is the hosted one, the host stops first so the bridge's exit is not
+reported as a failure. **Quitting the app shuts down every emulator it started** (Studio does the
+same for its embedded ones; a headless engine has no other face). Emulators started elsewhere are
+left alone.
+
+Stop Screen Mirroring on a hosted emulator now stops the bridge too (it used to leave it running);
+View Screen re-hosts.
+
+**Why DMG-only**: a sandboxed process cannot exec the SDK's emulator, so `tools/package-dmg.sh`
+now builds the DMG **unsandboxed by default** (`DMG_SANDBOX=1` for the old shape; helpers are then
+signed with no entitlements instead of sandbox+inherit). The store build (`archive-appstore.sh`)
+stays sandboxed and never shows the entry. The emulator itself is never bundled.
 
 ## Build / run / test
 
@@ -98,10 +161,9 @@ will do; the notes above use one called `rplay-test`.
 
 ## Next steps, in order
 
-1. **Launch from the app ("+ Emulator")** — list AVDs (`emulator -list-avds` / `~/.android/avd`),
-   launch `-no-window -no-snapshot -grpc <free port> -gpu auto`, wait for boot + port, then host.
-   DMG-only (the sandboxed App Store build cannot exec the SDK's emulator); the emulator itself
-   stays external — downloaded/installed by the user or via sdkmanager, never bundled.
+1. ~~Launch from the app ("+ Emulator")~~ — shipped 2026-09-01, see above. Follow-ups: a
+   snapshot (quick-boot) option instead of always `-no-snapshot`; "keep running after quit";
+   showing the boot animation before adb is up (host on gRPC alone, with a placeholder row).
 2. **Frame path** — ask `streamScreenshot` for a smaller `RGBA8888`/`RGB888` image at the window's
    scale (skip PNG), or move to the emulator's WebRTC/`Rtc` service for a real video stream.
 3. **Input polish** — scrollWheel (currently agent-only), multi-touch, mouse buttons; the

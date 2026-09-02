@@ -18,6 +18,11 @@
 #   xcrun notarytool store-credentials AC_PASSWORD \
 #       --apple-id "you@example.com" --team-id NL28FE3UZ7 --password "app-specific-password"
 # Without SIGN_ID + NOTARY_PROFILE the DMG is ad-hoc signed and Gatekeeper blocks a DOWNLOADED copy.
+#
+# The DMG is NOT sandboxed (DMG_SANDBOX=0, the default): "+ Emulator" execs the user's own SDK
+# emulator, which a sandboxed process cannot do, and that launcher is what sets the DMG apart
+# from the store build. DMG_SANDBOX=1 builds the old sandboxed shape (helpers signed to inherit).
+# The Finder extension stays sandboxed either way — an appex must be.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -35,6 +40,7 @@ DMG="$BUILD/$APP_NAME-$VERSION.dmg"
 
 SIGN_ID="${SIGN_ID:-}"
 NOTARY_PROFILE="${NOTARY_PROFILE:-}"
+DMG_SANDBOX="${DMG_SANDBOX:-0}"
 AGENT_DIR="${RPLAYHUB_AGENT_DIR:-$ROOT/build/agent}"
 
 say() { printf '\033[1m==>\033[0m %s\n' "$*"; }
@@ -65,6 +71,21 @@ APPEX="$APP/Contents/PlugIns/FinderMount.appex"
 # The legacy adb location; never ship an unsigned copy from it.
 rm -rf "$APP/Contents/Resources/adb"
 
+# The entitlements the DMG's app and helpers are re-signed with (both the Developer ID and the
+# ad-hoc path): the store's minus the App Group, and minus the sandbox unless DMG_SANDBOX=1.
+ENT_DIR="$BUILD/dmg-entitlements"; rm -rf "$ENT_DIR"; mkdir -p "$ENT_DIR"
+cp "$ROOT/app/rPlayHubAndroid/rPlayHubAndroid.entitlements" "$ENT_DIR/app.entitlements"
+cp "$ROOT/app/FinderMount/FinderMount.entitlements" "$ENT_DIR/appex.entitlements"
+if [[ "$DMG_SANDBOX" == "1" ]]; then
+    HELPER_ENT=("--entitlements" "$ROOT/app/rPlayHubAndroid/adb-inherit.entitlements")
+else
+    say "unsandboxed DMG (DMG_SANDBOX=0): the app may launch the SDK emulator"
+    /usr/libexec/PlistBuddy -c "Delete :com.apple.security.app-sandbox" "$ENT_DIR/app.entitlements"
+    # No sandbox to inherit: a helper carrying app-sandbox+inherit under an unsandboxed parent
+    # would be refused at exec, so adb and the bridge are signed with no entitlements at all.
+    HELPER_ENT=()
+fi
+
 if [[ -n "$SIGN_ID" ]]; then
     # Re-sign for Developer ID with raw codesign, inside out — the recipe that shipped 0.2.0.
     #
@@ -75,9 +96,6 @@ if [[ -n "$SIGN_ID" ]]; then
     # cannot create automatically (only App Store profiles are). Without it every entitlement
     # left is unrestricted and Developer ID needs no profile at all.
     say "re-signing with $SIGN_ID (app group stripped for the Developer ID build)"
-    ENT_DIR="$BUILD/dmg-entitlements"; rm -rf "$ENT_DIR"; mkdir -p "$ENT_DIR"
-    cp "$ROOT/app/rPlayHubAndroid/rPlayHubAndroid.entitlements" "$ENT_DIR/app.entitlements"
-    cp "$ROOT/app/FinderMount/FinderMount.entitlements" "$ENT_DIR/appex.entitlements"
     for f in "$ENT_DIR/app.entitlements" "$ENT_DIR/appex.entitlements"; do
         /usr/libexec/PlistBuddy -c "Delete :com.apple.security.application-groups" "$f" 2>/dev/null || true
     done
@@ -87,7 +105,7 @@ if [[ -n "$SIGN_ID" ]]; then
     for helper in adb emulator-bridge; do
         [[ -f "$APP/Contents/MacOS/$helper" ]] && \
             codesign --force --sign "$SIGN_ID" --timestamp --options=runtime \
-                --entitlements "$ROOT/app/rPlayHubAndroid/adb-inherit.entitlements" "$APP/Contents/MacOS/$helper"
+                "${HELPER_ENT[@]}" "$APP/Contents/MacOS/$helper"
     done
     codesign --force --sign "$SIGN_ID" --timestamp --options=runtime \
         --entitlements "$ENT_DIR/appex.entitlements" "$APPEX"
@@ -95,6 +113,15 @@ if [[ -n "$SIGN_ID" ]]; then
         --entitlements "$ENT_DIR/app.entitlements" "$APP"
 else
     say "no SIGN_ID set — ad-hoc signed (LOCAL TESTING ONLY)"
+    if [[ "$DMG_SANDBOX" != "1" ]]; then
+        # Xcode signed the Release build with the store entitlements; drop the sandbox here too
+        # so a local DMG behaves like the shipped one.
+        for helper in adb emulator-bridge; do
+            [[ -f "$APP/Contents/MacOS/$helper" ]] && \
+                codesign --force --sign - --options=runtime "$APP/Contents/MacOS/$helper"
+        done
+        codesign --force --sign - --options=runtime --entitlements "$ENT_DIR/app.entitlements" "$APP"
+    fi
 fi
 [[ -d "$APP" ]] || { echo "build did not produce $APP" >&2; exit 1; }
 
@@ -105,10 +132,18 @@ for f in "Contents/MacOS/adb" "Contents/MacOS/emulator-bridge" \
          "Contents/Resources/agent/screen-sharing-agent.jar" "Contents/Resources/companion.apk"; do
     [[ -e "$APP/$f" ]] && echo "    bundled: $f" || say "WARNING: missing $f"
 done
-if codesign -d --entitlements :- "$APP/Contents/MacOS/adb" 2>/dev/null | grep -q inherit; then
-    echo "    adb keeps its sandbox+inherit entitlement"
+if codesign -d --entitlements :- "$APP" 2>/dev/null | grep -q app-sandbox; then
+    echo "    app is sandboxed"
+    if codesign -d --entitlements :- "$APP/Contents/MacOS/adb" 2>/dev/null | grep -q inherit; then
+        echo "    adb keeps its sandbox+inherit entitlement"
+    else
+        say "WARNING: bundled adb lost its inherit entitlement — it will not run inside the sandbox"
+    fi
 else
-    say "WARNING: bundled adb lost its inherit entitlement — it will not run inside the sandbox"
+    echo "    app is not sandboxed (+ Emulator available behind RPLAYHUB_EMU)"
+    if codesign -d --entitlements :- "$APP/Contents/MacOS/adb" 2>/dev/null | grep -q inherit; then
+        say "WARNING: bundled adb carries sandbox+inherit under an unsandboxed app — it will not exec"
+    fi
 fi
 if [[ -n "$SIGN_ID" ]]; then
     if spctl --assess --type execute --verbose "$APP" 2>&1 | sed 's/^/    /'; then

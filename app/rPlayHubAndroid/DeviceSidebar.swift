@@ -22,6 +22,8 @@ final class DeviceSidebar: NSView {
     var onShowInFinder: ((AdbDevice) -> Void)?
     /// Install the companion Share app on the device.
     var onInstallCompanion: ((AdbDevice) -> Void)?
+    /// Shut an emulator down (the Disconnect entry, retitled for an emulator row).
+    var onShutDownEmulator: ((AdbDevice) -> Void)?
     /// Whether a mirror session is currently live — drives the toggle entry's title/behaviour.
     var isMirroring: (() -> Bool)?
 
@@ -42,6 +44,9 @@ final class DeviceSidebar: NSView {
     private enum Row {
         case header(String)
         case device(AdbDevice)
+        /// An emulator the app is starting: shown under Emulators with a spinner until adb lists
+        /// it (a `.device` row with the same serial replaces it) or the launch fails.
+        case launching(serial: String, name: String, phase: String)
     }
 
     private var rows: [Row] = []
@@ -52,6 +57,8 @@ final class DeviceSidebar: NSView {
     /// AVD name per emulator serial, fetched once — the row reads "Emulator · <name>", which is
     /// what a person calls it, rather than the sdk_gphone model string.
     private var avdNames: [String: String] = [:]
+    /// Emulators being started from "+ Emulator", by the serial they will have.
+    private var launching: [String: (name: String, phase: String)] = [:]
 
     /// The name the row shows for a device — the AVD name for an emulator once known. The app
     /// titles its window with this, so window and row agree.
@@ -205,6 +212,32 @@ final class DeviceSidebar: NSView {
         isReloading = false
     }
 
+    /// Show (or update) a "starting…" row for an emulator the app is launching. The AVD name is
+    /// remembered for the serial, so the real row reads "Emulator · <name>" the moment it appears
+    /// rather than after a getprop round trip.
+    func setLaunching(serial: String, avdName: String, phase: String) {
+        launching[serial] = (avdName, phase)
+        avdNames[serial] = avdName
+        rebuildKeepingSelection()
+    }
+
+    func clearLaunching(serial: String) {
+        guard launching.removeValue(forKey: serial) != nil else { return }
+        rebuildKeepingSelection()
+    }
+
+    /// Rebuild the rows for a change that is not a new device list, keeping the selection.
+    private func rebuildKeepingSelection() {
+        let keep = selectedSerial
+        isReloading = true
+        applyFilter()
+        if let serial = keep, filtered.contains(where: { $0.serial == serial }) {
+            select(serial: serial)
+            selectedSerial = serial
+        }
+        isReloading = false
+    }
+
     /// Select a row by serial, as if the user had clicked it.
     func select(serial: String) {
         guard let row = rows.firstIndex(where: {
@@ -219,16 +252,7 @@ final class DeviceSidebar: NSView {
         return devices.first { $0.serial == serial }
     }
 
-    @objc private func searchChanged() {
-        let keep = selectedSerial
-        isReloading = true
-        applyFilter()
-        if let serial = keep, filtered.contains(where: { $0.serial == serial }) {
-            select(serial: serial)
-            selectedSerial = serial
-        }
-        isReloading = false
-    }
+    @objc private func searchChanged() { rebuildKeepingSelection() }
 
     /// One getprop per device we have not seen before, off the main queue. An emulator also
     /// gets asked for its AVD name (ro.boot.qemu.avd_name; older images use ro.kernel.qemu.*).
@@ -279,15 +303,26 @@ final class DeviceSidebar: NSView {
         // under theirs (as Device Hub sets simulators apart), then whatever is not ready.
         let available = result.filter { $0.isReady && !$0.isEmulator }
         let emulators = result.filter { $0.isReady && $0.isEmulator }
-        let unavailable = result.filter { !$0.isReady }
+        // adb lists an emulator we are starting as `offline` for a few seconds once adbd is up
+        // and before it is usable; the "starting…" row stands in for that, not an Unavailable
+        // entry telling the user to reseat a cable.
+        let unavailable = result.filter { !$0.isReady && launching[$0.serial] == nil }
         var built: [Row] = []
         if !available.isEmpty {
             built.append(.header("Available"))
             built.append(contentsOf: available.map { Row.device($0) })
         }
-        if !emulators.isEmpty {
+        // An emulator still starting sits under the same header; once adb lists its serial the
+        // real row takes over (the caller clears the launch entry when it hosts it).
+        let starting = launching
+            .filter { serial, _ in !result.contains { $0.serial == serial && $0.isReady } }
+            .sorted { $0.key < $1.key }
+        if !emulators.isEmpty || !starting.isEmpty {
             built.append(.header("Emulators"))
             built.append(contentsOf: emulators.map { Row.device($0) })
+            built.append(contentsOf: starting.map {
+                Row.launching(serial: $0.key, name: $0.value.name, phase: $0.value.phase)
+            })
         }
         if !unavailable.isEmpty {
             built.append(.header("Unavailable"))
@@ -330,6 +365,11 @@ final class DeviceSidebar: NSView {
         for item in menu.items where item.action == #selector(toggleMirrorFromMenu) {
             item.title = live ? "Stop Screen Mirroring" : "Start Screen Mirroring"
         }
+        // Disconnect is an adb notion; what an emulator row can do is shut the engine down.
+        let emulator = clickedOrSelected()?.isEmulator == true
+        for item in menu.items where item.action == #selector(disconnectFromMenu) {
+            item.title = emulator ? "Shut Down Emulator" : "Disconnect"
+        }
     }
 
     @objc private func mirrorFromMenu() {
@@ -344,6 +384,7 @@ final class DeviceSidebar: NSView {
     /// Only meaningful for a network device; a USB one comes back on the next poll.
     @objc private func disconnectFromMenu() {
         guard let device = clickedOrSelected() else { return }
+        if device.isEmulator { onShutDownEmulator?(device); return }
         DispatchQueue.global(qos: .utility).async { _ = try? Adb.disconnect(device.serial) }
     }
 
@@ -379,6 +420,54 @@ extension DeviceSidebar: NSTableViewDataSource, NSTableViewDelegate {
         return 42
     }
 
+    /// The row for an emulator that is still starting: a spinner where the status dot goes, the
+    /// name it will have, and what the launcher is waiting on.
+    private func launchingCell(name: String, phase: String) -> NSView {
+        let cell = NSTableCellView()
+        let spinner = NSProgressIndicator()
+        spinner.style = .spinning
+        spinner.controlSize = .small
+        spinner.isIndeterminate = true
+        spinner.startAnimation(nil)
+        spinner.translatesAutoresizingMaskIntoConstraints = false
+
+        let glyph = NSImageView(image: NSImage(systemSymbolName: "desktopcomputer",
+                                               accessibilityDescription: nil) ?? NSImage())
+        glyph.contentTintColor = .secondaryLabelColor
+        glyph.translatesAutoresizingMaskIntoConstraints = false
+
+        let title = NSTextField(labelWithString: "Emulator · \(name)")
+        title.font = .systemFont(ofSize: 13)
+        title.textColor = .secondaryLabelColor
+        title.lineBreakMode = .byTruncatingTail
+        let detail = NSTextField(labelWithString: phase)
+        detail.font = .systemFont(ofSize: 11)
+        detail.textColor = .secondaryLabelColor
+        detail.lineBreakMode = .byTruncatingTail
+        let text = NSStackView(views: [title, detail])
+        text.orientation = .vertical
+        text.alignment = .leading
+        text.spacing = 1
+        text.translatesAutoresizingMaskIntoConstraints = false
+
+        cell.addSubview(spinner)
+        cell.addSubview(glyph)
+        cell.addSubview(text)
+        NSLayoutConstraint.activate([
+            spinner.widthAnchor.constraint(equalToConstant: 14),
+            spinner.heightAnchor.constraint(equalToConstant: 14),
+            spinner.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 3),
+            spinner.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+            glyph.leadingAnchor.constraint(equalTo: spinner.trailingAnchor, constant: 5),
+            glyph.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+            glyph.widthAnchor.constraint(equalToConstant: 16),
+            text.leadingAnchor.constraint(equalTo: glyph.trailingAnchor, constant: 8),
+            text.trailingAnchor.constraint(lessThanOrEqualTo: cell.trailingAnchor, constant: -10),
+            text.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+        ])
+        return cell
+    }
+
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?,
                    row: Int) -> NSView? {
         if case .header(let title) = rows[row] {
@@ -393,6 +482,9 @@ extension DeviceSidebar: NSTableViewDataSource, NSTableViewDelegate {
                 label.bottomAnchor.constraint(equalTo: cell.bottomAnchor, constant: -2),
             ])
             return cell
+        }
+        if case .launching(_, let name, let phase) = rows[row] {
+            return launchingCell(name: name, phase: phase)
         }
         guard let device = device(at: row) else { return nil }
         let cell = NSTableCellView()
@@ -479,7 +571,8 @@ extension DeviceSidebar: NSTableViewDataSource, NSTableViewDelegate {
         switch device.state {
         case "device":       return device.serial
         case "unauthorized": return "Accept the USB debugging prompt on the device"
-        case "offline":      return "Offline — reconnect the cable"
+        case "offline":      return device.isEmulator ? "Offline — still booting"
+                                                      : "Offline — reconnect the cable"
         default:             return device.state
         }
     }

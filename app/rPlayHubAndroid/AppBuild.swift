@@ -32,6 +32,17 @@ enum AppBuild {
         return UserDefaults.standard.bool(forKey: "EmulatorHostEnabled")
     }
 
+    /// Running inside the App Sandbox (the store build). launchd sets this for every sandboxed
+    /// process; a Debug or DMG build has no container.
+    static var isSandboxed: Bool {
+        ProcessInfo.processInfo.environment["APP_SANDBOX_CONTAINER_ID"] != nil
+    }
+
+    /// "+ Emulator": start an AVD from the sidebar and host it. Needs the host gate and a build
+    /// that may exec the user's SDK emulator — a sandboxed process cannot, so the store build
+    /// never shows the entry. DMG-only by construction.
+    static var emulatorLaunchEnabled: Bool { emulatorHostEnabled && !isSandboxed }
+
     static var twinEnabled: Bool {
         get {
             if let env = ProcessInfo.processInfo.environment["RPLAYHUB_TWIN"] {
