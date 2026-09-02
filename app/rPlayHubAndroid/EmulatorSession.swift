@@ -113,8 +113,6 @@ final class EmulatorSession {
             guard let self, !chunk.isEmpty else { h.readabilityHandler = nil; return }
             self.queue.async { self.consume(chunk) }
         }
-        // A write into a bridge that just died must not take the app down with it.
-        signal(SIGPIPE, SIG_IGN)
         do {
             try process.run()
             AppBuild.log("emulator: bridge up on gRPC :\(port)")
