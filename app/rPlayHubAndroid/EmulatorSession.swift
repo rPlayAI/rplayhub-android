@@ -140,8 +140,12 @@ final class EmulatorSession {
             let payload = buffer.subdata(in: 4 ..< 4 + length)
             buffer.removeSubrange(0 ..< 4 + length)
             if scaledTo != nil {
-                if let (picture, size, native) = Self.unpackRGB(payload) { onFrame?(picture, size, native) }
+                if let (picture, size, native) = Self.unpackRGB(payload) {
+                    adoptParity(fromFrameLandscape: size.width > size.height)
+                    onFrame?(picture, size, native)
+                }
             } else if let (picture, size) = Self.decode(payload) {
+                adoptParity(fromFrameLandscape: size.width > size.height)
                 onFrame?(picture, size, size)
             }
         }
@@ -227,6 +231,22 @@ final class EmulatorSession {
     /// the mirror for the current quadrant therefore always answered 0, every Rotate press sent
     /// the same -90, and the picture turned once and then stuck.
     private(set) var rotationQuadrant = 0
+
+    /// Line the counter up with what is actually on screen, once, when hosting starts.
+    ///
+    /// The guest cannot be asked: `setPhysicalModel(ROTATION, …)` turns the emulator's own
+    /// presentation, and Android inside never re-lays-out for it — while the stream is landscape
+    /// the guest still reports `mRotation=ROTATION_0` and `wm size` still says portrait. What the
+    /// frame does tell us is parity: a landscape frame means an odd quadrant. That is enough to
+    /// keep one Rotate button honest when we attach to an emulator someone already turned.
+    private var adoptedParity = false
+
+    func adoptParity(fromFrameLandscape landscape: Bool) {
+        guard !adoptedParity else { return }
+        adoptedParity = true
+        let isOdd = rotationQuadrant % 2 == 1
+        if landscape != isOdd { rotationQuadrant = landscape ? 1 : 0 }
+    }
 
     /// Rotation quadrant as the mirror counts it (0 portrait, 1 landscape…), in the emulator's
     /// physical-model degrees.
