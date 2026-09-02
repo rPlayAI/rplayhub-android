@@ -185,7 +185,13 @@ final class DeviceSidebar: NSView {
     /// SF Symbols on the row menu, the same vocabulary Device Hub uses: a play triangle to start,
     /// a trash can to remove. Templates, so they follow the menu's own tint and dark mode.
     private static func symbol(_ name: String) -> NSImage? {
-        guard let image = NSImage(systemSymbolName: name, accessibilityDescription: nil) else { return nil }
+        guard let image = NSImage(systemSymbolName: name, accessibilityDescription: nil) else {
+            // A name that does not exist yields nil and the item simply has no icon, with nothing
+            // to say why — "stop.rectangle" is not a symbol, which is how Stop Screen Mirroring
+            // ended up bare while every neighbour had one. Say so instead.
+            AppBuild.log("menu: no SF Symbol named \"\(name)\"")
+            return nil
+        }
         image.isTemplate = true
         return image
     }
@@ -431,7 +437,7 @@ final class DeviceSidebar: NSView {
         let live = isMirroring?() == true
         for item in menu.items where item.action == #selector(toggleMirrorFromMenu) {
             item.title = live ? "Stop Screen Mirroring" : "Start Screen Mirroring"
-            item.image = Self.symbol(live ? "stop.rectangle" : "play.rectangle")
+            item.image = Self.symbol(live ? "stop.fill" : "play.rectangle")
         }
         // Three kinds of row, three shapes of menu. A VM that is not running can only be started
         // or removed; everything else acts on a live device.
