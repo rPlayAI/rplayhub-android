@@ -56,6 +56,16 @@ say() { printf '\033[1m==>\033[0m %s\n' "$*"; }
 # phase only COPIES whatever is already built. Packaging from a clean checkout would therefore
 # ship a DMG with no emulator hosting and only a warning buried in the build log, so build it
 # here. Skipped when the emulator track is not wanted (RPLAYHUB_NO_BRIDGE=1).
+# The legacy agent (Android 5.0-7.1) is one Java file; build it here so packaging from a clean
+# checkout cannot silently ship without it.
+if [[ -f "$ROOT/build/legacy-agent/rplayhub-legacy.dex" && -z "${REBUILD_LEGACY:-}" ]]; then
+    say "legacy agent already built; REBUILD_LEGACY=1 to rebuild"
+elif [[ -f "$ROOT/tools/build-legacy-agent.sh" ]]; then
+    say "building the legacy agent (Android 5.0-7.1)"
+    "$ROOT/tools/build-legacy-agent.sh" >/dev/null \
+        || say "WARNING: the legacy agent failed to build — Android 5.0-7.1 devices will not mirror"
+fi
+
 BRIDGE_BIN="$ROOT/emulator-transport/.build/arm64-apple-macosx/release/emulator-bridge"
 if [[ "${RPLAYHUB_NO_BRIDGE:-0}" == "1" ]]; then
     say "RPLAYHUB_NO_BRIDGE=1 — not building emulator-bridge (emulator hosting will be absent)"
@@ -146,7 +156,8 @@ fi
 say "verifying signature and bundled pieces"
 codesign --verify --deep --strict --verbose=2 "$APP" 2>&1 | sed 's/^/    /'
 for f in "Contents/MacOS/adb" "Contents/MacOS/emulator-bridge" \
-         "Contents/Resources/agent/screen-sharing-agent.jar" "Contents/Resources/companion.apk"; do
+         "Contents/Resources/agent/screen-sharing-agent.jar" "Contents/Resources/companion.apk" \
+         "Contents/Resources/rplayhub-legacy.dex"; do
     [[ -e "$APP/$f" ]] && echo "    bundled: $f" || say "WARNING: missing $f"
 done
 if codesign -d --entitlements :- "$APP" 2>/dev/null | grep -q app-sandbox; then

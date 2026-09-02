@@ -144,6 +144,14 @@ final class EmulatorLauncher {
         let description: String
     }
 
+    /// The engine is alive and healthy, adb just has not seen it yet. Never fatal.
+    struct StillBooting: Error, CustomStringConvertible {
+        let serial: String
+        var description: String {
+            "\(serial) is still booting. It will appear in the sidebar when Android has started."
+        }
+    }
+
     /// One emulator this launcher started. `serial` is what adb calls it, fixed by the console
     /// port we picked before starting it.
     final class Launch {
@@ -174,8 +182,10 @@ final class EmulatorLauncher {
 
     /// The engine up and its discovery file written: normally a few seconds.
     private let engineTimeout: TimeInterval = 90
-    /// adb listing the instance as `device`: a cold boot on a software renderer can take a while.
-    private let bootTimeout: TimeInterval = 300
+    /// adb listing the instance as `device`. A FIRST boot of a freshly downloaded system image
+    /// builds its data partition and can take many minutes — the engine itself says "may take up
+    /// to two minutes, or more" — so this is generous.
+    private let bootTimeout: TimeInterval = 900
 
     /// The AVD names of every emulator currently running on this Mac (ours or not), from the
     /// discovery files the emulator writes, with their adb serials — so the picker can mark them.
@@ -266,7 +276,11 @@ final class EmulatorLauncher {
             DispatchQueue.main.async {
                 guard !launch.reported else { return }
                 launch.reported = true
-                if case .failure = outcome, process.isRunning { process.terminate() }
+                // Only tear the engine down when it actually failed; a slow first boot is not a
+                // failure, and the emulator keeps running.
+                if case .failure(let error) = outcome, !(error is StillBooting), process.isRunning {
+                    process.terminate()
+                }
                 completion(outcome)
             }
         }
@@ -306,7 +320,10 @@ final class EmulatorLauncher {
             }
             Thread.sleep(forTimeInterval: 1)
         }
-        return .failure(Failure(description: "adb did not list \(launch.serial) as a device in time."))
+        // Still booting, not broken. Leave it running and say so: the sidebar polls adb, so it
+        // appears by itself the moment it finishes. Killing it here threw away a VM the user had
+        // just waited through a 2 GB download for.
+        return .failure(StillBooting(serial: launch.serial))
     }
 
     /// Shut an emulator down: ours by SIGTERM (the engine exits cleanly on it), any other through

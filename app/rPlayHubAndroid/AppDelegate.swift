@@ -2480,6 +2480,11 @@ extension AppDelegate {
                 self.refreshDevices()
             case .failure(let error):
                 if let serial { self.sidebar.clearLaunching(serial: serial) }
+                // A slow first boot is not an error worth an alert; the sidebar will show it.
+                if error is EmulatorLauncher.StillBooting {
+                    AppBuild.log("emulator: \(error)")
+                    return
+                }
                 self.present(message: "Could not start \(avd.displayName)", detail: "\(error)")
             }
         }

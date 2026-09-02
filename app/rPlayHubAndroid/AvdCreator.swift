@@ -129,8 +129,9 @@ enum AvdCreator {
 
             "hw.cpu.arch": abi.hasPrefix("arm") ? "arm64" : "x86_64",
             "hw.cpu.ncore": "4",
-            "hw.ramSize": "\(profile.ramMB)",
-            "vm.heapSize": "\(profile.heapMB)",
+            // Units as avdmanager writes them; the working AVD uses "2G" / "228M".
+            "hw.ramSize": "\(profile.ramMB)M",
+            "vm.heapSize": "\(profile.heapMB)M",
 
             "hw.device.name": profile.id,
             "hw.device.manufacturer": profile.manufacturer,
@@ -170,6 +171,65 @@ enum AvdCreator {
             "hw.useext4": "yes",
             "showDeviceFrame": "no",
         ]
+        // Everything below is what avdmanager writes and the engine expects to find. Leaving it
+        // out is not neutral: a config with only the "interesting" keys started the engine and
+        // then never booted Android — no adb, no error, just a VM that sat there. These were
+        // taken from a working AVD, and the kernel/partition ones are the load-bearing part.
+        let defaults: [String: String] = [
+            "disk.cachePartition": "yes",
+            "disk.cachePartition.size": "66MB",
+            "disk.systemPartition.size": "0",
+            "disk.vendorPartition.size": "0",
+            "userdata.useQcow2": "no",
+            "kernel.newDeviceNaming": "autodetect",
+            "kernel.supportsYaffs2": "autodetect",
+            "hw.arc": "false",
+            "hw.gltransport": "pipe",
+            "hw.gltransport.asg.dataRingSize": "32768",
+            "hw.gltransport.asg.writeBufferSize": "1048576",
+            "hw.gltransport.asg.writeStepSize": "4096",
+            "hw.gltransport.drawFlushInterval": "800",
+            "hw.gsmModem": "yes",
+            "hw.lcd.backlight": "yes",
+            "hw.lcd.circular": "false",
+            "hw.lcd.transparent": "false",
+            "hw.lcd.vsync": "60",
+            "hw.keyboard.lid": "yes",
+            "hw.rotaryInput": "no",
+            "hw.hotplug_multi_display": "no",
+            "hw.multi_display_window": "no",
+            "hw.touchpad0": "no",
+            "hw.accelerometer_uncalibrated": "yes",
+            "hw.sensors.gyroscope_uncalibrated": "yes",
+            "hw.sensors.magnetic_field": "yes",
+            "hw.sensors.magnetic_field_uncalibrated": "yes",
+            "hw.sensors.humidity": "yes",
+            "hw.sensors.pressure": "yes",
+            "hw.sensors.temperature": "yes",
+            "hw.sensors.heading": "no",
+            "hw.sensors.heart_rate": "no",
+            "hw.sensors.rgbclight": "no",
+            "hw.sensors.wrist_tilt": "no",
+            "hw.sensor.hinge": "no",
+            "hw.sensor.hinge.count": "0",
+            "hw.sensor.roll": "no",
+            "hw.sensor.roll.count": "0",
+            "hw.camera.back.orientation": "90",
+            "hw.camera.front.orientation": "90",
+            "environment.width": "0",
+            "environment.height": "0",
+            "runtime.network.latency": "none",
+            "runtime.network.speed": "full",
+            "fastboot.forceChosenSnapshotBoot": "no",
+            "fastboot.forceFastBoot": "yes",
+            "firstboot.bootFromDownloadableSnapshot": "yes",
+            "firstboot.bootFromLocalSnapshot": "yes",
+            "firstboot.saveToLocalSnapshot": "yes",
+            "test.delayAdbTillBootComplete": "0",
+            "test.monitorAdb": "0",
+            "test.quitAfterBootTimeOut": "-1",
+        ]
+        for (key, value) in defaults where config[key] == nil { config[key] = value }
         config["fastboot.forceColdBoot"] = "no"
 
         let body = config.keys.sorted().map { "\($0)=\(config[$0]!)" }.joined(separator: "\n") + "\n"

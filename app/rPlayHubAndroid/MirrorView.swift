@@ -187,7 +187,9 @@ final class MirrorView: NSView, NSMenuItemValidation {
         pinItem = menu.items.last
         menu.addItem(.separator())
         add("Reconnect", .reconnect, "arrow.clockwise")
-        add("Stop Mirroring", .stop, "stop.circle")
+        // No "Stop Mirroring" here: these commands are moved onto the device's row in the
+        // sidebar, whose menu already opens with the one Start/Stop Screen Mirroring toggle.
+        // Two entries doing the same thing, one of them only ever able to stop, read as a bug.
         // Deliberately NOT `self.menu`. These commands act on the device, so they belong on the
         // device's row in the sidebar; the app moves them there. The items still target this
         // view, so `contextAction` and `validateMenuItem` keep working unchanged.

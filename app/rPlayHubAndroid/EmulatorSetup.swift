@@ -40,6 +40,7 @@ final class EmulatorSetup {
                 hideProgress()
             } catch {
                 hideProgress()
+                AppBuild.log("emulator setup failed: \(error)")
                 present("Could not set up the emulator", "\(error)")
             }
         }
@@ -68,8 +69,15 @@ final class EmulatorSetup {
         }
         let root = SdkInstaller.installRoot
         let emulatorPackage = SdkCatalog.emulator(in: index)
-        let needsEmulator = AndroidSdk.emulatorBinary == nil
-            || !(emulatorPackage.map { SdkInstaller.isInstalled($0, root: root) } ?? true)
+        // Upgrade an emulator that is older than what Google publishes, not just install a
+        // missing one: an older emulator silently fails to boot a newer system image.
+        let installedRevision = SdkCatalog.installedEmulatorRevision(root: root)
+            ?? AndroidSdk.root.flatMap { SdkCatalog.installedEmulatorRevision(root: $0) }
+        let needsEmulator: Bool = {
+            guard AndroidSdk.emulatorBinary != nil, let have = installedRevision,
+                  let want = emulatorPackage?.revision else { return true }
+            return have.compare(want, options: .numeric) == .orderedAscending
+        }()
 
         let alert = NSAlert()
         alert.messageText = "Create an Android VM"
@@ -85,10 +93,9 @@ final class EmulatorSetup {
             let gb = Double(image.size) / 1_073_741_824
             versions.addItem(withTitle: String(format: "%@ · %@ · %.1f GB", api, store, gb))
         }
-        // Default to the newest rootable image: adb root is what a tool like this is for.
-        if let i = images.firstIndex(where: { !($0.tag ?? "").contains("playstore") }) {
-            versions.selectItem(at: i)
-        }
+        // Default to a rootable image that is known to boot, not simply the newest — see
+        // SdkCatalog.defaultImageIndex. adb root is what a tool like this is for.
+        versions.selectItem(at: SdkCatalog.defaultImageIndex(in: images))
 
         let devices = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 320, height: 25))
         for profile in DeviceProfile.all { devices.addItem(withTitle: profile.name) }
@@ -115,7 +122,10 @@ final class EmulatorSetup {
             return stack
         }
         let note = NSTextField(labelWithString: needsEmulator
-            ? "The Android emulator (about 400 MB) will be downloaded too."
+            ? (installedRevision == nil
+                ? "The Android emulator (about 400 MB) will be downloaded too."
+                : "The Android emulator will be updated (about 400 MB) — \(installedRevision ?? "") "
+                  + "cannot boot the newest system images.")
             : "The Android emulator is already installed.")
         note.font = .systemFont(ofSize: 11)
         note.textColor = .secondaryLabelColor
@@ -162,6 +172,7 @@ final class EmulatorSetup {
             }
             // The emulator we just installed is the one to use from now on.
             UserDefaults.standard.set(root.path, forKey: AndroidSdk.rootDefaultsKey)
+            AppBuild.log("sdk: emulator now \(emulator.revision) at \(root.path)")
         }
         guard !Task.isCancelled else { hideProgress(); return }
 

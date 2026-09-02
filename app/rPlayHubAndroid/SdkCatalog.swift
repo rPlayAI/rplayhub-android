@@ -133,14 +133,33 @@ enum SdkCatalog {
         return merged
     }
 
-    /// The emulator to install: the newest one on the ordinary SDK licence. The index also
-    /// carries preview-channel builds (they reference `android-sdk-preview-license`), and a
-    /// first-run install should not silently land the user on a preview.
+    /// The emulator to install: simply the newest Google publishes, preview channel included.
+    ///
+    /// Preferring the "stable" build looks safer and is not: a newer emulator runs older system
+    /// images, but an older emulator cannot run a newer image. Picking 37.1.11 over 37.2.7 left
+    /// an API 37 VM that started its engine, never reached adb, and looked like it was booting
+    /// for ever. The preview licence is presented and recorded like any other.
     static func emulator(in index: Index) -> SdkPackage? {
-        let all = index.packages.filter { $0.path == "emulator" }
-        let stable = all.filter { $0.licenseId != "android-sdk-preview-license" }
-        let pool = stable.isEmpty ? all : stable
-        return pool.max { $0.revision.compare($1.revision, options: .numeric) == .orderedAscending }
+        index.packages.filter { $0.path == "emulator" }
+            .max { $0.revision.compare($1.revision, options: .numeric) == .orderedAscending }
+    }
+
+    /// The revision of the emulator already installed under `root`, from the same
+    /// `source.properties` sdkmanager writes. Nil when there is none.
+    static func installedEmulatorRevision(root: URL) -> String? {
+        let properties = root.appendingPathComponent("emulator/source.properties")
+        let value = AndroidSdk.iniValues(at: properties)["Pkg.Revision"]
+        return (value?.isEmpty == false) ? value : nil
+    }
+
+    /// The image to preselect: the newest rootable one.
+    ///
+    /// An earlier version capped this at API 36 because newer images "did not boot". They did —
+    /// the archive was arriving incomplete (see SdkInstaller.unpack), so every image was equally
+    /// broken and the newest simply got the blame. With the extraction fixed, API 37 boots in
+    /// about twenty seconds like any other.
+    static func defaultImageIndex(in images: [SdkPackage]) -> Int {
+        images.firstIndex { !($0.tag ?? "").contains("playstore") } ?? 0
     }
 
     /// Installable phone system images for this host's ABI, newest API first. Preview/beta images

@@ -154,6 +154,12 @@ if [ -f "$COMPANION" ]; then
   cp "$COMPANION" "$APP/Contents/Resources/companion.apk"
 else
   echo "warning: no companion apk (run tools/build-helper.sh) - Install Companion App will be unavailable"
+fi
+LEGACY="$ROOT/build/legacy-agent/rplayhub-legacy.dex"
+if [ -f "$LEGACY" ]; then
+  cp "$LEGACY" "$APP/Contents/Resources/rplayhub-legacy.dex"
+else
+  echo "warning: no legacy agent (run tools/build-legacy-agent.sh) - Android 5.0-7.1 devices will not mirror"
 fi'''
 SHELL_SCRIPT = (SHELL_SCRIPT_RAW.replace(chr(92), chr(92)*2)
                 .replace(chr(34), chr(92)+chr(34)).replace(chr(10), chr(92)+'n'))

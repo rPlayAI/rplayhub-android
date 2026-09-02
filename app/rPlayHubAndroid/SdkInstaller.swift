@@ -62,6 +62,8 @@ actor SdkInstaller {
         defer { try? fm.removeItem(at: zip) }
 
         await MainActor.run { progress(.verifying) }
+        let onDisk = (try? FileManager.default.attributesOfItem(atPath: zip.path)[.size] as? Int64) ?? 0
+        AppBuild.log("sdk: \(package.path) downloaded \(onDisk ?? 0) bytes (expected \(package.size)) -> \(zip.path)")
         let sum = try Self.checksum(of: zip, kind: package.checksumKind)
         guard sum.caseInsensitiveCompare(package.checksum) == .orderedSame else {
             throw SdkError.checksum(expected: package.checksum, got: sum)
@@ -69,6 +71,7 @@ actor SdkInstaller {
 
         await MainActor.run { progress(.installing) }
         let destination = root.appendingPathComponent(package.installSubpath, isDirectory: true)
+        AppBuild.log("sdk: unpacking \(package.path) into \(destination.path)")
         try Self.unpack(zip, to: destination)
         await MainActor.run { progress(.done) }
         return destination
@@ -152,9 +155,18 @@ actor SdkInstaller {
         return digest.map { String(format: "%02x", $0) }.joined()
     }
 
-    /// Unpack with `ditto`, which handles the zips Google ships (symlinks, exec bits) where
-    /// Foundation's unarchiver does not. The archive's single top-level directory becomes the
-    /// destination itself — `emulator/…` in the zip is `$SDK/emulator/…` on disk.
+    /// Unpack with `unzip`.
+    ///
+    /// NOT `ditto`, which is wrong here in a way that costs hours: on Google's system-image zips
+    /// it prints "Couldn't read pkzip signature", exits 1, and stops early — leaving most of the
+    /// archive on disk but silently dropping the tail. A system image extracted that way is
+    /// missing `vendor.img`, and the VM then boots far enough to run init, fails `init_user0`
+    /// because /data cannot be set up without vendor, and reboots in a loop for ever with no
+    /// error the user can see. `unzip` reads the same archives correctly (all 32 entries) and
+    /// preserves the executable bits the emulator needs.
+    ///
+    /// The archive's single top-level directory becomes the destination itself — `emulator/…` in
+    /// the zip is `$SDK/emulator/…` on disk.
     static func unpack(_ zip: URL, to destination: URL) throws {
         let fm = FileManager.default
         let staging = fm.temporaryDirectory
@@ -162,16 +174,21 @@ actor SdkInstaller {
         try fm.createDirectory(at: staging, withIntermediateDirectories: true)
         defer { try? fm.removeItem(at: staging) }
 
-        let ditto = Process()
-        ditto.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
-        ditto.arguments = ["-x", "-k", zip.path, staging.path]
+        let unzip = Process()
+        unzip.executableURL = URL(fileURLWithPath: "/usr/bin/unzip")
+        unzip.arguments = ["-q", "-o", zip.path, "-d", staging.path]
         let errors = Pipe()
-        ditto.standardError = errors
-        try ditto.run()
+        unzip.standardError = errors
+        unzip.standardOutput = FileHandle.nullDevice
+        try unzip.run()
         let message = String(decoding: errors.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-        ditto.waitUntilExit()
-        guard ditto.terminationStatus == 0 else {
-            throw SdkError.extract(message.isEmpty ? "ditto exited \(ditto.terminationStatus)" : message)
+        unzip.waitUntilExit()
+        // 0 is clean; 1 is "completed with warnings", which is still a complete extraction.
+        guard unzip.terminationStatus <= 1 else {
+            let size = (try? fm.attributesOfItem(atPath: zip.path)[.size] as? Int64) ?? 0
+            AppBuild.log("sdk: unzip exited \(unzip.terminationStatus) on \(zip.path) "
+                         + "(\(size ?? 0) bytes): \(message)")
+            throw SdkError.extract(message.isEmpty ? "unzip exited \(unzip.terminationStatus)" : message)
         }
 
         var source = staging
