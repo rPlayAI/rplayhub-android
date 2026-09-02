@@ -315,6 +315,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
                 self.sidebar.update(devices: captured.0, note: captured.1)
+                // The prepared session belongs to a serial; when that serial is gone the guard
+                // has to drop so the same one coming back (a relaunched emulator) prepares again.
+                let present = Set(captured.0.map { $0.serial })
+                if let prepared = self.propertiesForSerial, !present.contains(prepared) {
+                    self.propertiesForSerial = nil
+                }
                 for device in captured.0 where device.isReady { self.loadApiLevel(device.serial) }
                 FinderMount.sync(devices: captured.0)
                 if let serial = self.pendingEmulatorSerial,
@@ -341,7 +347,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             mirror.deviceSubtitle = nil
             deviceTitleName.stringValue = "No device"
             deviceTitleDetail.stringValue = ""
-            propertiesForSerial = nil      // the device went away; the same serial may come back
+            // NOT propertiesForSerial = nil here. The poll can clear the selection for an
+            // instant while the table reloads, and resetting the prepare guard on that made the
+            // next selection tear the live session down and start it again. It is cleared in
+            // refreshDevices instead, when the serial actually leaves the device list.
             return
         }
         let name = sidebar.friendlyName(for: device)     // "Emulator · <avd>" once known
@@ -385,6 +394,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         : "The device is not ready for adb commands.")
             return
         }
+        // Already running for this device? Reveal it and stop. This has to come before any
+        // teardown below: a selection can be re-delivered (the poll reloads the table, a row is
+        // re-selected), and restarting a working session each time is what made mirroring need
+        // several Start/Stop attempts before it held — each attempt was killing the one before.
+        if let live = legacySession, live.serial == device.serial {
+            if reveal { mirror.reveal(); mirrorRevealed = true; strip.setSessionActive(true); refreshMirrorToggle() }
+            return
+        }
+        if emulatorSession != nil, hostedSerial == device.serial {
+            if reveal { mirror.reveal(); mirrorRevealed = true; strip.setSessionActive(true); refreshMirrorToggle() }
+            return
+        }
+        if let live = session, live.serial == device.serial, live.state != .idle {
+            if reveal { mirror.reveal(); mirrorRevealed = true; refreshMirrorToggle() }
+            return
+        }
+
         if twinActive { exitTwin() }   // the new session's decoder starts back in native output
         discardFusionWindows()         // their virtual displays die with the old agent
         session?.stop()
@@ -897,8 +923,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func applyNakedLayout(chromeVisible: Bool) {
         guard let w = screenWindow.window, nakedPictureSize.width > 0 else { return }
         let stripHeight: CGFloat = chromeVisible ? max(strip.fittingSize.height, 50) : 0
-        let content = NSSize(width: nakedPictureSize.width,
-                             height: nakedPictureSize.height + stripHeight)
+        // The raw window is only as wide as the phone, which is too narrow for the strip's
+        // buttons, so the window widens while the chrome is up and gives the width back after.
+        let width = chromeVisible
+            ? max(nakedPictureSize.width + ControlStrip.controlWidth, strip.minimumContentWidth)
+            : nakedPictureSize.width
+        let content = NSSize(width: width, height: nakedPictureSize.height + stripHeight)
         let top = w.frame.maxY
         let left = w.frame.minX
         w.setContentSize(content)
@@ -936,9 +966,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         strip.isHidden = !visible
         stripTopToMirror?.isActive = visible
         mirrorBottomToStage?.isActive = !visible
-        // The raw window is only as wide as the phone, which is too narrow for the control
-        // strip's buttons — widen it while the strip is up, and give the width back after.
-        widenForStrip(w, visible: visible)
+        // Resize the window around the picture for the new chrome state. Without this the title
+        // bar (which stops overlaying the content once fullSizeContentView is removed) and the
+        // control strip both eat into the same frame, and the mirrored screen visibly shrinks
+        // every time the pointer approaches the edge — worst on a landscape device like a
+        // 1024x600 box, where the picture is short to begin with.
+        applyNakedLayout(chromeVisible: visible)
 
         let changed = visible != fusionChromeShown
         fusionChromeShown = visible
@@ -950,23 +983,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             ctx.duration = 0.12
             for b in lights { b?.animator().alphaValue = a }
         }
-    }
-
-    /// Grow the standalone window to fit the control strip when it appears, and shrink back to the
-    /// phone's width when it goes. Anchored at the top-left so the window doesn't wander.
-    private func widenForStrip(_ w: NSWindow, visible: Bool) {
-        guard nakedPictureSize.width > 0 else { return }
-        // Grow the width by one control's width — a small, even margin beside the picture rather
-        // than a wide stretch — but never narrower than the toolbar actually needs.
-        let wanted = visible
-            ? max(nakedPictureSize.width + ControlStrip.controlWidth, strip.minimumContentWidth)
-            : nakedPictureSize.width
-        guard abs(w.frame.width - wanted) > 1 else { return }
-        let top = w.frame.maxY, left = w.frame.minX
-        var f = w.frame
-        f.size.width = wanted
-        f.origin = NSPoint(x: left, y: top - f.height)
-        w.setFrame(f, display: true)
     }
 
     /// Poll the cursor while a naked window is up: chrome appears when it nears the top edge, hides

@@ -75,6 +75,12 @@ final class LegacySession {
         socket?.shutdownAndClose()
         socket = nil
         decoder.invalidate()
+        // "q" only lands if the agent is still reading stdin; make sure it is gone either way,
+        // so the next session does not fight a process still holding the encoder.
+        let serial = self.serial
+        DispatchQueue.global(qos: .utility).async {
+            _ = try? Adb.shell(serial, "pkill -f ai.rplay.legacy", timeout: 5)
+        }
     }
 
     /// `wm size` reports "Physical size: 1280x720"; an override line wins when present.
@@ -107,6 +113,10 @@ final class LegacySession {
             report(.failed("could not install the legacy agent: \(error)"))
             return
         }
+        // A leftover agent from an earlier attempt still holds a display and an encoder, and the
+        // next one then starts badly or not at all — which is what made mirroring take several
+        // tries before it held. Clear it before every launch.
+        _ = try? Adb.shell(serial, "pkill -f ai.rplay.legacy", timeout: 5)
 
         let size = displaySize
         var w = 1024, h = 600
@@ -117,19 +127,37 @@ final class LegacySession {
             h = Int((size.height * scale).rounded()) & ~1
         }
         let command = "CLASSPATH=\(Self.dexRemotePath) app_process / ai.rplay.legacy.Main \(w) \(h) 4000000"
-        AppBuild.log("legacy: \(serial) launching \(command)")
 
-        do {
-            let s = try Adb.shellStream(serial, command)
-            socket = s
-            report(.running)
-            readStream(from: s)
-            s.shutdownAndClose()
-        } catch {
-            if !stopping { report(.failed("\(error)")) }
-            return
+        // The agent path reconnects itself when a stream dies; this one has to as well, or a
+        // single hiccup on a slow board ends mirroring until the user clicks Start again.
+        var attempt = 0
+        while !stopping {
+            attempt += 1
+            AppBuild.log("legacy: \(serial) launching (attempt \(attempt)) \(command)")
+            do {
+                let s = try Adb.shellStream(serial, command)
+                socket = s
+                report(.running)
+                readStream(from: s)
+                s.shutdownAndClose()
+                socket = nil
+            } catch {
+                if stopping { return }
+                AppBuild.log("legacy: \(serial) could not start: \(error)")
+            }
+            guard !stopping else { return }
+            guard attempt < 5 else {
+                report(.failed("the legacy agent kept stopping (\(attempt) attempts)"))
+                return
+            }
+            // A fresh run means fresh parameter sets; drop the decoder state with the stream.
+            parameterSets.removeAll()
+            format = nil
+            awaitingKeyframe = true
+            decoder.invalidate()
+            _ = try? Adb.shell(serial, "pkill -f ai.rplay.legacy", timeout: 5)
+            Thread.sleep(forTimeInterval: 1)
         }
-        if !stopping { report(.failed("the legacy agent stopped")) }
     }
 
     static let dexRemotePath = "/data/local/tmp/rplayhub-legacy.dex"
