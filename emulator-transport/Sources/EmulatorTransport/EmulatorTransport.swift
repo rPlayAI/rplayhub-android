@@ -61,6 +61,23 @@ public enum EmulatorTransport {
         return (img.image, img.width, img.height)
     }
 
+    /// Stream display frames as they change (server-streaming). Calls `onFrame(bytes,w,h)` per
+    /// frame until the stream ends or the task is cancelled.
+    public static func streamScreenshots(
+        _ c: EmulatorController.Client<HTTP2ClientTransport.Posix>,
+        format: Android_Emulation_Control_ImageFormat.ImgFormat = .png,
+        width: UInt32 = 0, height: UInt32 = 0, display: Int32 = 0,
+        onFrame: @Sendable @escaping (Data, UInt32, UInt32) async -> Void
+    ) async throws {
+        var fmt = Android_Emulation_Control_ImageFormat()
+        fmt.format = format; fmt.width = width; fmt.height = height; fmt.display = UInt32(display)
+        try await c.streamScreenshot(request: ClientRequest(message: fmt)) { response in
+            for try await img in response.messages {
+                await onFrame(img.image, img.width, img.height)
+            }
+        }
+    }
+
     public static func status(
         _ c: EmulatorController.Client<HTTP2ClientTransport.Posix>
     ) async throws -> Android_Emulation_Control_EmulatorStatus {

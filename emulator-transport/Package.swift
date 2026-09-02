@@ -7,6 +7,7 @@ let package = Package(
     products: [
         .library(name: "EmulatorTransport", targets: ["EmulatorTransport"]),
         .executable(name: "emulator-probe", targets: ["emulator-probe"]),
+        .executable(name: "emulator-bridge", targets: ["emulator-bridge"]),
     ],
     dependencies: [
         .package(url: "https://github.com/grpc/grpc-swift.git", from: "2.0.0"),
@@ -25,5 +26,9 @@ let package = Package(
             ]
         ),
         .executableTarget(name: "emulator-probe", dependencies: ["EmulatorTransport"]),
+        .executableTarget(name: "emulator-bridge", dependencies: [
+            "EmulatorTransport",
+            .product(name: "GRPCNIOTransportHTTP2", package: "grpc-swift-nio-transport"),
+        ]),
     ]
 )
