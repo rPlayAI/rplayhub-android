@@ -417,6 +417,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var hostedSerial: String?
     /// The serial of an emulator we launched ("+ Emulator") and will host as soon as adb lists it.
     private var pendingEmulatorSerial: String?
+    /// Held for the length of the download/creation flow.
+    private var emulatorSetup: EmulatorSetup?
 
     /// Host `device` through its gRPC bridge. False when there is nothing to connect to — the
     /// caller falls back to mirroring it over adb like any device.
@@ -2253,6 +2255,11 @@ extension AppDelegate {
         menu.addItem(withTitle: "Connect to Device over Network…",
                      action: #selector(connectDeviceFromMenu), keyEquivalent: "").target = self
         menu.addItem(.separator())
+        let create = menu.addItem(withTitle: "Create Android VM…",
+                                  action: #selector(createAndroidVM), keyEquivalent: "")
+        create.target = self
+        create.toolTip = "Download the Android emulator and a system image from Google, then build a VM"
+        menu.addItem(.separator())
         let heading = menu.addItem(withTitle: "Start Emulator", action: nil, keyEquivalent: "")
         heading.isEnabled = false
         let avds = Avd.all()
@@ -2295,6 +2302,23 @@ extension AppDelegate {
     }
 
     @objc private func connectDeviceFromMenu() { connectDeviceDialog() }
+
+    /// Build an Android VM from nothing: fetch Google's catalog, download the emulator and a
+    /// system image on demand, write the AVD, then launch and host it.
+    @objc private func createAndroidVM() {
+        // A menu action always arrives on the main thread; EmulatorSetup is @MainActor because it
+        // drives sheets and a progress panel.
+        MainActor.assumeIsolated {
+            let setup = EmulatorSetup(window: window)
+            emulatorSetup = setup
+            setup.onReady = { [weak self] avd in
+                guard let self else { return }
+                self.emulatorSetup = nil
+                self.launchEmulator(avd)
+            }
+            setup.start()
+        }
+    }
 
     @objc private func launchEmulatorFromMenu(_ sender: NSMenuItem) {
         guard let name = sender.representedObject as? String,

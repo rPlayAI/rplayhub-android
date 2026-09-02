@@ -17,44 +17,48 @@
 		1A0000000000000000001010 /* AppIcons.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000000000000000000100F /* AppIcons.swift */; };
 		1A0000000000000000001012 /* AppsPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001011 /* AppsPanel.swift */; };
 		1A0000000000000000001014 /* AudioStream.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001013 /* AudioStream.swift */; };
-		1A0000000000000000001016 /* Base128.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001015 /* Base128.swift */; };
-		1A0000000000000000001018 /* ControlMessages.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001017 /* ControlMessages.swift */; };
-		1A000000000000000000101A /* ControlStrip.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001019 /* ControlStrip.swift */; };
-		1A000000000000000000101C /* CrashesPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000000000000000000101B /* CrashesPanel.swift */; };
-		1A000000000000000000101E /* DeviceInfoPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000000000000000000101D /* DeviceInfoPanel.swift */; };
-		1A0000000000000000001020 /* DeviceSidebar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000000000000000000101F /* DeviceSidebar.swift */; };
-		1A0000000000000000001022 /* DisplayShape.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001021 /* DisplayShape.swift */; };
-		1A0000000000000000001024 /* EmulatorLauncher.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001023 /* EmulatorLauncher.swift */; };
-		1A0000000000000000001026 /* EmulatorSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001025 /* EmulatorSession.swift */; };
-		1A0000000000000000001028 /* FilesPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001027 /* FilesPanel.swift */; };
-		1A000000000000000000102A /* FinderMount.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001029 /* FinderMount.swift */; };
-		1A000000000000000000102C /* FrameRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000000000000000000102B /* FrameRecorder.swift */; };
-		1A000000000000000000102E /* FusionTitlebar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000000000000000000102D /* FusionTitlebar.swift */; };
-		1A0000000000000000001030 /* FusionWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000000000000000000102F /* FusionWindow.swift */; };
-		1A0000000000000000001032 /* IconTabBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001031 /* IconTabBar.swift */; };
-		1A0000000000000000001034 /* InspectorPane.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001033 /* InspectorPane.swift */; };
-		1A0000000000000000001036 /* LogcatPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001035 /* LogcatPanel.swift */; };
-		1A0000000000000000001038 /* LogcatWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001037 /* LogcatWindow.swift */; };
-		1A000000000000000000103A /* MirrorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001039 /* MirrorView.swift */; };
-		1A000000000000000000103C /* Palette.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000000000000000000103B /* Palette.swift */; };
-		1A000000000000000000103E /* ReceivedTray.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000000000000000000103D /* ReceivedTray.swift */; };
-		1A0000000000000000001040 /* ScreenWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000000000000000000103F /* ScreenWindow.swift */; };
-		1A0000000000000000001042 /* SensorStream.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001041 /* SensorStream.swift */; };
-		1A0000000000000000001044 /* SettingsPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001043 /* SettingsPanel.swift */; };
-		1A0000000000000000001046 /* ShareInbox.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001045 /* ShareInbox.swift */; };
-		1A0000000000000000001048 /* TCPSocket.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001047 /* TCPSocket.swift */; };
-		1A000000000000000000104A /* TwinView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001049 /* TwinView.swift */; };
-		1A000000000000000000104C /* VideoDecoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000000000000000000104B /* VideoDecoder.swift */; };
-		1A000000000000000000104E /* VideoPacket.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000000000000000000104D /* VideoPacket.swift */; };
-		1A0000000000000000001050 /* VideoStream.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000000000000000000104F /* VideoStream.swift */; };
-		1A0000000000000000001052 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001051 /* main.swift */; };
+		1A0000000000000000001016 /* AvdCreator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001015 /* AvdCreator.swift */; };
+		1A0000000000000000001018 /* Base128.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001017 /* Base128.swift */; };
+		1A000000000000000000101A /* ControlMessages.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001019 /* ControlMessages.swift */; };
+		1A000000000000000000101C /* ControlStrip.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000000000000000000101B /* ControlStrip.swift */; };
+		1A000000000000000000101E /* CrashesPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000000000000000000101D /* CrashesPanel.swift */; };
+		1A0000000000000000001020 /* DeviceInfoPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000000000000000000101F /* DeviceInfoPanel.swift */; };
+		1A0000000000000000001022 /* DeviceSidebar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001021 /* DeviceSidebar.swift */; };
+		1A0000000000000000001024 /* DisplayShape.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001023 /* DisplayShape.swift */; };
+		1A0000000000000000001026 /* EmulatorLauncher.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001025 /* EmulatorLauncher.swift */; };
+		1A0000000000000000001028 /* EmulatorSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001027 /* EmulatorSession.swift */; };
+		1A000000000000000000102A /* EmulatorSetup.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001029 /* EmulatorSetup.swift */; };
+		1A000000000000000000102C /* FilesPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000000000000000000102B /* FilesPanel.swift */; };
+		1A000000000000000000102E /* FinderMount.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000000000000000000102D /* FinderMount.swift */; };
+		1A0000000000000000001030 /* FrameRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000000000000000000102F /* FrameRecorder.swift */; };
+		1A0000000000000000001032 /* FusionTitlebar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001031 /* FusionTitlebar.swift */; };
+		1A0000000000000000001034 /* FusionWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001033 /* FusionWindow.swift */; };
+		1A0000000000000000001036 /* IconTabBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001035 /* IconTabBar.swift */; };
+		1A0000000000000000001038 /* InspectorPane.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001037 /* InspectorPane.swift */; };
+		1A000000000000000000103A /* LogcatPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001039 /* LogcatPanel.swift */; };
+		1A000000000000000000103C /* LogcatWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000000000000000000103B /* LogcatWindow.swift */; };
+		1A000000000000000000103E /* MirrorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000000000000000000103D /* MirrorView.swift */; };
+		1A0000000000000000001040 /* Palette.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000000000000000000103F /* Palette.swift */; };
+		1A0000000000000000001042 /* ReceivedTray.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001041 /* ReceivedTray.swift */; };
+		1A0000000000000000001044 /* ScreenWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001043 /* ScreenWindow.swift */; };
+		1A0000000000000000001046 /* SdkCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001045 /* SdkCatalog.swift */; };
+		1A0000000000000000001048 /* SdkInstaller.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001047 /* SdkInstaller.swift */; };
+		1A000000000000000000104A /* SensorStream.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001049 /* SensorStream.swift */; };
+		1A000000000000000000104C /* SettingsPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000000000000000000104B /* SettingsPanel.swift */; };
+		1A000000000000000000104E /* ShareInbox.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000000000000000000104D /* ShareInbox.swift */; };
+		1A0000000000000000001050 /* TCPSocket.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000000000000000000104F /* TCPSocket.swift */; };
+		1A0000000000000000001052 /* TwinView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001051 /* TwinView.swift */; };
+		1A0000000000000000001054 /* VideoDecoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001053 /* VideoDecoder.swift */; };
+		1A0000000000000000001056 /* VideoPacket.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001055 /* VideoPacket.swift */; };
+		1A0000000000000000001058 /* VideoStream.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001057 /* VideoStream.swift */; };
+		1A000000000000000000105A /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001059 /* main.swift */; };
 		1A0000000000000000008002 /* FileProviderExtension.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000008001 /* FileProviderExtension.swift */; };
 		1A0000000000000000008004 /* PathIndex.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000008003 /* PathIndex.swift */; };
 		1A0000000000000000008006 /* PhoneEnumerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000008005 /* PhoneEnumerator.swift */; };
 		1A0000000000000000008008 /* PhoneItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000008007 /* PhoneItem.swift */; };
 		1A0000000000000000008009 /* Adb.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001001 /* Adb.swift */; };
 		1A000000000000000000800A /* AdbFiles.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001003 /* AdbFiles.swift */; };
-		1A000000000000000000800B /* TCPSocket.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000001047 /* TCPSocket.swift */; };
+		1A000000000000000000800B /* TCPSocket.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A000000000000000000104F /* TCPSocket.swift */; };
 		1A0000000000000000002004 /* AppIcon.icns in Resources */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000002003 /* AppIcon.icns */; };
 		1A000000000000000000700E /* FinderMount.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 1A0000000000000000007003 /* FinderMount.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
@@ -94,37 +98,41 @@
 		1A000000000000000000100F /* AppIcons.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppIcons.swift; sourceTree = "<group>"; };
 		1A0000000000000000001011 /* AppsPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppsPanel.swift; sourceTree = "<group>"; };
 		1A0000000000000000001013 /* AudioStream.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioStream.swift; sourceTree = "<group>"; };
-		1A0000000000000000001015 /* Base128.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Base128.swift; sourceTree = "<group>"; };
-		1A0000000000000000001017 /* ControlMessages.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ControlMessages.swift; sourceTree = "<group>"; };
-		1A0000000000000000001019 /* ControlStrip.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ControlStrip.swift; sourceTree = "<group>"; };
-		1A000000000000000000101B /* CrashesPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrashesPanel.swift; sourceTree = "<group>"; };
-		1A000000000000000000101D /* DeviceInfoPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceInfoPanel.swift; sourceTree = "<group>"; };
-		1A000000000000000000101F /* DeviceSidebar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceSidebar.swift; sourceTree = "<group>"; };
-		1A0000000000000000001021 /* DisplayShape.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DisplayShape.swift; sourceTree = "<group>"; };
-		1A0000000000000000001023 /* EmulatorLauncher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmulatorLauncher.swift; sourceTree = "<group>"; };
-		1A0000000000000000001025 /* EmulatorSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmulatorSession.swift; sourceTree = "<group>"; };
-		1A0000000000000000001027 /* FilesPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FilesPanel.swift; sourceTree = "<group>"; };
-		1A0000000000000000001029 /* FinderMount.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FinderMount.swift; sourceTree = "<group>"; };
-		1A000000000000000000102B /* FrameRecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FrameRecorder.swift; sourceTree = "<group>"; };
-		1A000000000000000000102D /* FusionTitlebar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FusionTitlebar.swift; sourceTree = "<group>"; };
-		1A000000000000000000102F /* FusionWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FusionWindow.swift; sourceTree = "<group>"; };
-		1A0000000000000000001031 /* IconTabBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IconTabBar.swift; sourceTree = "<group>"; };
-		1A0000000000000000001033 /* InspectorPane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InspectorPane.swift; sourceTree = "<group>"; };
-		1A0000000000000000001035 /* LogcatPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogcatPanel.swift; sourceTree = "<group>"; };
-		1A0000000000000000001037 /* LogcatWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogcatWindow.swift; sourceTree = "<group>"; };
-		1A0000000000000000001039 /* MirrorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MirrorView.swift; sourceTree = "<group>"; };
-		1A000000000000000000103B /* Palette.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Palette.swift; sourceTree = "<group>"; };
-		1A000000000000000000103D /* ReceivedTray.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReceivedTray.swift; sourceTree = "<group>"; };
-		1A000000000000000000103F /* ScreenWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenWindow.swift; sourceTree = "<group>"; };
-		1A0000000000000000001041 /* SensorStream.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SensorStream.swift; sourceTree = "<group>"; };
-		1A0000000000000000001043 /* SettingsPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsPanel.swift; sourceTree = "<group>"; };
-		1A0000000000000000001045 /* ShareInbox.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareInbox.swift; sourceTree = "<group>"; };
-		1A0000000000000000001047 /* TCPSocket.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TCPSocket.swift; sourceTree = "<group>"; };
-		1A0000000000000000001049 /* TwinView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TwinView.swift; sourceTree = "<group>"; };
-		1A000000000000000000104B /* VideoDecoder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoDecoder.swift; sourceTree = "<group>"; };
-		1A000000000000000000104D /* VideoPacket.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoPacket.swift; sourceTree = "<group>"; };
-		1A000000000000000000104F /* VideoStream.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoStream.swift; sourceTree = "<group>"; };
-		1A0000000000000000001051 /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
+		1A0000000000000000001015 /* AvdCreator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AvdCreator.swift; sourceTree = "<group>"; };
+		1A0000000000000000001017 /* Base128.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Base128.swift; sourceTree = "<group>"; };
+		1A0000000000000000001019 /* ControlMessages.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ControlMessages.swift; sourceTree = "<group>"; };
+		1A000000000000000000101B /* ControlStrip.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ControlStrip.swift; sourceTree = "<group>"; };
+		1A000000000000000000101D /* CrashesPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrashesPanel.swift; sourceTree = "<group>"; };
+		1A000000000000000000101F /* DeviceInfoPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceInfoPanel.swift; sourceTree = "<group>"; };
+		1A0000000000000000001021 /* DeviceSidebar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceSidebar.swift; sourceTree = "<group>"; };
+		1A0000000000000000001023 /* DisplayShape.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DisplayShape.swift; sourceTree = "<group>"; };
+		1A0000000000000000001025 /* EmulatorLauncher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmulatorLauncher.swift; sourceTree = "<group>"; };
+		1A0000000000000000001027 /* EmulatorSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmulatorSession.swift; sourceTree = "<group>"; };
+		1A0000000000000000001029 /* EmulatorSetup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmulatorSetup.swift; sourceTree = "<group>"; };
+		1A000000000000000000102B /* FilesPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FilesPanel.swift; sourceTree = "<group>"; };
+		1A000000000000000000102D /* FinderMount.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FinderMount.swift; sourceTree = "<group>"; };
+		1A000000000000000000102F /* FrameRecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FrameRecorder.swift; sourceTree = "<group>"; };
+		1A0000000000000000001031 /* FusionTitlebar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FusionTitlebar.swift; sourceTree = "<group>"; };
+		1A0000000000000000001033 /* FusionWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FusionWindow.swift; sourceTree = "<group>"; };
+		1A0000000000000000001035 /* IconTabBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IconTabBar.swift; sourceTree = "<group>"; };
+		1A0000000000000000001037 /* InspectorPane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InspectorPane.swift; sourceTree = "<group>"; };
+		1A0000000000000000001039 /* LogcatPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogcatPanel.swift; sourceTree = "<group>"; };
+		1A000000000000000000103B /* LogcatWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogcatWindow.swift; sourceTree = "<group>"; };
+		1A000000000000000000103D /* MirrorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MirrorView.swift; sourceTree = "<group>"; };
+		1A000000000000000000103F /* Palette.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Palette.swift; sourceTree = "<group>"; };
+		1A0000000000000000001041 /* ReceivedTray.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReceivedTray.swift; sourceTree = "<group>"; };
+		1A0000000000000000001043 /* ScreenWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenWindow.swift; sourceTree = "<group>"; };
+		1A0000000000000000001045 /* SdkCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SdkCatalog.swift; sourceTree = "<group>"; };
+		1A0000000000000000001047 /* SdkInstaller.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SdkInstaller.swift; sourceTree = "<group>"; };
+		1A0000000000000000001049 /* SensorStream.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SensorStream.swift; sourceTree = "<group>"; };
+		1A000000000000000000104B /* SettingsPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsPanel.swift; sourceTree = "<group>"; };
+		1A000000000000000000104D /* ShareInbox.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareInbox.swift; sourceTree = "<group>"; };
+		1A000000000000000000104F /* TCPSocket.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TCPSocket.swift; sourceTree = "<group>"; };
+		1A0000000000000000001051 /* TwinView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TwinView.swift; sourceTree = "<group>"; };
+		1A0000000000000000001053 /* VideoDecoder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoDecoder.swift; sourceTree = "<group>"; };
+		1A0000000000000000001055 /* VideoPacket.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoPacket.swift; sourceTree = "<group>"; };
+		1A0000000000000000001057 /* VideoStream.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoStream.swift; sourceTree = "<group>"; };
+		1A0000000000000000001059 /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
 		1A0000000000000000002001 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		1A0000000000000000002003 /* AppIcon.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = AppIcon.icns; sourceTree = "<group>"; };
 		1A0000000000000000002002 /* rPlayHubAndroid.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = rPlayHubAndroid.entitlements; sourceTree = "<group>"; };
@@ -178,37 +186,41 @@
 				1A000000000000000000100F /* AppIcons.swift */,
 				1A0000000000000000001011 /* AppsPanel.swift */,
 				1A0000000000000000001013 /* AudioStream.swift */,
-				1A0000000000000000001015 /* Base128.swift */,
-				1A0000000000000000001017 /* ControlMessages.swift */,
-				1A0000000000000000001019 /* ControlStrip.swift */,
-				1A000000000000000000101B /* CrashesPanel.swift */,
-				1A000000000000000000101D /* DeviceInfoPanel.swift */,
-				1A000000000000000000101F /* DeviceSidebar.swift */,
-				1A0000000000000000001021 /* DisplayShape.swift */,
-				1A0000000000000000001023 /* EmulatorLauncher.swift */,
-				1A0000000000000000001025 /* EmulatorSession.swift */,
-				1A0000000000000000001027 /* FilesPanel.swift */,
-				1A0000000000000000001029 /* FinderMount.swift */,
-				1A000000000000000000102B /* FrameRecorder.swift */,
-				1A000000000000000000102D /* FusionTitlebar.swift */,
-				1A000000000000000000102F /* FusionWindow.swift */,
-				1A0000000000000000001031 /* IconTabBar.swift */,
-				1A0000000000000000001033 /* InspectorPane.swift */,
-				1A0000000000000000001035 /* LogcatPanel.swift */,
-				1A0000000000000000001037 /* LogcatWindow.swift */,
-				1A0000000000000000001039 /* MirrorView.swift */,
-				1A000000000000000000103B /* Palette.swift */,
-				1A000000000000000000103D /* ReceivedTray.swift */,
-				1A000000000000000000103F /* ScreenWindow.swift */,
-				1A0000000000000000001041 /* SensorStream.swift */,
-				1A0000000000000000001043 /* SettingsPanel.swift */,
-				1A0000000000000000001045 /* ShareInbox.swift */,
-				1A0000000000000000001047 /* TCPSocket.swift */,
-				1A0000000000000000001049 /* TwinView.swift */,
-				1A000000000000000000104B /* VideoDecoder.swift */,
-				1A000000000000000000104D /* VideoPacket.swift */,
-				1A000000000000000000104F /* VideoStream.swift */,
-				1A0000000000000000001051 /* main.swift */,
+				1A0000000000000000001015 /* AvdCreator.swift */,
+				1A0000000000000000001017 /* Base128.swift */,
+				1A0000000000000000001019 /* ControlMessages.swift */,
+				1A000000000000000000101B /* ControlStrip.swift */,
+				1A000000000000000000101D /* CrashesPanel.swift */,
+				1A000000000000000000101F /* DeviceInfoPanel.swift */,
+				1A0000000000000000001021 /* DeviceSidebar.swift */,
+				1A0000000000000000001023 /* DisplayShape.swift */,
+				1A0000000000000000001025 /* EmulatorLauncher.swift */,
+				1A0000000000000000001027 /* EmulatorSession.swift */,
+				1A0000000000000000001029 /* EmulatorSetup.swift */,
+				1A000000000000000000102B /* FilesPanel.swift */,
+				1A000000000000000000102D /* FinderMount.swift */,
+				1A000000000000000000102F /* FrameRecorder.swift */,
+				1A0000000000000000001031 /* FusionTitlebar.swift */,
+				1A0000000000000000001033 /* FusionWindow.swift */,
+				1A0000000000000000001035 /* IconTabBar.swift */,
+				1A0000000000000000001037 /* InspectorPane.swift */,
+				1A0000000000000000001039 /* LogcatPanel.swift */,
+				1A000000000000000000103B /* LogcatWindow.swift */,
+				1A000000000000000000103D /* MirrorView.swift */,
+				1A000000000000000000103F /* Palette.swift */,
+				1A0000000000000000001041 /* ReceivedTray.swift */,
+				1A0000000000000000001043 /* ScreenWindow.swift */,
+				1A0000000000000000001045 /* SdkCatalog.swift */,
+				1A0000000000000000001047 /* SdkInstaller.swift */,
+				1A0000000000000000001049 /* SensorStream.swift */,
+				1A000000000000000000104B /* SettingsPanel.swift */,
+				1A000000000000000000104D /* ShareInbox.swift */,
+				1A000000000000000000104F /* TCPSocket.swift */,
+				1A0000000000000000001051 /* TwinView.swift */,
+				1A0000000000000000001053 /* VideoDecoder.swift */,
+				1A0000000000000000001055 /* VideoPacket.swift */,
+				1A0000000000000000001057 /* VideoStream.swift */,
+				1A0000000000000000001059 /* main.swift */,
 				1A0000000000000000002003 /* AppIcon.icns */,
 				1A0000000000000000002001 /* Info.plist */,
 				1A0000000000000000002002 /* rPlayHubAndroid.entitlements */,
@@ -358,37 +370,41 @@
 				1A0000000000000000001010 /* AppIcons.swift in Sources */,
 				1A0000000000000000001012 /* AppsPanel.swift in Sources */,
 				1A0000000000000000001014 /* AudioStream.swift in Sources */,
-				1A0000000000000000001016 /* Base128.swift in Sources */,
-				1A0000000000000000001018 /* ControlMessages.swift in Sources */,
-				1A000000000000000000101A /* ControlStrip.swift in Sources */,
-				1A000000000000000000101C /* CrashesPanel.swift in Sources */,
-				1A000000000000000000101E /* DeviceInfoPanel.swift in Sources */,
-				1A0000000000000000001020 /* DeviceSidebar.swift in Sources */,
-				1A0000000000000000001022 /* DisplayShape.swift in Sources */,
-				1A0000000000000000001024 /* EmulatorLauncher.swift in Sources */,
-				1A0000000000000000001026 /* EmulatorSession.swift in Sources */,
-				1A0000000000000000001028 /* FilesPanel.swift in Sources */,
-				1A000000000000000000102A /* FinderMount.swift in Sources */,
-				1A000000000000000000102C /* FrameRecorder.swift in Sources */,
-				1A000000000000000000102E /* FusionTitlebar.swift in Sources */,
-				1A0000000000000000001030 /* FusionWindow.swift in Sources */,
-				1A0000000000000000001032 /* IconTabBar.swift in Sources */,
-				1A0000000000000000001034 /* InspectorPane.swift in Sources */,
-				1A0000000000000000001036 /* LogcatPanel.swift in Sources */,
-				1A0000000000000000001038 /* LogcatWindow.swift in Sources */,
-				1A000000000000000000103A /* MirrorView.swift in Sources */,
-				1A000000000000000000103C /* Palette.swift in Sources */,
-				1A000000000000000000103E /* ReceivedTray.swift in Sources */,
-				1A0000000000000000001040 /* ScreenWindow.swift in Sources */,
-				1A0000000000000000001042 /* SensorStream.swift in Sources */,
-				1A0000000000000000001044 /* SettingsPanel.swift in Sources */,
-				1A0000000000000000001046 /* ShareInbox.swift in Sources */,
-				1A0000000000000000001048 /* TCPSocket.swift in Sources */,
-				1A000000000000000000104A /* TwinView.swift in Sources */,
-				1A000000000000000000104C /* VideoDecoder.swift in Sources */,
-				1A000000000000000000104E /* VideoPacket.swift in Sources */,
-				1A0000000000000000001050 /* VideoStream.swift in Sources */,
-				1A0000000000000000001052 /* main.swift in Sources */,
+				1A0000000000000000001016 /* AvdCreator.swift in Sources */,
+				1A0000000000000000001018 /* Base128.swift in Sources */,
+				1A000000000000000000101A /* ControlMessages.swift in Sources */,
+				1A000000000000000000101C /* ControlStrip.swift in Sources */,
+				1A000000000000000000101E /* CrashesPanel.swift in Sources */,
+				1A0000000000000000001020 /* DeviceInfoPanel.swift in Sources */,
+				1A0000000000000000001022 /* DeviceSidebar.swift in Sources */,
+				1A0000000000000000001024 /* DisplayShape.swift in Sources */,
+				1A0000000000000000001026 /* EmulatorLauncher.swift in Sources */,
+				1A0000000000000000001028 /* EmulatorSession.swift in Sources */,
+				1A000000000000000000102A /* EmulatorSetup.swift in Sources */,
+				1A000000000000000000102C /* FilesPanel.swift in Sources */,
+				1A000000000000000000102E /* FinderMount.swift in Sources */,
+				1A0000000000000000001030 /* FrameRecorder.swift in Sources */,
+				1A0000000000000000001032 /* FusionTitlebar.swift in Sources */,
+				1A0000000000000000001034 /* FusionWindow.swift in Sources */,
+				1A0000000000000000001036 /* IconTabBar.swift in Sources */,
+				1A0000000000000000001038 /* InspectorPane.swift in Sources */,
+				1A000000000000000000103A /* LogcatPanel.swift in Sources */,
+				1A000000000000000000103C /* LogcatWindow.swift in Sources */,
+				1A000000000000000000103E /* MirrorView.swift in Sources */,
+				1A0000000000000000001040 /* Palette.swift in Sources */,
+				1A0000000000000000001042 /* ReceivedTray.swift in Sources */,
+				1A0000000000000000001044 /* ScreenWindow.swift in Sources */,
+				1A0000000000000000001046 /* SdkCatalog.swift in Sources */,
+				1A0000000000000000001048 /* SdkInstaller.swift in Sources */,
+				1A000000000000000000104A /* SensorStream.swift in Sources */,
+				1A000000000000000000104C /* SettingsPanel.swift in Sources */,
+				1A000000000000000000104E /* ShareInbox.swift in Sources */,
+				1A0000000000000000001050 /* TCPSocket.swift in Sources */,
+				1A0000000000000000001052 /* TwinView.swift in Sources */,
+				1A0000000000000000001054 /* VideoDecoder.swift in Sources */,
+				1A0000000000000000001056 /* VideoPacket.swift in Sources */,
+				1A0000000000000000001058 /* VideoStream.swift in Sources */,
+				1A000000000000000000105A /* main.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
