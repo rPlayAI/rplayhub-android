@@ -105,6 +105,27 @@ final class MirrorView: NSView, NSMenuItemValidation {
 
     /// The black surround drawn around a live picture, in points.
     private static let bezelWidth: CGFloat = 14
+
+    /// The bezel a live picture gets. A phone keeps its black edge even when borderless — it is
+    /// what makes a naked window read as a phone — and it is the SAME edge the ordinary window
+    /// draws, so the picture is the same size in both and the switch between them moves nothing.
+    /// A virtual display is a desktop, not a phone: a fusion window runs it to the edge.
+    private var liveBezel: CGFloat {
+        borderless ? (displayId == 0 ? Self.bezelWidth : 0) : Self.bezelWidth
+    }
+
+    /// Room kept between a live picture and the view's edge. The bezel is drawn OUTSIDE
+    /// `displayRect()` and the view masks to its bounds, so the picture has to stand back at
+    /// least the bezel's width or the bezel — and the rounded corner it carries — is cut off.
+    /// The naked window laid the picture out edge to edge and lost most of the corner that way.
+    var liveInset: CGFloat { borderless ? liveBezel : max(12, liveBezel) }
+
+    /// The picture together with its bezel, in this view's coordinates — the rectangle a naked
+    /// window hugs so that nothing of the phone is cut off and nothing else shows.
+    var framedPictureRect: CGRect {
+        let rect = displayRect()
+        return isGated ? rect : rect.insetBy(dx: -liveBezel, dy: -liveBezel)
+    }
     private let placeholderLayer = CAGradientLayer()
     private let nameLabel = NSTextField(labelWithString: "No device selected")
     private let osLabel = NSTextField(labelWithString: "")
@@ -488,8 +509,7 @@ final class MirrorView: NSView, NSMenuItemValidation {
                           y: max(20, (bounds.height - blockHeight) / 2),
                           width: w, height: h)
         }
-        let inset: CGFloat = borderless ? 0 : 12   // fusion windows want the picture flush
-        let available = bounds.insetBy(dx: inset, dy: inset)
+        let available = bounds.insetBy(dx: liveInset, dy: liveInset)
         let scale = min(available.width / content.width, available.height / content.height)
         let w = content.width * scale
         let h = content.height * scale
@@ -522,14 +542,9 @@ final class MirrorView: NSView, NSMenuItemValidation {
         // Device Hub keeps a black bezel around the live screen, not a hairline — it is what
         // makes the picture read as a phone rather than as a rectangle of video. The idle
         // mockup's bezel stays proportional to its own small size.
-        // Keep the phone's black bezel edge even in a naked window — it's what makes the floating
-        // picture read as a real phone. A fusion display (no displayShape) is a desktop, not a
-        // phone, so it gets no edge.
         // The idle mockup keeps a drawn border (it is a picture of a phone, not a screen); a live
         // picture gets the bezel behind it instead, so none of the screen is covered.
-        let bezel: CGFloat = borderless
-            ? (displayShape != nil ? Self.bezelWidth : 0)
-            : (isGated ? max(1, rect.width * 0.05) : Self.bezelWidth)
+        let bezel: CGFloat = isGated && !borderless ? max(1, rect.width * 0.05) : liveBezel
         clipLayer.borderWidth = isGated ? bezel : 0
         bezelLayer.isHidden = isGated || bezel <= 0
         if !bezelLayer.isHidden {

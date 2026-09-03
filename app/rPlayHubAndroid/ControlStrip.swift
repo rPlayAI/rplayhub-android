@@ -13,9 +13,6 @@ final class ControlStrip: NSView {
     private static let buttonWidth: CGFloat = 30
     private static let buttonSpacing: CGFloat = 14
 
-    /// One control's width — the unit a window can grow by to make room beside the picture.
-    static var controlWidth: CGFloat { buttonWidth }
-
     /// The width the toolbar actually needs: every button, the gaps between them, and a margin.
     /// A window showing this strip should be at least this wide or the buttons get cramped.
     var minimumContentWidth: CGFloat {

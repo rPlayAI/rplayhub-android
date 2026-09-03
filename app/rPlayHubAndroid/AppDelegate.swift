@@ -295,6 +295,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.mirror.borderless = false   // the main stage gets its device bezel back
             self.mirror.nakedBackground = false   // and its Device-Hub white surround
             self.stageMinWidth?.isActive = true   // the split view needs its width floor back
+            self.mirrorBottomToStage?.constant = 0
             self.mirrorBottomToStage?.isActive = false
             self.stripTopToMirror?.isActive = true
             if let w = self.screenWindow.window { w.isOpaque = true; w.backgroundColor = .windowBackgroundColor }
@@ -807,9 +808,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// mouse-moved monitor, which only fires while the window is key and accepts moved events).
     private var fusionHoverTimer: Timer?
     private var fusionChromeShown = false
-    /// The picture's size in a naked window; the window is resized around it so the picture never
-    /// changes size when the chrome toggles.
-    private var nakedPictureSize: NSSize = .zero
     /// The reveal only arms once the cursor has left the window's edges: opening the window from a
     /// menu leaves the pointer right where the chrome band is, which would flip it out of raw mode
     /// the instant it appears.
@@ -951,53 +949,60 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         installFusionHover()
     }
 
-    /// Size a naked window's content to EXACTLY the mirror's presented aspect, so the picture fills
-    /// it with no dead space — portrait phone → portrait window, rotated → landscape.
+    /// Size a naked window's content to EXACTLY the mirror's presented aspect — plus the bezel it
+    /// draws around the picture — so the phone fills it with no dead space: portrait phone →
+    /// portrait window, rotated → landscape.
     private func sizeWindowToMirror(_ w: NSWindow) {
         let p = mirror.presentedSize
         let longest: CGFloat = 820
-        let picture: NSSize
+        var picture: NSSize
         if p.width > 0, p.height > 0 {
+            // Rounded UP so the long side, not the short one, sets the scale — then the picture
+            // is laid out at exactly this size and the first chrome toggle has nothing to re-hug.
             picture = p.height >= p.width
-                ? NSSize(width: (longest * p.width / p.height).rounded(), height: longest)
-                : NSSize(width: longest, height: (longest * p.height / p.width).rounded())
+                ? NSSize(width: (longest * p.width / p.height).rounded(.up), height: longest)
+                : NSSize(width: longest, height: (longest * p.height / p.width).rounded(.up))
         } else {
             picture = NSSize(width: 380, height: 820)
         }
-        nakedPictureSize = picture
-        applyNakedLayout(chromeVisible: fusionChromeShown)
+        let inset = mirror.liveInset
+        picture.width += 2 * inset
+        picture.height += 2 * inset
+        w.setContentSize(picture)
     }
 
-    /// Keep the PICTURE the same size in both modes by resizing the window around it: in raw mode
-    /// the content is exactly the picture; when the chrome comes back, the window grows by the
-    /// title bar (outside the content) and the control strip (inside it), anchored at the top-left
-    /// so the picture doesn't jump. Without this the bars eat into the picture and letterbox it.
+    /// Keep the PICTURE exactly where it is on screen in both modes and grow the window around
+    /// it: the title bar's height above, the control strip's below, and whatever width the strip
+    /// needs beyond the phone's split evenly to both sides. The stage's padding changes in the
+    /// same pass as the frame, so Auto Layout never sees an intermediate size and the picture
+    /// does not move by a point. The toggle is then a fade with nothing jumping.
+    ///
+    /// The window used to grow in steps — the style mask first (the title bar pushed the content
+    /// down), then the strip took its band, then the width was corrected — and each step moved
+    /// the picture. That was the shaking.
     private func applyNakedLayout(chromeVisible: Bool) {
-        guard let w = screenWindow.window, nakedPictureSize.width > 0 else { return }
+        guard let w = screenWindow.window, let content = w.contentView else { return }
+        // Whole points: the picture is width-bound in one mode and height-bound in the other, and
+        // the fraction of a point between the two would otherwise creep into the frame.
+        let picture = w.convertToScreen(mirror.convert(mirror.framedPictureRect, to: nil)).integral
+        guard picture.width > 0, picture.height > 0 else { return }
+        // fullSizeContentView stays on in both modes, so the title bar overlays the content and
+        // the stage steps down by its height while it is shown.
+        let titleBar = chromeVisible ? content.bounds.height - w.contentLayoutRect.height : 0
         let stripHeight: CGFloat = chromeVisible ? max(strip.fittingSize.height, 50) : 0
-        // Work from the size the window actually has, not the canonical one, or every toggle
-        // throws away a resize the user made. Height carries the intent and the aspect gives the
-        // width back, which also stops the width drifting as the chrome comes and goes.
-        let previousStrip: CGFloat = fusionChromeShown ? max(strip.fittingSize.height, 50) : 0
-        let live = w.contentView?.bounds.size ?? .zero
-        let shown = mirror.presentedSize
-        if live.height - previousStrip > 80, shown.width > 0, shown.height > 0 {
-            let height = (live.height - previousStrip).rounded()
-            nakedPictureSize = NSSize(width: (height * shown.width / shown.height).rounded(),
-                                      height: height)
-        }
-        // The raw window is only as wide as the phone, which is too narrow for the strip's
-        // buttons, so the window widens while the chrome is up and gives the width back after.
-        let width = chromeVisible
-            ? max(nakedPictureSize.width + ControlStrip.controlWidth, strip.minimumContentWidth)
-            : nakedPictureSize.width
-        let content = NSSize(width: width, height: nakedPictureSize.height + stripHeight)
-        let top = w.frame.maxY
-        let left = w.frame.minX
-        w.setContentSize(content)
-        var f = w.frame                       // frame now includes the title bar when shown
-        f.origin = NSPoint(x: left, y: top - f.height)
-        w.setFrame(f, display: true)
+        // Whole points on each side, or an odd difference leaves the window on a half point and
+        // the picture drifts by it on every round trip.
+        let side: CGFloat = chromeVisible
+            ? max(0, ((strip.minimumContentWidth - picture.width) / 2).rounded(.up)) : 0
+        stageTopPad?.constant = titleBar
+        mirrorBottomToStage?.constant = -stripHeight
+        let frame = NSRect(x: picture.minX - side,
+                           y: picture.minY - stripHeight,
+                           width: picture.width + 2 * side,
+                           height: picture.height + titleBar + stripHeight)
+        w.setFrame(frame, display: false)
+        content.layoutSubtreeIfNeeded()
+        w.displayIfNeeded()
     }
 
     /// Fully show/hide the naked window's chrome — the three traffic lights AND our accessory — as
@@ -1007,46 +1012,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let lights = [w.standardWindowButton(.closeButton),
                       w.standardWindowButton(.miniaturizeButton),
                       w.standardWindowButton(.zoomButton)]
-        // Toggle the whole window between "raw" (fullSizeContentView, transparent bar, no chrome —
-        // the picture fills everything) and the traditional window (a real title-bar strip above
-        // the picture, app name, traffic lights, and our controls) — the same window that existed
-        // before raw mode. Enforced every call because macOS restores chrome on activation.
-        // A real, full title bar when shown (it takes its own strip above the content, so the
-        // window frame stays put); none at all in raw mode.
-        if visible { w.styleMask.remove(.fullSizeContentView) }
-        else { w.styleMask.insert(.fullSizeContentView) }
+        // Toggle the whole window between "raw" (transparent bar, no chrome — the picture fills
+        // everything) and the traditional window (a title bar above the picture, app name,
+        // traffic lights, and our controls). Enforced every call because macOS restores chrome
+        // on activation. The window keeps fullSizeContentView in BOTH modes: the title bar is
+        // painted over the top of the content when shown and applyNakedLayout pads the stage
+        // down by its height, so the frame grows around the picture rather than the title bar
+        // pushing the picture down.
         w.titlebarAppearsTransparent = !visible
         w.titleVisibility = visible ? .visible : .hidden
         for b in lights { b?.isHidden = !visible }
         // The bottom control strip is a "bar" too — hidden in raw mode so only the phone shows,
-        // back on approach. The pop-out swaps the WHOLE look: raw phone (clear surround, no
-        // bezel, strip floating and hidden) ⇄ the ordinary window (white surround, device bezel,
-        // control strip under the picture).
+        // back on approach. The pop-out swaps the look: raw phone (clear surround, strip hidden)
+        // ⇄ the ordinary window (white surround, control strip under the picture). The picture
+        // itself, bezel included, is the same size in both — that is what keeps the switch still.
+        // The strip stays floating (mirrorBottomToStage) in both modes; the pad under the picture
+        // is what makes room for it.
         mirror.borderless = !visible
         mirror.nakedBackground = !visible
         w.isOpaque = visible
         w.backgroundColor = visible ? .windowBackgroundColor : .clear
         strip.isHidden = !visible
-        stripTopToMirror?.isActive = visible
-        mirrorBottomToStage?.isActive = !visible
         // Resize the window around the picture, but ONLY on a real transition. The cursor timer
         // calls this several times a second, and resizing every tick reverted any resize the
         // user made a moment later — the window appeared to refuse being made bigger.
         let changed = visible != fusionChromeShown
-        if changed {
-            // Without this the title bar (which stops overlaying the content once
-            // fullSizeContentView is removed) and the control strip eat into the same frame, and
-            // the mirrored screen shrinks whenever the pointer nears the edge.
-            applyNakedLayout(chromeVisible: visible)
-        }
+        if changed { applyNakedLayout(chromeVisible: visible) }
         fusionChromeShown = visible
         guard changed, animated else { return }
         // A soft fade on the transition.
         let a: CGFloat = visible ? 1 : 0
         for b in lights { b?.alphaValue = visible ? 0 : 1 }
+        strip.alphaValue = visible ? 0 : 1
         NSAnimationContext.runAnimationGroup { ctx in
             ctx.duration = 0.12
             for b in lights { b?.animator().alphaValue = a }
+            strip.animator().alphaValue = 1
         }
     }
 
