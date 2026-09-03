@@ -28,6 +28,8 @@ final class AgentSession {
         case deploying(String)
         case running
         case failed(String)
+
+        var isFailed: Bool { if case .failed = self { return true } else { return false } }
     }
 
     static let devicePathBase = "/data/local/tmp/.studio"

@@ -442,7 +442,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if reveal { mirror.reveal(); mirrorRevealed = true; strip.setSessionActive(true); refreshMirrorToggle() }
             return
         }
-        if let live = session, live.serial == device.serial, live.state != .idle {
+        // A session that has FAILED is not running: auto-reconnect comes through here after the
+        // agent exits, and treating the dead session as live returned without restarting it —
+        // the window said "reconnecting" for ever.
+        if let live = session, live.serial == device.serial, live.state != .idle,
+           !live.state.isFailed {
             if reveal { mirror.reveal(); mirrorRevealed = true; refreshMirrorToggle() }
             return
         }

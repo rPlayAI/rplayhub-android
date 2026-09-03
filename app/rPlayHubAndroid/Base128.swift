@@ -56,9 +56,13 @@ struct Base128Writer {
     mutating func writeFloat(_ value: Float) { writeFixed32(Int32(bitPattern: value.bitPattern)) }
 
     /// UTF-16 code units, length first — the agent reads these into a std::u16string.
+    /// The agent's ReadString16: the count is written PLUS ONE — 0 stands for a null string —
+    /// then one varint per UTF-16 unit. Sending the raw count made every one-character text
+    /// (each keystroke) decode as an empty string, which the agent treats as a fatal protocol
+    /// error and exits on.
     mutating func writeString16(_ value: String) {
         let units = Array(value.utf16)
-        writeUInt32(UInt32(units.count))
+        writeUInt32(UInt32(units.count + 1))
         for u in units { writeUInt32(UInt32(u)) }
     }
 
