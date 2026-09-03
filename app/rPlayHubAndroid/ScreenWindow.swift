@@ -1,6 +1,7 @@
 //
 //  ScreenWindow.swift
-//  The live screen in a window of its own — Device Hub's "Open in New Tab" / "Open in New Window".
+//  The live screen in a window of its own — Device Hub's "Open in New Window". (Its "Open in New
+//  Tab" is a tab in the center panel, ScreenTabBar, not a window.)
 //
 //  There is one live stream and one MirrorView, so this moves that view rather than creating a
 //  second one. Two views cannot share an AVSampleBufferDisplayLayer, and decoding the stream twice
@@ -26,8 +27,7 @@ final class ScreenWindow {
     var isOpen: Bool { window != nil }
 
     /// Detach `stage` (the screen and its action strip) out of `host` and into a window.
-    /// `sibling` is the window to tab with; pass nil for a standalone window.
-    func open(stage: NSView, from host: NSSplitView, title: String, tabbedWith sibling: NSWindow?) {
+    func open(stage: NSView, from host: NSSplitView, title: String) {
         if let window {                                  // already out — just show it
             window.makeKeyAndOrderFront(nil)
             return
@@ -60,15 +60,9 @@ final class ScreenWindow {
         w.title = title
         w.contentView = stage
         w.setFrameAutosaveName("ScreenWindow")
-        // Let AppKit manage tabbing; .preferred is what makes addTabbedWindow group rather than
-        // open a second free-floating window.
-        w.tabbingMode = sibling != nil ? .preferred : .disallowed
+        w.tabbingMode = .disallowed
         w.isReleasedWhenClosed = false
         window = w
-
-        if let sibling {
-            sibling.addTabbedWindow(w, ordered: .above)
-        }
         w.makeKeyAndOrderFront(nil)
 
         observer = NotificationCenter.default.addObserver(

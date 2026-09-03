@@ -19,6 +19,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let strip = ControlStrip()
     private let inspector = InspectorPane()
     private let screenWindow = ScreenWindow()
+    /// Device Hub's center-panel tabs. A tab is a selection slot; the first is the embedded view.
+    private let screenTabBar = ScreenTabBar()
+    private var screenTabs: [ScreenTabBar.Tab] = []
+    private var currentTab = 0
+    private var tabBarTop: NSLayoutConstraint?
+    private var tabBarHeight: NSLayoutConstraint?
     /// Shared items arriving from the phone's companion app (helper/). Live while a session is.
     private let shareInbox = ShareInbox()
     private var stage: NSView!
@@ -142,11 +148,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         mirror.translatesAutoresizingMaskIntoConstraints = false
         strip.translatesAutoresizingMaskIntoConstraints = false
         let middle = NSView()
+        screenTabBar.translatesAutoresizingMaskIntoConstraints = false
+        middle.addSubview(screenTabBar)
         middle.addSubview(mirror)
         middle.addSubview(strip)
+        // The tab bar sits at the top of the stage and collapses to nothing while there is only
+        // the embedded view, so the picture's top pad is measured from its bottom edge.
+        tabBarTop = screenTabBar.topAnchor.constraint(equalTo: middle.topAnchor)
+        tabBarHeight = screenTabBar.heightAnchor.constraint(equalToConstant: 0)
         // Kept as properties so a fusion window can collapse them: the picture there should run
         // to the window's edge, with no stage padding and no reserved strip height.
-        stageTopPad = mirror.topAnchor.constraint(equalTo: middle.topAnchor, constant: 16)
+        stageTopPad = mirror.topAnchor.constraint(equalTo: screenTabBar.bottomAnchor, constant: 16)
         stageLeadPad = mirror.leadingAnchor.constraint(equalTo: middle.leadingAnchor, constant: 12)
         stageTrailPad = mirror.trailingAnchor.constraint(equalTo: middle.trailingAnchor, constant: -12)
         stripMinHeight = strip.heightAnchor.constraint(greaterThanOrEqualToConstant: 50)
@@ -159,6 +171,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         stripTopToMirror = strip.topAnchor.constraint(equalTo: mirror.bottomAnchor)
         mirrorBottomToStage = mirror.bottomAnchor.constraint(equalTo: middle.bottomAnchor)
         NSLayoutConstraint.activate([
+            tabBarTop!, tabBarHeight!,
+            screenTabBar.leadingAnchor.constraint(equalTo: middle.leadingAnchor, constant: 12),
+            screenTabBar.trailingAnchor.constraint(equalTo: middle.trailingAnchor, constant: -12),
             stageTopPad!, stageLeadPad!, stageTrailPad!,
             stripTopToMirror!,
             strip.leadingAnchor.constraint(equalTo: middle.leadingAnchor),
@@ -245,6 +260,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func wireUp() {
         sidebar.onSelect = { [weak self] device in self?.selectionChanged(device) }
+        screenTabBar.onSelect = { [weak self] index in self?.selectScreenTab(index) }
+        screenTabBar.onClose = { [weak self] index in self?.closeScreenTab(index) }
+        screenTabBar.onAdd = { [weak self] in self?.openScreenTab() }
         sidebar.onMirror = { [weak self] device in self?.startSession(for: device) }
         sidebar.onStopMirror = { [weak self] in self?.stopMirroring() }
         sidebar.isMirroring = { [weak self] device in
@@ -302,6 +320,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.stripTopToMirror?.isActive = true
             if let w = self.screenWindow.window { w.isOpaque = true; w.backgroundColor = .windowBackgroundColor }
             self.stageTopPad?.constant = 16
+            self.updateScreenTabs()
             self.stageLeadPad?.constant = 12
             self.stageTrailPad?.constant = -12
             self.stripMinHeight?.constant = 50
@@ -385,6 +404,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         let name = sidebar.friendlyName(for: device)     // "Emulator · <avd>" once known
         window.title = "rPlayHub — \(name)"
+        // The current tab follows the selection; the others keep the device they were opened on.
+        let tab = ScreenTabBar.Tab(serial: device.serial, title: name)
+        if screenTabs.indices.contains(currentTab) { screenTabs[currentTab] = tab } else { screenTabs = [tab]; currentTab = 0 }
+        updateScreenTabs()
         deviceTitleName.stringValue = name
         deviceTitleDetail.stringValue = device.isReady ? device.serial : device.state
         mirror.deviceName = name
@@ -944,6 +967,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// lights and any accessory — fades in only when the mouse nears the top edge. Used for both
     /// the fusion window and the plain "Open Screen in New Window" pop-out.
     private func applyNakedChrome(to w: NSWindow) {
+        updateScreenTabs()                       // no tab bar in the raw window
         w.titlebarAppearsTransparent = true
         w.titleVisibility = .hidden
         w.styleMask.insert(.fullSizeContentView)
@@ -2304,7 +2328,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func openScreenWindow() {
-        screenWindow.open(stage: stage, from: splitView, title: window.title, tabbedWith: nil)
+        screenWindow.open(stage: stage, from: splitView, title: window.title)
         if let w = screenWindow.window {
             applyNakedChrome(to: w)
             sizeWindowToMirror(w)
@@ -2312,9 +2336,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    // MARK: - screen tabs (Device Hub's center-panel tabs)
+
+    /// Open the current device in a new tab. Nothing changes on the stage: the new tab shows what
+    /// the embedded view shows, and becomes the one the sidebar's selection now belongs to. This
+    /// used to open a window TAB, which shares its frame with the main window: the naked
+    /// treatment then shrank the whole window to the phone, and the tab had no toolbar at all.
     @objc private func openScreenTab() {
-        screenWindow.open(stage: stage, from: splitView, title: window.title, tabbedWith: window)
-        if let w = screenWindow.window { applyNakedChrome(to: w); sizeWindowToMirror(w) }
+        guard let device = sidebar.selected else { return }
+        screenTabs.append(ScreenTabBar.Tab(serial: device.serial, title: sidebar.friendlyName(for: device)))
+        currentTab = screenTabs.count - 1
+        updateScreenTabs()
+    }
+
+    private func selectScreenTab(_ index: Int) {
+        guard screenTabs.indices.contains(index), index != currentTab else { return }
+        currentTab = index
+        updateScreenTabs()
+        sidebar.select(serial: screenTabs[index].serial)   // a switch, revealed if anything is on screen
+    }
+
+    private func closeScreenTab(_ index: Int) {
+        guard screenTabs.count > 1, screenTabs.indices.contains(index) else { return }
+        let wasCurrent = index == currentTab
+        screenTabs.remove(at: index)
+        if wasCurrent {
+            currentTab = min(index, screenTabs.count - 1)
+            sidebar.select(serial: screenTabs[currentTab].serial)
+        } else if index < currentTab {
+            currentTab -= 1
+        }
+        updateScreenTabs()
+    }
+
+    /// The bar exists only once there is a second tab, and never in the popped-out window.
+    private func updateScreenTabs() {
+        screenTabBar.tabs = screenTabs
+        screenTabBar.selectedIndex = currentTab
+        let visible = screenTabs.count > 1 && !screenWindow.isOpen
+        screenTabBar.isHidden = !visible
+        tabBarTop?.constant = visible ? 6 : 0
+        tabBarHeight?.constant = visible ? ScreenTabBar.height : 0
     }
 
     @objc private func togglePin() { perform(MirrorView.Command.pin) }
