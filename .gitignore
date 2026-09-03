@@ -3,6 +3,9 @@
 # Build output
 build/
 app/build/
+linux/build/
+linux/third_party/
+imgui.ini
 
 # Xcode
 *.xcuserdatad/

@@ -37,7 +37,7 @@ loopback listener.
 | platform | mechanism | state |
 |---|---|---|
 | macOS | `Darwin`, `AF_INET`, `select` | working |
-| Linux | `Glibc`, identical calls | not started, near-mechanical |
+| Linux | `Glibc`, POSIX sockets | **working** (`linux/src/net/`) |
 | Windows | Winsock 2 — `WSAStartup`, `SOCKET` not `Int32`, `closesocket`, no `SO_RCVTIMEO` semantics match | not started |
 
 The `fd_set` handling is already written out by hand because Swift cannot see the C macros, so
@@ -48,7 +48,7 @@ Linux needs almost nothing. Windows is the real work, and small.
 | platform | decode | display | state |
 |---|---|---|---|
 | macOS | **VideoToolbox** (hardware) | `AVSampleBufferDisplayLayer` driven by a display link | working |
-| Linux | ffmpeg `libavcodec`, VA-API where available | SDL2, or Wayland/EGL | not started |
+| Linux | ffmpeg `libavcodec` | SDL2 (`SDL_Texture`) + Dear ImGui | **working** (`linux/src/video/`, `linux/src/ui/`) |
 | Windows | ffmpeg, or Media Foundation / D3D11VA | D3D11 swapchain or SDL2 | not started |
 
 **macOS links no ffmpeg at all**, and that is deliberate — the same call `~/rplay-hub` makes.

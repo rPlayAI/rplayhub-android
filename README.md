@@ -24,6 +24,8 @@ Folder conventions follow `~/rplay-hub`: adopted sources recorded in `refs/`, to
 
 - **`app/`** — **rPlayHubAndroid**, the macOS app. Swift + AppKit, an Xcode project. Builds
   clean. See `app/README.md`.
+- **`linux/`** — **rPlayHub Android Linux GUI**. C++17, SDL2, FFmpeg, and Dear ImGui. Builds
+  clean, zero framework bloat, matches macOS UI. See `linux/README.md`.
 - **`refs/studio/`** — the adopted Apache-2.0 source: the device agent complete, and Studio's
   Kotlin host for reference. See `refs/studio/PROVENANCE.md` for commit and refetch.
 - **`doc/STUDIO-MIRRORING-PROTOCOL.md`** — the wire protocol, read out of that source.
@@ -114,11 +116,11 @@ too, so the C++ half builds under Rosetta without any extra help.
 
 ## Upcoming
 
-**Today this is macOS only.** Linux, Windows and a browser client are all planned.
-
+**macOS and Linux are supported.** Windows and a browser client are planned.
+ 
 | | |
 |---|---|
-| **Linux** | `Glibc` sockets, ffmpeg decode, SDL2 or Wayland/EGL |
+| **Linux** | `Glibc` sockets, FFmpeg decode, SDL2 + Dear ImGui — **working** |
 | **Windows** | Winsock, ffmpeg or Media Foundation / D3D11VA |
 | **Web** | headless host + WebSocket, browser decode via WebCodecs |
 
