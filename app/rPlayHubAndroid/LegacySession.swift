@@ -136,6 +136,8 @@ final class LegacySession {
             AppBuild.log("legacy: \(serial) launching (attempt \(attempt)) \(command)")
             do {
                 let s = try Adb.shellStream(serial, command)
+                // Short, so a NAL left waiting for the next start code is flushed promptly (readStream).
+                s.setReadTimeout(0.5)
                 socket = s
                 report(.running)
                 readStream(from: s)
@@ -194,7 +196,18 @@ final class LegacySession {
             // surface encoder emits nothing at all while nothing changes.
             let chunk: Data?
             do { chunk = try s.read(max: 64 << 10) } catch { return }
-            guard let chunk, !chunk.isEmpty else { continue }
+            guard let chunk, !chunk.isEmpty else {
+                // Quiet for a whole timeout with bytes waiting: the tail IS a complete NAL. The
+                // agent writes each codec output buffer in one go, and a still screen produces
+                // nothing after it — which is exactly when the buffered NAL is the IDR of the
+                // first picture. Waiting for the next start code to close it meant the picture
+                // appeared only once something on the device moved, tens of seconds later.
+                if buffer.count > 4, Self.startsWithStartCode(buffer) {
+                    consume(buffer)
+                    buffer.removeAll()
+                }
+                continue
+            }
             bytesIn += chunk.count
             buffer.append(chunk)
             // Nobody can see the picture from a log, so say what is arriving and what came out.
@@ -212,6 +225,11 @@ final class LegacySession {
             buffer.removeSubrange(0 ..< lastStart)
             consume(Data(complete))
         }
+    }
+
+    private static func startsWithStartCode(_ data: Data) -> Bool {
+        let b = [UInt8](data.prefix(4))
+        return b.count == 4 && b[0] == 0 && b[1] == 0 && (b[2] == 1 || (b[2] == 0 && b[3] == 1))
     }
 
     /// Index of the final Annex-B start code, so a partial trailing NAL stays buffered.

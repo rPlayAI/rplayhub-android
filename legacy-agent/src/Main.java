@@ -42,6 +42,10 @@ import java.nio.ByteBuffer;
  */
 public final class Main {
 
+    /** Set once the encoder has produced anything; ends the first-frame kick below. */
+
+    private static volatile boolean gotOutput = false;
+
     private static final String MIME = "video/avc";
 
     private static Method injectInputEvent;
@@ -114,6 +118,34 @@ public final class Main {
         codec.start();
         System.err.println("legacy-agent: streaming " + width + "x" + height + " @ " + bitRate);
 
+        // Some boards never compose a still screen into a NEW mirror display: nothing changes
+        // on screen, so nothing is drawn into the encoder's surface, the encoder has nothing to
+        // encode, and the host waits on nothing until something on the device happens to move
+        // (tens of seconds on a car unit showing a pairing page). A display transaction that
+        // actually changes state makes SurfaceFlinger compose that display, so until the first
+        // buffer is out, re-apply the projection with the destination two pixels shorter and
+        // then true again — each one a real change, the last one always the real geometry.
+        final Rect source = new Rect(0, 0, width, height);
+        Thread kick = new Thread(new Runnable() {
+            @Override public void run() {
+                try {
+                    int n = 0;
+                    while (!gotOutput && n < 40) {
+                        Thread.sleep(300);
+                        Rect dest = new Rect(0, 0, width, (n++ % 2 == 0) ? height - 2 : height);
+                        open.invoke(null);
+                        try { setProjection.invoke(null, display, 0, source, dest); }
+                        finally { close.invoke(null); }
+                    }
+                    open.invoke(null);
+                    try { setProjection.invoke(null, display, 0, source, new Rect(0, 0, width, height)); }
+                    finally { close.invoke(null); }
+                } catch (Throwable ignored) { }
+            }
+        }, "kick");
+        kick.setDaemon(true);
+        kick.start();
+
         OutputStream out = new FileOutputStream(FileDescriptor.out);
         MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
         try {
@@ -121,6 +153,7 @@ public final class Main {
                 int index = codec.dequeueOutputBuffer(info, 500_000);
                 if (index >= 0) {
                     if (info.size > 0) {
+                        gotOutput = true;
                         ByteBuffer buffer = codec.getOutputBuffer(index);
                         buffer.position(info.offset);
                         byte[] chunk = new byte[info.size];
