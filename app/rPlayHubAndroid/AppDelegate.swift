@@ -247,7 +247,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         sidebar.onSelect = { [weak self] device in self?.selectionChanged(device) }
         sidebar.onMirror = { [weak self] device in self?.startSession(for: device) }
         sidebar.onStopMirror = { [weak self] in self?.stopMirroring() }
-        sidebar.isMirroring = { [weak self] in self?.mirrorRevealed ?? false }
+        sidebar.isMirroring = { [weak self] device in
+            self?.mirrorRevealed == true && self?.shownSerial == device.serial
+        }
         sidebar.onDesktopMode = { [weak self] device in self?.requestDesktopMode(on: device) }
         sidebar.onShowInFinder = { device in FinderMount.reveal(serial: device.serial) }
         sidebar.onInstallCompanion = { [weak self] device in self?.installCompanion(on: device) }
@@ -460,6 +462,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         sessionReachedRunning = false
         emulatorSession?.stop()
         emulatorSession = nil
+        // Clear the hosted serial with its session, or `shownSerial` keeps answering with the
+        // emulator after a switch away from it — and Shut Down Emulator then "took the host down
+        // first" by stopping whatever device had replaced it on the stage.
+        hostedSerial = nil
         legacySession?.stop()
         legacySession = nil
 
@@ -498,7 +504,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         session = s
         mirrorRevealed = reveal
         refreshMirrorToggle()
-        s.onState = { [weak self] state in self?.sessionStateChanged(state) }
+        // Only the CURRENT session may drive the stage. A switch stops the old one but keeps
+        // the reference until the next start, and its last states (idle, or a failure noticed
+        // late) arrive on the main queue after the new device is already showing.
+        s.onState = { [weak self, weak s] state in
+            guard let self, let s, self.session === s else { return }
+            self.sessionStateChanged(state)
+        }
         s.onAgentLog = { line in AppBuild.log("agent: \(line)") }
         s.decoder.onFrame = stageSink()
         s.start(maxVideoSize: maxVideoSize)

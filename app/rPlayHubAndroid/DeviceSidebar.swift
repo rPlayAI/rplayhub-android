@@ -27,7 +27,10 @@ final class DeviceSidebar: NSView {
     /// Delete an emulator's virtual device entirely. Destructive; the caller confirms.
     var onRemoveEmulator: ((AdbDevice, String) -> Void)?
     /// Whether a mirror session is currently live — drives the toggle entry's title/behaviour.
-    var isMirroring: (() -> Bool)?
+    /// Whether THIS device is the one on the stage. Per device, not a global "something is
+    /// mirroring": with several devices listed, a global answer put "Stop Screen Mirroring" on
+    /// every row while one of them was showing — and choosing it on another row stopped that one.
+    var isMirroring: ((AdbDevice) -> Bool)?
 
     /// How the list is ordered. Device Hub offers the same choice from its toolbar.
     enum Sort: String, CaseIterable {
@@ -423,9 +426,10 @@ final class DeviceSidebar: NSView {
     }
 
     @objc private func toggleMirrorFromMenu() {
-        if isMirroring?() == true {
+        guard let device = clickedOrSelected() else { return }
+        if isMirroring?(device) == true {
             onStopMirror?()
-        } else if let device = clickedOrSelected() {
+        } else {
             onMirror?(device)
         }
     }
@@ -434,7 +438,7 @@ final class DeviceSidebar: NSView {
     /// the menu delegate (menuNeedsUpdate) rather than validateMenuItem — the latter is not reliably
     /// called for a table's context menu, which is why the title looked stuck on "Start".
     func menuNeedsUpdate(_ menu: NSMenu) {
-        let live = isMirroring?() == true
+        let live = clickedOrSelected().map { isMirroring?($0) == true } ?? false
         for item in menu.items where item.action == #selector(toggleMirrorFromMenu) {
             item.title = live ? "Stop Screen Mirroring" : "Start Screen Mirroring"
             item.image = Self.symbol(live ? "stop.fill" : "play.rectangle")
