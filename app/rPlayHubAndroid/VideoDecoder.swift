@@ -17,6 +17,7 @@
 //  seam — VideoToolbox here, ffmpeg elsewhere — and it hands back frames, not sample buffers.
 //
 
+import AppKit
 import AVFoundation
 import CoreMedia
 import CoreVideo
@@ -154,12 +155,38 @@ final class VideoLayer: AVSampleBufferDisplayLayer {
     private var pending: CVPixelBuffer?
     private let pendingLock = NSLock()
     private var displayLink: CVDisplayLink?
+    /// When the display link last fired. It stops for good when the Mac's display sleeps and
+    /// wakes (the display set it was made for is gone), and then nothing ever takes `pending`:
+    /// every frame decodes and none shows — a black window that survives everything but a
+    /// relaunch. Watched from `present`, which is called for every frame.
+    private var lastTick = Date()
+    private var wakeObserver: NSObjectProtocol?
 
-    override init() { super.init(); startDisplayLink() }
-    override init(layer: Any) { super.init(layer: layer); startDisplayLink() }
-    required init?(coder: NSCoder) { super.init(coder: coder); startDisplayLink() }
+    override init() { super.init(); startDisplayLink(); watchForWake() }
+    override init(layer: Any) { super.init(layer: layer); startDisplayLink(); watchForWake() }
+    required init?(coder: NSCoder) { super.init(coder: coder); startDisplayLink(); watchForWake() }
 
-    deinit { if let displayLink { CVDisplayLinkStop(displayLink) } }
+    deinit {
+        if let displayLink { CVDisplayLinkStop(displayLink) }
+        if let wakeObserver { NSWorkspace.shared.notificationCenter.removeObserver(wakeObserver) }
+    }
+
+    /// The display coming back is the moment the link is most likely dead; do not wait for the
+    /// watchdog to notice.
+    private func watchForWake() {
+        wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.screensDidWakeNotification, object: nil, queue: .main) { [weak self] _ in
+                self?.restartDisplayLink(reason: "screens woke")
+            }
+    }
+
+    private func restartDisplayLink(reason: String) {
+        if let displayLink { CVDisplayLinkStop(displayLink) }
+        displayLink = nil
+        startDisplayLink()
+        lastTick = Date()
+        AppBuild.log("video layer: display link restarted (\(reason))")
+    }
 
     /// CVDisplayLink is deprecated in favour of NSView.displayLink, but the presentation target
     /// here is a layer with no view of its own, and the layer is what the ports keep.
@@ -185,9 +212,18 @@ final class VideoLayer: AVSampleBufferDisplayLayer {
         if pending != nil { framesSkipped += 1 }
         pending = picture
         pendingLock.unlock()
+        // A frame is waiting and the link has not ticked for a second: it is dead, not idle.
+        if Date().timeIntervalSince(lastTick) > 1 {
+            DispatchQueue.main.async { [weak self] in
+                guard let self, Date().timeIntervalSince(self.lastTick) > 1 else { return }
+                self.restartDisplayLink(reason: "no tick for a second")
+                self.displayTick()
+            }
+        }
     }
 
     private func displayTick() {
+        lastTick = Date()
         pendingLock.lock()
         let picture = pending
         pending = nil
