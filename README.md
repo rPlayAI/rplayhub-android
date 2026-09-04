@@ -10,6 +10,11 @@ it is just as much for anyone who wants their phone on a bigger screen: Desktop 
 Android's own desktop in a window, an app can be opened on the Mac by itself, and the phone's
 audio, clipboard and files come along.
 
+![The main window: devices in the sidebar, the phone mirrored in the middle, its info, apps and files on the right](doc/rPlayHub-android-gui.png)
+
+*The main window — a Pixel 9a and an Android 5.1 car unit over USB, a VM in the list, the
+phone live in the middle, its info, apps and files on the right.*
+
 Sibling project: `~/rplay-hub`, the same thing for iPhone. This one is the easier half, and the
 reason is worth stating plainly: on iOS we had to reverse-engineer CoreDevice and write both
 ends. Here Google's device agent is **Apache 2.0 and published**, so only the host is ours.
@@ -36,7 +41,13 @@ three-minute cap).
 **Desktop Mode and app windows.** One click puts Android's desktop — taskbar, launcher and all —
 in a window of its own on a virtual display, while the phone's own screen keeps mirroring. Any
 installed app can be opened the same way, in a bare window with no taskbar, several at once.
-Closing the window closes the display.
+Closing the window closes the display. An app can also live as an icon on the Mac's Desktop:
+double-click it and it opens in its window on the phone.
+
+![The phone popped out as a bare window, and YouTube from the same phone in a window of its own](doc/mirror-and-youtube.png)
+
+*The Pixel's own screen as a bare window, and YouTube — running on the phone, on a virtual
+display the phone does not have — in a window of its own next to it. Both live at once.*
 
 **Audio, clipboard, files.** The phone's audio plays through the Mac (Opus, 48 kHz). The
 clipboard syncs both ways. `/sdcard` mounts in Finder, read/write, through a File Provider
