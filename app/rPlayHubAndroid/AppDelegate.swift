@@ -878,6 +878,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         startFusion(package: package)
     }
 
+    /// Fuse whatever is in front on the phone right now — no hunting through the Apps list.
+    /// The package comes from the resumed activity in `dumpsys activity`; the launcher itself is
+    /// refused, since "the launcher in a window" is Desktop Mode's job and looks broken here.
+    @objc private func fuseFrontApp() {
+        guard let serial = shownSerial ?? sidebar.selected?.serial else {
+            present(message: "No device", detail: "Select a device first.")
+            return
+        }
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let package = Adb.frontPackage(serial)
+            DispatchQueue.main.async {
+                guard let self else { return }
+                guard let package else {
+                    self.present(message: "Nothing to open", detail: "Could not tell which app is in front on the phone.")
+                    return
+                }
+                if package.contains("launcher") {
+                    self.present(message: "The launcher is in front",
+                                 detail: "Open an app on the phone first, or use Desktop Mode for the whole desktop.")
+                    return
+                }
+                self.startFusion(package: package)
+            }
+        }
+    }
+
     /// Wake the device and dismiss a (non-secured) keyguard — the fusion display shares the
     /// phone's power/lock state, so this brings a dozing or locked phone back without the shell.
     /// A real PIN/pattern is not bypassed; the credential prompt just appears for the user.
@@ -1801,6 +1827,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             openScreenWindow()
         case .openTab:
             openScreenTab()
+        case .fuseFront:
+            fuseFrontApp()
         case .stop:
             stopMirroring()
         case .reconnect:
@@ -2035,6 +2063,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                       action: #selector(fuseSelectedApp), keyEquivalent: "f")
         fuse.keyEquivalentModifierMask = [.command, .shift]
         fuse.target = self
+        let fuseFront = deviceMenu.addItem(withTitle: "Open Front App on Virtual Display",
+                                           action: #selector(fuseFrontApp), keyEquivalent: "f")
+        fuseFront.keyEquivalentModifierMask = [.command, .shift, .option]
+        fuseFront.target = self
         let newDisplay = deviceMenu.addItem(withTitle: "New Virtual Display", action: nil,
                                             keyEquivalent: "")
         let newDisplaySub = NSMenu(title: "New Virtual Display")
@@ -2110,6 +2142,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         twinGateItem = twinToggle
         viewItem.submenu = viewMenu
         main.addItem(viewItem)
+
+        // The standard Window menu. Registering it as NSApp.windowsMenu makes AppKit append the
+        // list of open windows — the pop-out, every fusion window — and keep it current.
+        let windowItem = NSMenuItem()
+        main.addItem(windowItem)
+        let windowMenu = NSMenu(title: "Window")
+        windowMenu.addItem(withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)),
+                           keyEquivalent: "m")
+        windowMenu.addItem(withTitle: "Zoom", action: #selector(NSWindow.performZoom(_:)), keyEquivalent: "")
+        windowMenu.addItem(.separator())
+        windowMenu.addItem(withTitle: "Bring All to Front", action: #selector(NSApplication.arrangeInFront(_:)),
+                           keyEquivalent: "")
+        windowMenu.addItem(.separator())
+        windowItem.submenu = windowMenu
+        NSApp.windowsMenu = windowMenu
 
         let helpItem = NSMenuItem()
         main.addItem(helpItem)

@@ -207,6 +207,21 @@ extension Adb {
                       "monkey -p \(shellQuote(package)) -c android.intent.category.LAUNCHER 1")
     }
 
+    /// The package of the activity in front on the device's own screen (display 0), from
+    /// `dumpsys activity`: the first `topResumedActivity` (`mResumedActivity` on older releases)
+    /// line names it as `u0 <package>/<activity> t<task>`. Nil when nothing is resumed.
+    static func frontPackage(_ serial: String) -> String? {
+        // No `head -1`/`grep -m1`: closing the pipe early makes dumpsys write "Failed to write
+        // while dumping service" into the very output being parsed. Take the first line here.
+        guard let out = try? shell(serial, "dumpsys activity activities | grep -E 'topResumedActivity=|mResumedActivity='"),
+              let line = out.split(separator: "\n").first else { return nil }
+        for token in line.split(separator: " ") where token.contains("/") {
+            let package = token.split(separator: "/").first.map(String.init) ?? ""
+            if package.contains(".") { return package }
+        }
+        return nil
+    }
+
     /// Launch onto a specific display — monkey cannot target one, so resolve the launcher
     /// activity and use `am start --display`. Display 0 falls back to the plain launch.
     static func launch(_ serial: String, package: String, displayId: Int32) throws {

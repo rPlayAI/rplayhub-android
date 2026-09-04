@@ -77,6 +77,7 @@ final class MirrorView: NSView, NSMenuItemValidation {
     enum Command: String {
         case screenshot, record, home, back, recents, rotate
         case pin, openWindow, openTab
+        case fuseFront
         case wake, power
         case stop, reconnect
         case twin
@@ -201,6 +202,7 @@ final class MirrorView: NSView, NSMenuItemValidation {
         twinSeparator = menu.items.last
         twinItem?.isHidden = !AppBuild.twinEnabled
         twinSeparator?.isHidden = !AppBuild.twinEnabled
+        add("Open Front App on Virtual Display", .fuseFront, "macwindow.on.rectangle")
         add("Open in New Window", .openWindow, "macwindow")
         add("Open in New Tab", .openTab, "square.on.square")
         pinItem = menu.items.last
