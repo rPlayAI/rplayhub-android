@@ -36,7 +36,14 @@ touches, drags are drags, the keyboard types. Rotation follows the device. A pop
 shows just the phone — rounded corners, transparent surround, no chrome until the pointer nears
 its edge — or a tab in the center panel, or the 3D twin below. Screenshots and screen recording
 from the Mac side (recording is host-side, so it works for virtual displays too and has no
-three-minute cap).
+three-minute cap). Everything a device can do is one right-click away, on its sidebar row or on
+the picture itself.
+
+![A device's context menu: mirroring, Desktop Mode, Finder, the companion app, screenshot and
+recording, the navigation keys, wake and power, 3D, virtual-display and window commands](doc/rPlayHub-android-context-menu.png)
+
+*One right-click on a device: Desktop Mode, Finder, screenshot and recording, the Android keys,
+wake and power, the 3D twin, an app onto a virtual display, windows and tabs.*
 
 **Desktop Mode and app windows.** One click puts Android's desktop — taskbar, launcher and all —
 in a window of its own on a virtual display, while the phone's own screen keeps mirroring. Any
