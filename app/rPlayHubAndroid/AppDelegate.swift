@@ -584,6 +584,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     self.window.subtitle = "mirroring (legacy)"
                     self.strip.setSessionActive(true)
                     if self.mirror.autoReveal { self.mirror.reveal() }
+                    if UserDefaults.standard.bool(forKey: "TurnScreenOffWhileMirroring") {
+                        l.setPanel(off: true)
+                    }
                 }
                 self.mirror.displayLayer.present(picture)
             }
@@ -1531,6 +1534,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         UserDefaults.standard.set(enabled, forKey: key)
         screenOffItem?.state = enabled ? .on : .off
         AppBuild.log("turn screen off while mirroring: \(enabled)")
+        legacySession?.setPanel(off: enabled)   // the legacy agent takes it live, no restart
         if let session, sessionReachedRunning,
            let device = sidebar.devices.first(where: { $0.serial == session.serial }), device.isReady {
             startSession(for: device)

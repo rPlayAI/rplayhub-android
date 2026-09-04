@@ -70,16 +70,26 @@ final class LegacySession {
     }
 
     func stop() {
-        send("q")
         stopping = true
-        socket?.shutdownAndClose()
+        // The panel must come back before the agent goes, or the box is left dark: the pkill
+        // below skips every cleanup the agent has. Write the farewell, give it a moment to land,
+        // and only then close the pipe.
+        let farewell = (panelOff ? "p 2\n" : "") + "q\n"
+        if let socket {
+            inputQueue.async {
+                try? socket.writeAll(Data(farewell.utf8))
+                usleep(200_000)
+                socket.shutdownAndClose()
+            }
+        }
         socket = nil
+        panelOff = false
         decoder.invalidate()
         // "q" only lands if the agent is still reading stdin; make sure it is gone either way,
         // so the next session does not fight a process still holding the encoder.
         let serial = self.serial
-        DispatchQueue.global(qos: .utility).async {
-            _ = try? Adb.shell(serial, "pkill -f ai.rplay.legacy", timeout: 5)
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.5) {
+            _ = try? Adb.shell(serial, Self.killAgentCommand, timeout: 5)
         }
     }
 
@@ -116,7 +126,7 @@ final class LegacySession {
         // A leftover agent from an earlier attempt still holds a display and an encoder, and the
         // next one then starts badly or not at all — which is what made mirroring take several
         // tries before it held. Clear it before every launch.
-        _ = try? Adb.shell(serial, "pkill -f ai.rplay.legacy", timeout: 5)
+        _ = try? Adb.shell(serial, Self.killAgentCommand, timeout: 5)
 
         let size = displaySize
         var w = 1024, h = 600
@@ -157,12 +167,18 @@ final class LegacySession {
             format = nil
             awaitingKeyframe = true
             decoder.invalidate()
-            _ = try? Adb.shell(serial, "pkill -f ai.rplay.legacy", timeout: 5)
+            _ = try? Adb.shell(serial, Self.killAgentCommand, timeout: 5)
             Thread.sleep(forTimeInterval: 1)
         }
     }
 
     static let dexRemotePath = "/data/local/tmp/rplayhub-legacy.dex"
+
+    /// Kill any running copy of the agent. Android 5's toolbox has no pkill and its ps shows only
+    /// "app_process", so on a 5.1 box the plain command failed silently and leftover agents piled
+    /// up; busybox, which these boards ship, has one. The /proc scan is the last resort.
+    static let killAgentCommand = "pkill -f ai.rplay.legacy 2>/dev/null || busybox pkill -f ai.rplay.legacy 2>/dev/null "
+        + "|| for d in /proc/[0-9]*; do p=${d#/proc/}; [ $p != $$ ] && grep -qa ai.rplay.legacy $d/cmdline 2>/dev/null && kill $p; done"
 
     /// Where the built dex lives: bundled in Resources for a shipping build, or the build tree
     /// when running from Xcode.
@@ -371,13 +387,25 @@ final class LegacySession {
         send("k \(keycode)")
     }
 
+    /// Whether the device's own panel is dark while we mirror it.
+    private(set) var panelOff = false
+
+    /// Turn the device's panel off or on WITHOUT putting the device to sleep — the agent's
+    /// SurfaceControl display power mode, as scrcpy does it on API 21-28. Never KEYCODE_POWER
+    /// here: on a car head unit a short press of that is "ACC off", the whole board sleeps, USB
+    /// and adb with it, and the next power-on is a cold boot.
+    func setPanel(off: Bool) {
+        panelOff = off
+        send(off ? "p 0" : "p 2")
+    }
+
     /// A control-strip button. Rotation, screenshot and recording stay on adb with the caller.
     func perform(_ action: ControlStrip.Action) {
         switch action {
         case .back:       key(AndroidKey.back)
         case .home:       key(AndroidKey.home)
         case .overview:   key(AndroidKey.appSwitch)
-        case .power:      key(26)                    // KEYCODE_POWER
+        case .power:      setPanel(off: !panelOff)   // the panel, not KEYCODE_POWER (see setPanel)
         case .volumeUp:   key(24)
         case .volumeDown: key(25)
         case .rotate, .screenshot, .record: break

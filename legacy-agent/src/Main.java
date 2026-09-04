@@ -49,6 +49,8 @@ public final class Main {
     private static final String MIME = "video/avc";
 
     private static Method injectInputEvent;
+    /** True while the panel has been turned off with "p 0", so the exit path can restore it. */
+    private static volatile boolean panelOff = false;
     private static Object inputManager;
 
     public static void main(String[] args) {
@@ -166,6 +168,7 @@ public final class Main {
                 }
             }
         } finally {
+            if (panelOff) setDisplayPower(2);
             try { codec.stop(); codec.release(); } catch (Throwable ignored) { }
             try { sc.getMethod("destroyDisplay", IBinder.class).invoke(null, display); }
             catch (Throwable ignored) { }
@@ -213,6 +216,66 @@ public final class Main {
         if (action == MotionEvent.ACTION_UP) touchDownAt = 0;
     }
 
+    /** The backlight's brightness as it was before we turned it off, or null while it is on. */
+    private static String savedBacklight;
+
+    /**
+     * Panel off (0) or normal (2). Two mechanisms, because boards differ:
+     * SurfaceControl.setDisplayPowerMode(getBuiltInDisplay(0), mode) — scrcpy's way — and, since
+     * a vendor build can take that call and do nothing (the car box did), the LCD backlight sysfs
+     * node written directly: 0 is really dark, and the shell user may write it on these boards.
+     * The previous value is put back on 2. Neither touches PowerManager, so the board never
+     * sleeps, which is what KEYCODE_POWER meant here.
+     */
+    private static void setDisplayPower(int mode) {
+        try {
+            Class<?> sc = Class.forName("android.view.SurfaceControl");
+            IBinder panel = (IBinder) sc.getMethod("getBuiltInDisplay", int.class).invoke(null, 0);
+            sc.getMethod("setDisplayPowerMode", IBinder.class, int.class).invoke(null, panel, mode);
+        } catch (Throwable t) {
+            System.err.println("legacy-agent: display power " + mode + " failed: " + t);
+        }
+        java.io.File node = backlightNode();
+        if (node != null) {
+            try {
+                if (mode == 0) {
+                    if (savedBacklight == null) savedBacklight = readFirstLine(node);
+                    writeText(node, "0");
+                } else if (savedBacklight != null) {
+                    writeText(node, savedBacklight);
+                    savedBacklight = null;
+                }
+            } catch (Throwable t) {
+                System.err.println("legacy-agent: backlight " + mode + " failed: " + t);
+            }
+        }
+        panelOff = mode == 0;
+    }
+
+    private static java.io.File backlightNode() {
+        java.io.File led = new java.io.File("/sys/class/leds/lcd-backlight/brightness");
+        if (led.canWrite()) return led;
+        java.io.File[] dirs = new java.io.File("/sys/class/backlight").listFiles();
+        if (dirs != null) {
+            for (java.io.File d : dirs) {
+                java.io.File f = new java.io.File(d, "brightness");
+                if (f.canWrite()) return f;
+            }
+        }
+        return null;
+    }
+
+    private static String readFirstLine(java.io.File f) throws java.io.IOException {
+        BufferedReader r = new BufferedReader(new java.io.FileReader(f));
+        try { String line = r.readLine(); return line == null ? "0" : line.trim(); }
+        finally { r.close(); }
+    }
+
+    private static void writeText(java.io.File f, String text) throws java.io.IOException {
+        java.io.FileOutputStream out = new java.io.FileOutputStream(f);
+        try { out.write(text.getBytes("UTF-8")); } finally { out.close(); }
+    }
+
     private static void key(int keycode) {
         long now = SystemClock.uptimeMillis();
         KeyEvent down = new KeyEvent(now, now, KeyEvent.ACTION_DOWN, keycode, 0);
@@ -240,7 +303,16 @@ public final class Main {
                     case "k":
                         if (parts.length >= 2) key(Integer.parseInt(parts[1]));
                         break;
+                    case "p":
+                        // "p 0" turns the PANEL off, "p 2" back on — SurfaceControl's display
+                        // power mode, what scrcpy's --turn-screen-off does on API 21-28. Not
+                        // KEYCODE_POWER: on a car head unit a short press of that is "ACC off",
+                        // the whole board sleeps, USB and adb with it, and the next power-on is
+                        // a cold boot — which looked like turning the screen off rebooting it.
+                        if (parts.length >= 2) setDisplayPower(Integer.parseInt(parts[1]));
+                        break;
                     case "q":
+                        if (panelOff) setDisplayPower(2);
                         System.exit(0);
                         break;
                     default:
