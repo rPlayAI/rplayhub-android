@@ -28,8 +28,10 @@ doc/HANDOFF.md
 doc/NEXT-PROMPT.txt
 
 # Demo recordings — large, and camera captures can carry GPS/EXIF. Keep them out of the repo.
+# A specific, metadata-stripped, size-checked clip can be allowed with a negation below.
 doc/*.mov
 doc/*.MOV
 doc/*.mp4
+!doc/rPlayHub-android-3d.mp4
 /acastsink.tar.gz
 /refs/qemu-emulator/
