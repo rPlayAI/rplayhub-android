@@ -2645,8 +2645,22 @@ extension AppDelegate {
                                   action: #selector(createAndroidVM), keyEquivalent: "")
         create.target = self
         create.toolTip = "Download the Android emulator and a system image from Google, then build a VM"
-        // No list of VMs to start here: every VM is a row in the sidebar now, and a row's own
-        // menu starts it. "+" is for bringing something new into the list.
+        // The VMs, to start from here as well as from their sidebar rows — "+" is where people
+        // look first for "start an emulator".
+        let avds = Avd.all()
+        if !avds.isEmpty {
+            let running = EmulatorLauncher.runningAvds()
+            menu.addItem(.separator())
+            for avd in avds {
+                let live = running[avd.name] != nil
+                let item = menu.addItem(withTitle: live ? "\(avd.displayName) (running)" : "Start \(avd.displayName)",
+                                        action: live ? nil : #selector(launchEmulatorFromMenu), keyEquivalent: "")
+                item.representedObject = avd.name
+                item.target = self
+                item.image = NSImage(systemSymbolName: live ? "desktopcomputer" : "play.fill", accessibilityDescription: nil)
+                item.toolTip = [avd.device, avd.apiLevel.map { "API \($0)" }, avd.abi].compactMap { $0 }.joined(separator: " · ")
+            }
+        }
         menu.addItem(.separator())
         let locate = menu.addItem(withTitle: "Locate Android SDK…", action: #selector(locateAndroidSdk),
                                   keyEquivalent: "")
