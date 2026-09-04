@@ -120,6 +120,127 @@ releases it. Switching devices, stopping mirroring or quitting discards every fu
 its display the same way, so nothing keeps streaming invisibly and the phone is not left with
 stray displays.
 
+## Implementation
+
+### The agent (device side)
+
+The agent is Google's screen-sharing agent from Android Studio (`refs/studio/`), built by
+`tools/build-agent.sh` and pushed to `/data/local/tmp/.studio/`, run as the shell user through
+`app_process`. It is C++ (JNI into the framework's hidden APIs) with a few Java helpers. Our
+additions for standalone displays are marked "rPlayHub" in the source and listed in
+`refs/studio/PROVENANCE.md`:
+
+| piece | file | role |
+|---|---|---|
+| `CreateNewDisplayMessage` (type 120), `DestroyNewDisplayMessage` (121) | `control_messages.{h,cc}` | the two control messages, base128-encoded like all the others |
+| dispatch | `controller.cc` | `Agent::CreateNewDisplay(width, height, dpi, decorations)` / `Agent::DestroyNewDisplay(id)` |
+| `Agent::CreateNewDisplay` | `agent.cc` | refuses below API 34; creates the display through `DisplayManager::CreateNewDisplay` (JNI → `VirtualDisplayFactory.java`), keeps it in `new_displays_`, nudges its power state (`RequestDisplayPower`), starts a shell loop that sends `input keyevent 224` (WAKEUP) every 15 s for as long as the agent process lives, then `StartVideoStream(id)` |
+| `VirtualDisplayFactory.java` | Java | `DisplayManagerGlobal.createVirtualDisplay` through a reflected `VirtualDisplayConfig` (the path whose owner-uid check accepts shell), the flag set from the table above, the quarter-resolution `ImageReader` keep-alive surface |
+| streaming | `display_streamer.cc` | a display created here is streamed by the **generic secondary-display path**: the streamer makes its own *mirror* capture display of the standalone one and hands the encoder's input surface (`AMediaCodec_createInputSurface`, API 26) to that — exactly as for a physical secondary display. Rendering the encoder surface straight into the standalone display was tried and sends the codec into a configure/-10000 restart loop |
+| `Agent::DestroyNewDisplay` | `agent.cc` | stops that display's streamer first (it holds the display), then releases the display |
+
+Why the wake ticker: the display shares the phone's power group (see "the two flags that are
+deliberately missing"), so every activity on it pauses the moment the phone sleeps. WAKEUP
+every 15 s also resets the screen timeout, so the phone stays awake for as long as a display
+exists. The loop watches the agent's pid and dies with it.
+
+### The protocol
+
+Everything rides on the agent's ordinary sockets — no new channel:
+
+- **Control channel** (host → agent, base128 varints, `ControlMessages.swift` ↔
+  `control_messages.cc`):
+  - `CreateNewDisplay`: `int32 type=120, int32 width, int32 height, int32 dpi, int32 decorations`
+    (1 = Desktop Mode's taskbar and launcher, 0 = a bare display for one app).
+  - `DestroyNewDisplay`: `int32 type=121, int32 display_id`.
+  - Nothing comes back for the create; the display announces itself in the video stream.
+- **Video channel** (agent → host): one socket for every display. Each packet is a 44-byte
+  little-endian header followed by an Annex-B H.264 access unit:
+
+      int32  display_id            ← which display this packet belongs to
+      int32  display_width, display_height
+      uint8  display_orientation, display_orientation_correction   // quadrants
+      int16  flags                 // round / bit-rate reduced / camera
+      int32  bit_rate
+      uint32 frame_number
+      int64  origination_timestamp_us
+      int64  presentation_timestamp_us   // 0 = config packet (SPS/PPS)
+      int32  packet_size
+
+  Geometry travels in every header, so a display's size and rotation need no side channel: the
+  window follows the header. The host learns a new display's id from the first packet that
+  carries an id it has not seen.
+
+### The host (Mac side)
+
+- **Requests are a queue.** `requestFusionDisplay` appends a `FusionRequest` (package, or nil
+  for Desktop Mode) to `pendingFusion` and sends `CreateNewDisplay` — 1920×1080 at 240 dpi,
+  `decorations = (package == nil)`. If no session is running yet, the request waits and is sent
+  from the `.running` state hook; the session is started *prepared* (not revealed), so the main
+  stage does not change.
+- **Decode per display.** `VideoStream` reads the single video socket and keeps a pipeline per
+  display id: Annex-B splitting, parameter-set tracking, and a `VideoToolbox`
+  `VTDecompressionSession` with BGRA output (BGRA so the same frames feed Metal for the 3D twin
+  and `AVAssetWriter` for recording without conversion). Packets for an unknown id create a
+  pipeline on demand; the primary display's pipeline is the one the Info tab reports.
+- **The window opens on the first packet.** `video.onGeometry` fires for every header. An id
+  that is neither the phone's (0) nor what the stage shows, while `pendingFusion` is non-empty,
+  answers the oldest request: `openFusionWindow(displayId:for:)` creates a `FusionWindow`, wires
+  `decoder(for: id).onFrame` to that window's `MirrorView.displayLayer`, and applies the header
+  (size, orientation). Later headers for the id go straight to that window.
+- **Rendering.** `MirrorView` owns a `VideoLayer` — an `AVSampleBufferDisplayLayer` fed from a
+  `CVDisplayLink`: the decode thread only stores the newest picture; the display link enqueues
+  it once per refresh, so the layer never sees more frames than it can show. The picture is
+  aspect-fit in the window (1152×648 for the 16:9 display), a `sublayerTransform` undoes the
+  agent's pre-rotation (`display_orientation_correction`), and `displayRect()` is the exact
+  on-screen rectangle of the display — the same rectangle touches are mapped through. A fusion
+  display draws no bezel and no rounded corners (`displayId != 0`), because it is a desktop, not
+  a phone.
+- **The naked window.** `fullSizeContentView` is on in both chrome states; the title bar and
+  its accessory (Wake / Screenshot / Record) are painted over the top of the content when the
+  pointer nears the top edge. On that toggle the picture is padded down by the title bar's
+  height and the frame grows *upward* by the same amount in one pass, so the picture never moves.
+  The cursor poll never changes chrome while a mouse button is down (a drag), or for 0.4 s after
+  the release.
+
+### Input
+
+- **Touch.** `MirrorView` turns mouse events into `MotionEvent` messages:
+  `int32 type=1, uint32 pointer_count, per pointer {int32 x, int32 y, int32 id, uint32
+  axis_count, [int32 axis, float value]…}, int32 action, int32 button_state, int32
+  action_button, int32 display_id, bool is_mouse`. The coordinates are device pixels in the
+  display's *original* orientation — `devicePoint` maps the view point through `displayRect()`
+  and the presented rotation (Studio's own quadrant cases) — and `display_id` is the virtual
+  display's, which is what routes the event there. Every event carries its pointer, `ACTION_UP`
+  included (an empty pointer array makes a malformed event on the agent side). Scroll wheel
+  becomes a pointer with `AXIS_VSCROLL`.
+- **Keys.** `KeyEvent` messages (`int32 type=2, int32 action, int32 keycode, uint32 meta`)
+  and `TextInput` (`int32 type=3, string16` — a UTF-16 count *plus one*, 0 meaning null) carry
+  no display id: the agent injects them into the focused window, and `OWN_FOCUS` is what lets
+  the virtual display hold focus while the phone's screen shows something else. Clicking a
+  fusion window focuses it first.
+- **Wake.** The title-bar Wake button sends WAKEUP and `wm dismiss-keyguard` over adb — a real
+  PIN is not bypassed; its prompt simply appears.
+
+### Screenshot and recording, in detail
+
+- Screenshot: `screencap -p` needs the *physical* display id for `-d`; the app resolves it with
+  `dumpsys SurfaceFlinger --display-id | grep rplayhub.display`, captures to
+  `/data/local/tmp/`, and pulls the PNG over `sync:` (not through a shell, which would mangle
+  the bytes as UTF-8).
+- Recording: `FrameRecorder` appends the decoded BGRA `CVPixelBuffer`s to an `AVAssetWriter`
+  (`.mp4`, H.264) through a pixel-buffer adaptor, timestamped on arrival. Android's own
+  `screenrecord --display-id` refuses virtual displays; this path has no three-minute cap.
+
+### Requirements and limits
+
+- Standalone virtual displays need **API 34+** (the agent refuses below it); the mirror itself
+  needs API 26 for the agent, and Android 5.0–7.1 use the legacy agent, which has no virtual
+  displays.
+- One live device session at a time; fusion windows belong to it and are discarded on a switch.
+- Display size is fixed at 1920×1080 / 240 dpi today (no resize of the virtual display after
+  creation).
+
 ## Why this and not the alternatives
 
 - **A shell-uid overlay window** on the phone is rejected by WindowManager (`Unknown pid
