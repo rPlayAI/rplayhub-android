@@ -1,14 +1,12 @@
 # rplay-hub-android
 
-**Your Android phone on your Mac** — mirror it, control it, run its apps in windows of their own,
-open its files in Finder, and run Android VMs without installing Android Studio. Built on
-Google's own on-device agent (the one behind Android Studio's *Running Devices*), driven over
-`adb`, with a native macOS app in front of it.
+**Your Android phone on your Mac** (Windows, Linux and Raspberry Pi upcoming) — mirror it,
+control it, run its apps in windows of their own, open its files in Finder, and run Android VMs
+without installing Android Studio. Built on Google's own on-device agent (the one behind Android
+Studio's *Running Devices*), driven over `adb`, with a native app in front of it.
 
 It is for developers — every device, every emulator, every API level from Android 5.0 up — and
-it is just as much for anyone who wants their phone on a bigger screen: Desktop Mode puts
-Android's own desktop in a window, an app can be opened on the Mac by itself, and the phone's
-audio, clipboard and files come along.
+just as much for anyone who wants their phone on a bigger screen.
 
 ![The main window: devices in the sidebar, the phone mirrored in the middle, its info, apps and files on the right](doc/rPlayHub-android-gui.png)
 
@@ -18,6 +16,29 @@ phone live in the middle, its info, apps and files on the right.*
 Sibling project: `~/rplay-hub`, the same thing for iPhone. This one is the easier half, and the
 reason is worth stating plainly: on iOS we had to reverse-engineer CoreDevice and write both
 ends. Here Google's device agent is **Apache 2.0 and published**, so only the host is ours.
+
+## For regular users
+
+You do not need to be a developer, and nothing is installed on the phone beyond what `adb`
+puts there for the session. Plug the phone in (or connect over Wi‑Fi), turn on USB debugging
+once, and:
+
+- **Use Android apps on the Mac, seamlessly.** Any app on the phone opens in a window of its
+  own on the Mac — WhatsApp, YouTube, a bank's app, a game — with its own keyboard focus, at
+  desktop size, several at once. Click, type, scroll; it is the real app, running on the phone,
+  with the phone's own account, data and notifications. The phone's screen stays yours to use.
+- **Put an app on the Desktop.** *Add Front App to Desktop* makes a double-clickable icon with
+  the app's own icon; double-click it and the app opens in its window, launching everything
+  needed on the way.
+- **The whole phone as a window,** if that is what you want: the bare phone, rounded corners
+  and all, floating on the desktop, or Android's own Desktop Mode — taskbar, launcher and
+  windowed apps — as a second desktop.
+- **Sound, clipboard, files, photos.** The phone's audio plays through the Mac. Copy on one,
+  paste on the other. The phone's storage is a folder in Finder; drag files either way. Share
+  a photo from any Android app to "Send to Mac" and it lands on the Mac as a draggable thumbnail.
+- **Old devices too.** An Android 5–7 box, a car head unit, a set-top box — they mirror as well.
+- **Try Android without a phone.** *Create Android VM…* downloads and boots a virtual Pixel in
+  about a minute, no Android Studio, no JDK.
 
 ## What this is, and is not
 
@@ -174,13 +195,15 @@ build streams 50 Hz quaternions on a fourth socket only when asked (flag `0x100`
 
 ## Platforms
 
-**macOS ships.** Linux and Windows ports are **in progress**; a browser client is planned.
+**macOS ships.** Linux and Windows ports are **in progress**, a Raspberry Pi build follows the
+Linux one, and a browser client is planned.
 
 | | |
 |---|---|
 | **macOS** | Swift + AppKit, VideoToolbox — **shipping** (DMG and Mac App Store builds) |
 | **Linux** | C++17, POSIX sockets, FFmpeg decode, SDL2 + Dear ImGui — **in progress**: live mirroring, touch and navigation verified on a Pixel; the rest of the feature set is being brought across |
 | **Windows** | Winsock, FFmpeg or Media Foundation / D3D11VA — **in progress** |
+| **Raspberry Pi** | the Linux client on arm64, with the Pi's hardware H.264 decode — **upcoming** |
 | **Web** | headless host + WebSocket, browser decode via WebCodecs — planned |
 
 The protocol layer is portable — the adb client, the agent launch, the packet header, the
