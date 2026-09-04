@@ -31,6 +31,10 @@ final class FusionWindow: NSObject, NSWindowDelegate {
     private var hoverTimer: Timer?
     private weak var tray: ReceivedTray?
     private var chromeShown = true       // forced through the first setChrome(false)
+    /// The picture's top pad: the title bar's height while the chrome is shown, else zero.
+    private var mirrorTop: NSLayoutConstraint?
+    private var dragging = false
+    private var settleUntil = Date.distantPast
     /// The reveal only arms once the pointer has left the top band: opening from a menu leaves
     /// it right where the band is, which would flip the window out of raw mode as it appears.
     private var hoverArmed = false
@@ -40,8 +44,11 @@ final class FusionWindow: NSObject, NSWindowDelegate {
          onWake: @escaping () -> Void, onScreenshot: @escaping () -> Void) {
         self.displayId = displayId
         self.decorated = decorated
+        // fullSizeContentView stays on in BOTH modes: the title bar is painted over the top of
+        // the content when shown and the picture is padded down by its height, so the window
+        // grows upward around a picture that never moves (see setChrome).
         let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1152, height: 648),
-                         styleMask: [.titled, .closable, .miniaturizable, .resizable],
+                         styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                          backing: .buffered, defer: false)
         window = w
         var recordTap: (() -> Void)?
@@ -60,7 +67,18 @@ final class FusionWindow: NSObject, NSWindowDelegate {
         mirror.borderless = true          // raw picture, no device bezel
         mirror.nakedBackground = true
         mirror.displayId = displayId
-        w.contentView = mirror
+        // The picture inside a container, so a top pad can make room for the title bar.
+        let container = NSView()
+        mirror.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(mirror)
+        mirrorTop = mirror.topAnchor.constraint(equalTo: container.topAnchor)
+        NSLayoutConstraint.activate([
+            mirrorTop!,
+            mirror.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            mirror.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            mirror.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+        ])
+        w.contentView = container
         w.addTitlebarAccessoryViewController(titlebar)
         titlebar.position = w.titlebarAccessoryViewControllers.count - 1
         w.center()
@@ -125,19 +143,28 @@ final class FusionWindow: NSObject, NSWindowDelegate {
         let lights = [w.standardWindowButton(.closeButton),
                       w.standardWindowButton(.miniaturizeButton),
                       w.standardWindowButton(.zoomButton)]
-        let top = w.frame.maxY, left = w.frame.minX
-        if visible { w.styleMask.remove(.fullSizeContentView) }
-        else { w.styleMask.insert(.fullSizeContentView) }
         w.titlebarAppearsTransparent = !visible
         w.titleVisibility = visible ? .visible : .hidden
         for b in lights { b?.isHidden = !visible }
         titlebar.view.isHidden = !visible
-        // Keep the picture where it was: anchor the frame at its top-left across the toggle.
-        var f = w.frame
-        f.origin = NSPoint(x: left, y: top - f.height)
-        w.setFrame(f, display: true)
-
         let changed = visible != chromeShown
+        if changed, let content = w.contentView {
+            // Keep the PICTURE exactly where it is on screen: the title bar (and its accessory)
+            // overlay the content, so pad the picture down by their height and grow the frame
+            // upward by the same amount, both in one pass. Flipping the style mask instead
+            // pushed the content down first and the frame after — the shake.
+            let picture = w.convertToScreen(mirror.convert(mirror.framedPictureRect, to: nil)).integral
+            let titleBar = visible ? content.bounds.height - w.contentLayoutRect.height : 0
+            if picture.width > 0, picture.height > 0 {
+                mirrorTop?.constant = titleBar
+                w.setFrame(NSRect(x: picture.minX, y: picture.minY,
+                                  width: picture.width, height: picture.height + titleBar),
+                           display: false)
+                content.layoutSubtreeIfNeeded()
+                w.displayIfNeeded()
+            }
+        }
+
         chromeShown = visible
         guard changed, animated else { return }
         let a: CGFloat = visible ? 1 : 0
@@ -155,6 +182,8 @@ final class FusionWindow: NSObject, NSWindowDelegate {
     private func updateHover() {
         let w = window
         guard w.isVisible else { return }
+        guard NSEvent.pressedMouseButtons == 0 else { dragging = true; return }   // never mid-drag
+        if dragging { dragging = false; settleUntil = Date().addingTimeInterval(0.4) }
         let mouse = NSEvent.mouseLocation
         let f = w.frame
         let inX = mouse.x >= f.minX - 4 && mouse.x <= f.maxX + 4
@@ -164,6 +193,7 @@ final class FusionWindow: NSObject, NSWindowDelegate {
             if !near { hoverArmed = true }
             return
         }
+        if !near, Date() < settleUntil { return }
         setChrome(visible: near)
     }
 }

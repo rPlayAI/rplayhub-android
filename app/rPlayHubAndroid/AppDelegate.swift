@@ -850,6 +850,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// mouse-moved monitor, which only fires while the window is key and accepts moved events).
     private var fusionHoverTimer: Timer?
     private var fusionChromeShown = false
+    private var fusionDragging = false
+    private var fusionSettleUntil = Date.distantPast
     /// The reveal only arms once the cursor has left the window's edges: opening the window from a
     /// menu leaves the pointer right where the chrome band is, which would flip it out of raw mode
     /// the instant it appears.
@@ -1112,6 +1114,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func updateFusionHover() {
         guard let w = screenWindow.window, w.isVisible else { return }
+        // Nothing changes while a mouse button is down: a drag moves the window behind the
+        // pointer, the pointer falls out of the band for a tick, and the chrome — the title bar
+        // being dragged by — vanished under the mouse, resizing the window mid-drag.
+        guard NSEvent.pressedMouseButtons == 0 else { fusionDragging = true; return }
+        // And for a moment after the button comes up: the window is still catching up with the
+        // pointer at the drop, and the pointer can sit above its top edge for a tick.
+        if fusionDragging { fusionDragging = false; fusionSettleUntil = Date().addingTimeInterval(0.4) }
         // A revealed traffic light must not vanish while the cursor is on it, so if chrome is shown
         // keep it shown until the cursor leaves a slightly taller band (hysteresis).
         let mouse = NSEvent.mouseLocation                 // screen coordinates
@@ -1128,6 +1137,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if !near { fusionHoverArmed = true }
             return
         }
+        if !near, Date() < fusionSettleUntil { return }
         setFusionChrome(visible: near)
     }
 
