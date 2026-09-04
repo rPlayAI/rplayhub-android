@@ -568,7 +568,17 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
         if let s = smoothed {
             let dot = min(1, abs(simd_dot(s.vector, target.vector)))
             let stepDegrees = Float(2 * acos(dot) * 180 / .pi)   // angle between s and target
-            let alpha = simd_clamp(0.18 + stepDegrees * 0.28, 0.18, 0.9)
+            // A deadband kills the shiver of a phone lying still: the rotation-vector sensor
+            // dithers a few tenths of a degree frame to frame even when nothing moves, and a
+            // 0.18 floor let that through at 50 Hz as a visible wobble. Below ~0.35 deg the pose
+            // is treated as unchanged and barely blended; above it the old adaptive ramp takes
+            // over, so a real turn is still immediate.
+            let alpha: Float
+            if stepDegrees < 0.35 {
+                alpha = 0.02
+            } else {
+                alpha = simd_clamp(0.10 + stepDegrees * 0.30, 0.10, 0.9)
+            }
             smoothed = simd_slerp(s, target, alpha)
         } else {
             smoothed = target
