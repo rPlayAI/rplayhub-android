@@ -14,6 +14,17 @@
 	<string>6.0</string>
 	<key>CFBundleName</key>
 	<string>rPlayHub Android</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>ai.rplay.rplayhub.android.fuse</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>rplayhub</string>
+			</array>
+		</dict>
+	</array>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>

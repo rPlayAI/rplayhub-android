@@ -904,6 +904,92 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// The launcher label and icon of a package, through the agent jar's AppLabel (one round trip,
+    /// adaptive and obfuscated icons included). Blocking; call off the main queue.
+    private func appLabelAndIcon(serial: String, package: String) -> (label: String, icon: NSImage?) {
+        let cmd = "CLASSPATH=\(AgentSession.toolsJarRemote)"
+            + " app_process / com.android.tools.screensharing.AppLabel \(package) 2>/dev/null"
+        guard let out = try? Adb.shell(serial, cmd),
+              let line = out.split(separator: "\n").last(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty })
+        else { return (fusionTitle(for: package), nil) }
+        let fields = line.components(separatedBy: "\t")
+        let label = fields.first?.trimmingCharacters(in: .whitespaces) ?? ""
+        let icon = fields.count > 1 ? Data(base64Encoded: fields[1].trimmingCharacters(in: .whitespacesAndNewlines)).flatMap(NSImage.init(data:)) : nil
+        return (label.isEmpty ? fusionTitle(for: package) : label, icon)
+    }
+
+    /// A double-clickable icon on the Desktop for whatever is in front on the phone: opens that
+    /// app in a window of its own on this device, through the rplayhub:// URL scheme.
+    @objc private func addFrontAppToDesktop() {
+        guard let serial = shownSerial ?? sidebar.selected?.serial,
+              let device = sidebar.devices.first(where: { $0.serial == serial }) else {
+            present(message: "No device", detail: "Select a device first.")
+            return
+        }
+        let deviceName = sidebar.friendlyName(for: device)
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self, let package = Adb.frontPackage(serial), !package.contains("launcher") else {
+                DispatchQueue.main.async {
+                    self?.present(message: "Nothing to add", detail: "Open an app on the phone first; the shortcut is made for whatever is in front.")
+                }
+                return
+            }
+            let (label, icon) = self.appLabelAndIcon(serial: serial, package: package)
+            DispatchQueue.main.async {
+                do {
+                    let url = try DesktopShortcut.write(package: package, label: label, deviceName: deviceName,
+                                                        serial: serial, icon: icon)
+                    AppBuild.log("desktop shortcut: \(url.lastPathComponent) → \(package)")
+                    NSWorkspace.shared.activateFileViewerSelecting([url])
+                } catch {
+                    self.present(message: "Could not add the shortcut", detail: "\(error)")
+                }
+            }
+        }
+    }
+
+    // MARK: - rplayhub:// URLs
+
+    /// `rplayhub://fuse?package=<id>&device=<serial>` — what a Desktop shortcut opens. The device
+    /// list may not have been polled yet when the app was just launched by the shortcut, so a
+    /// device that is not there yet is waited for, briefly.
+    func application(_ application: NSApplication, open urls: [URL]) {
+        for url in urls { handle(url: url, attempt: 0) }
+    }
+
+    private func handle(url: URL, attempt: Int) {
+        guard url.scheme == DesktopShortcut.scheme, url.host == "fuse",
+              let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems,
+              let package = items.first(where: { $0.name == "package" })?.value, !package.isEmpty else {
+            AppBuild.log("url: ignored \(url)")
+            return
+        }
+        let serial = items.first(where: { $0.name == "device" })?.value
+        if let serial, serial != shownSerial {
+            guard let device = sidebar.devices.first(where: { $0.serial == serial }), device.isReady else {
+                if attempt < 20 {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in self?.handle(url: url, attempt: attempt + 1) }
+                } else {
+                    present(message: "Device not found", detail: "The shortcut's device is not connected.")
+                }
+                return
+            }
+            AppBuild.log("url: \(package) on \(serial)")
+            // Select first, queue second: selecting prepares the device's session (and names
+            // the window), and startSession's teardown empties pendingFusion — a request queued
+            // before it was thrown away. The .running hook then sends what is queued.
+            sidebar.select(serial: serial)
+            if session?.serial == serial, sessionReachedRunning {
+                startFusion(package: package)
+            } else {
+                pendingFusion.append(FusionRequest(package: package))
+            }
+            return
+        }
+        AppBuild.log("url: \(package) on the current device")
+        startFusion(package: package)
+    }
+
     /// Wake the device and dismiss a (non-secured) keyguard — the fusion display shares the
     /// phone's power/lock state, so this brings a dozing or locked phone back without the shell.
     /// A real PIN/pattern is not bypassed; the credential prompt just appears for the user.
@@ -950,8 +1036,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// session or the selected device — Desktop Mode is per-device, like everything else here.
     private func requestDesktopMode(on device: AdbDevice?) {
         if let device, session?.serial != device.serial {
-            pendingFusion.append(FusionRequest(package: nil))
             startSession(for: device, reveal: false)   // the .running hook fires the request
+            pendingFusion.append(FusionRequest(package: nil))   // after: the teardown empties the queue
             return
         }
         wakeDevice()
@@ -2067,6 +2153,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                            action: #selector(fuseFrontApp), keyEquivalent: "f")
         fuseFront.keyEquivalentModifierMask = [.command, .shift, .option]
         fuseFront.target = self
+        deviceMenu.addItem(withTitle: "Add Front App to Desktop", action: #selector(addFrontAppToDesktop),
+                           keyEquivalent: "").target = self
         let newDisplay = deviceMenu.addItem(withTitle: "New Virtual Display", action: nil,
                                             keyEquivalent: "")
         let newDisplaySub = NSMenu(title: "New Virtual Display")
