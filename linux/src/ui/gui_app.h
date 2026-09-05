@@ -98,6 +98,8 @@ private:
     AsyncJobs jobs_;
     AdbClient adb_;
     std::vector<AdbDevice> devices_;
+    std::map<std::string, std::string> device_release_;   // serial -> Android version, for the sidebar rows
+    std::set<std::string> release_inflight_;
     int selected_device_idx_ = -1;       // index into devices_, recomputed from selected_serial_
     std::string selected_serial_;        // survives the list reordering between polls
     bool devices_poll_inflight_ = false;
@@ -232,6 +234,10 @@ private:
     void startEmulator(const Avd& avd);
     void shutdownEmulator(const std::string& serial);
     void renderEmulatorRows(float width);
+    void fetchDeviceRelease(const std::string& serial);
+    // One flat sidebar row: status dot, icon, title over subtitle, something at the right.
+    bool sidebarRow(const char* id, float width, bool selected, ImU32 dot, bool phone_icon,
+                    const std::string& title, const std::string& sub, const std::string& right);
     void pumpAgentEvents();
     void openDesktopMode();
     void openAppOnVirtualDisplay(const std::string& package);
