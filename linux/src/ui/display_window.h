@@ -82,7 +82,6 @@ private:
     bool overChrome(int x, int y) const;
     // Where the picture sits inside the chassis of the normal window, in window units.
     void chassisPicture(float W, float H, float& px, float& py, float& pw, float& ph) const;
-    void moveResize(int w, int h, int x, int y);   // one request, so the window does not hop
     // The phone's own window gets the chassis and the control strip; Desktop Mode and app
     // windows are plain rectangles (doc/mirror-and-youtube.png) with just a title bar.
     bool isPhone() const { return display_id_ == 0; }
@@ -95,9 +94,7 @@ private:
     std::string title_;
     std::string font_title_;          // the title the atlas was built for
     float chrome_alpha_ = 0.0f;       // 0 = hidden, 1 = fully shown
-    bool normal_sized_ = false;       // window grown to hold the bars and the chassis
-    int bare_w_ = 0, bare_h_ = 0;     // the size to shrink back to
-    int grow_dx_ = 0, grow_dy_ = 0;   // how far the window moved up-left when it grew
+
     std::chrono::steady_clock::time_point chrome_clock_{};
 
     int32_t display_id_;

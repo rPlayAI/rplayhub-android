@@ -237,23 +237,6 @@ void DisplayWindow::buildChromeFonts() {
     ImGui::SetCurrentContext(prev);
 }
 
-// Size and position in one X request where possible: SDL's two calls would let the window
-// manager show the grown window at the old place for a frame, a visible hop.
-void DisplayWindow::moveResize(int w, int h, int x, int y) {
-    if (std::getenv("RPLAYHUB_INPUT_DEBUG")) std::cerr << "display window " << display_id_ << ": resized to " << w << "x" << h << " at " << x << "," << y << "\n";
-#ifdef RPLAYHUB_HAVE_X11
-    SDL_SysWMinfo info;
-    SDL_VERSION(&info.version);
-    if (SDL_GetWindowWMInfo(window_, &info) && info.subsystem == SDL_SYSWM_X11) {
-        XMoveResizeWindow(info.info.x11.display, info.info.x11.window, x, y, static_cast<unsigned>(w), static_cast<unsigned>(h));
-        XFlush(info.info.x11.display);
-        return;
-    }
-#endif
-    SDL_SetWindowSize(window_, w, h);
-    SDL_SetWindowPosition(window_, x, y);
-}
-
 void DisplayWindow::chassisPicture(float W, float H, float& px, float& py, float& pw, float& ph) const {
     const float s = chrome_.scale;
     const float stage_top = titleBarHeight(), stage_h = std::max(1.0f, H - titleBarHeight() - toolbarHeight());
@@ -455,28 +438,21 @@ void DisplayWindow::render(const DecodedFrame& frame) {
     const float a = (ui_ && win_w > 0 && win_h > 0) ? updateChromeAlpha(win_w, win_h) : 0.0f;
     SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 255);
     SDL_RenderClear(renderer_);
-    if (texture_ && have_frame_ && out_w > 0 && out_h > 0) {
-        // The bare picture fills the window; the normal view, when shown, paints over it
-        // (and takes over the touch mapping once it is more than half way in).
+    if (ui_) {
+        // The window never changes size or position: the chrome context draws the picture
+        // every frame, easing it between filling the window and sitting in the chassis as
+        // the bars and borders fade in or out around it.
+        if (win_w > 0 && win_h > 0) renderChrome(win_w, win_h, out_w, out_h);
+    } else if (texture_ && have_frame_ && out_w > 0 && out_h > 0) {
         float aspect = static_cast<float>(tex_w_) / static_cast<float>(tex_h_);
         int w = out_w, h = static_cast<int>(out_w / aspect);
         if (h > out_h) { h = out_h; w = static_cast<int>(out_h * aspect); }
         SDL_Rect bare = { (out_w - w) / 2, (out_h - h) / 2, w, h };
-        if (normal_sized_) {
-            // The window has grown around the picture: keep drawing it where the chassis
-            // will show it, so the crossfade does not move anything.
-            float px_, py_, pw_, ph_;
-            chassisPicture(static_cast<float>(win_w), static_cast<float>(win_h), px_, py_, pw_, ph_);
-            bare = { static_cast<int>(px_ * px), static_cast<int>(py_ * px), static_cast<int>(pw_ * px), static_cast<int>(ph_ * px) };
-        }
-        if (a < 1.0f) SDL_RenderCopy(renderer_, texture_, nullptr, &bare);
-        if (a < 0.5f) {
-            image_rect_ = px != 1.0f ? SDL_Rect{ static_cast<int>(bare.x / px), static_cast<int>(bare.y / px),
-                                                 static_cast<int>(bare.w / px), static_cast<int>(bare.h / px) }
-                                     : bare;
-        }
+        SDL_RenderCopy(renderer_, texture_, nullptr, &bare);
+        image_rect_ = px != 1.0f ? SDL_Rect{ static_cast<int>(bare.x / px), static_cast<int>(bare.y / px),
+                                             static_cast<int>(bare.w / px), static_cast<int>(bare.h / px) }
+                                 : bare;
     }
-    if (a > 0.0f) renderChrome(win_w, win_h, out_w, out_h);
     {
         int win_w = 0;
         SDL_GetWindowSize(window_, &win_w, nullptr);
@@ -512,36 +488,8 @@ float DisplayWindow::updateChromeAlpha(int win_w, int win_h) {
     chrome_alpha_ += (target - chrome_alpha_) * std::min(1.0f, dt * 12.0f);
     if (chrome_alpha_ < 0.01f) chrome_alpha_ = 0.0f;
     if (chrome_alpha_ > 0.99f) chrome_alpha_ = 1.0f;
+    if (const char* forced = std::getenv("RPLAYHUB_CHROME_ALPHA")) chrome_alpha_ = std::clamp(static_cast<float>(std::atof(forced)), 0.0f, 1.0f);   // for screenshots
 
-    // The normal window is taller than the bare picture: the bars come out of extra height,
-    // not out of the picture, so nothing is left blank around the phone.
-    // Grow when the view starts coming in, shrink back once it has gone.
-    const bool maximized = SDL_GetWindowFlags(window_) & SDL_WINDOW_MAXIMIZED;
-    if (have_frame_ && tex_w_ > 0 && tex_h_ > 0 && !maximized) {
-        const float aspect = static_cast<float>(tex_w_) / tex_h_;
-        // The picture itself must not move on screen: the window grows around it, so it
-        // moves up and left by the bars and margins that appear above and beside the picture,
-        // and back again when they go.
-        auto resize = [this](int w, int h, int x, int y) { moveResize(w, h, x, y); };
-        // Mac proportions: the chassis (screen + 4.5 % bezel each side) spans 90 % of the
-        // window's width and touches the bars, so the picture keeps its size.
-        if (target > 0.5f && !normal_sized_) {
-            bare_w_ = win_w;
-            bare_h_ = win_h;
-            const float pw = static_cast<float>(win_w), bezel = isPhone() ? kBezel * pw : 0.0f;
-            const float gap = isPhone() ? kChassisGap * chrome_.scale : 0.0f;
-            const int w = isPhone() ? static_cast<int>(std::lround((pw + 2.0f * bezel) / kChassisSpan)) : win_w;
-            const int h = static_cast<int>(std::lround(titleBarHeight() + pw / aspect + 2.0f * bezel + 2.0f * gap + toolbarHeight()));
-            grow_dx_ = (w - win_w) / 2;
-            grow_dy_ = static_cast<int>(std::lround(titleBarHeight() + bezel + gap));
-            resize(w, h, wx - grow_dx_, wy - grow_dy_);
-            normal_sized_ = true;
-        } else if (target < 0.5f && normal_sized_ && chrome_alpha_ == 0.0f) {
-            resize(bare_w_ > 0 ? bare_w_ : win_w, bare_h_ > 0 ? bare_h_ : static_cast<int>(std::lround(win_w / aspect)),
-                   wx + grow_dx_, wy + grow_dy_);
-            normal_sized_ = false;
-        }
-    }
     return chrome_alpha_;
 }
 
@@ -563,6 +511,8 @@ void DisplayWindow::renderChrome(int win_w, int win_h, int out_w, int out_h) {
     ImGui_ImplSDLRenderer2_NewFrame();
     ImGui::NewFrame();
 
+    // Ease-in-out of the fade drives the picture between its two homes
+    const float e = a * a * (3.0f - 2.0f * a);
     const ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
                                    ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBackground |
                                    ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoScrollWithMouse;
@@ -610,7 +560,7 @@ void DisplayWindow::renderChrome(int win_w, int win_h, int out_w, int out_h) {
                 }
             }
             const bool over = std::fabs(mouse.x - c.x) <= r + 2 && std::fabs(mouse.y - c.y) <= r + 2;
-            if (over && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+            if (over && a >= 0.5f && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
                 if (i == 0) requestClose("close dot");
                 else if (i == 1) SDL_MinimizeWindow(window_);
                 else if (SDL_GetWindowFlags(window_) & SDL_WINDOW_MAXIMIZED) SDL_RestoreWindow(window_);
@@ -625,29 +575,34 @@ void DisplayWindow::renderChrome(int win_w, int win_h, int out_w, int out_h) {
                     alpha(50, 50, 54, 255), full.c_str());
     }
 
-    // ---- stage: the phone in its bezel, like the main window ----
-    // ---- stage: the phone in its black chassis, proportioned like the Mac's ----
-    // Bezel 4.5 % of the screen width, corner radii 16 % outside and 12 % inside, a camera
-    // hole 4 % wide; the chassis spans 90 % of the window and touches the bars.
-    if (texture_ && have_frame_ && !isPhone()) {
-        float px, py, pw, ph;
-        chassisPicture(W, H, px, py, pw, ph);
-        dl->AddRectFilled(ImVec2(0, top_h), ImVec2(W, H), alpha(0, 0, 0, 255));
-        dl->AddImage((ImTextureID)(intptr_t)texture_, ImVec2(px, py), ImVec2(px + pw, py + ph),
-                     ImVec2(0, 0), ImVec2(1, 1), alpha(255, 255, 255, 255));
-        if (a >= 0.5f) image_rect_ = { static_cast<int>(px), static_cast<int>(py), static_cast<int>(pw), static_cast<int>(ph) };
-    } else if (texture_ && have_frame_) {
-        float px, py, pw, ph;
-        chassisPicture(W, H, px, py, pw, ph);
-        const float bezel = kBezel * pw;
-        dl->AddRectFilled(ImVec2(px - bezel, py - bezel), ImVec2(px + pw + bezel, py + ph + bezel), alpha(6, 6, 8, 255), 0.16f * pw);
-        dl->AddImageRounded((ImTextureID)(intptr_t)texture_, ImVec2(px, py), ImVec2(px + pw, py + ph),
-                            ImVec2(0, 0), ImVec2(1, 1), alpha(255, 255, 255, 255), 0.12f * pw);
-        dl->AddCircleFilled(ImVec2(px + pw * 0.5f, py + 0.07f * pw), 0.041f * pw, alpha(0, 0, 0, 255), 32);
-        // Touches map to the picture as drawn here once the normal view has taken over
-        if (a >= 0.5f) {
-            image_rect_ = { static_cast<int>(px), static_cast<int>(py), static_cast<int>(pw), static_cast<int>(ph) };
+    // ---- stage: the picture, easing from the whole window into the chassis ----
+    // Chassis after the Mac's: bezel 4.5 % of the screen width, corner radii 16 % outside and
+    // 12 % inside, a camera hole 4 % wide, spanning 90 % of the window between the bars.
+    // Desktop Mode / app windows just fit under the title bar.
+    if (texture_ && have_frame_) {
+        const float aspect = static_cast<float>(tex_w_) / static_cast<float>(tex_h_);
+        float bw = W, bh = bw / aspect;            // bare: fills the window
+        if (bh > H) { bh = H; bw = bh * aspect; }
+        const float bx = (W - bw) * 0.5f, by = (H - bh) * 0.5f;
+        float cx, cy, cw, ch;                       // chassis / under the title bar
+        chassisPicture(W, H, cx, cy, cw, ch);
+        const float px = bx + (cx - bx) * e, py = by + (cy - by) * e;
+        const float pw = bw + (cw - bw) * e, ph = bh + (ch - bh) * e;
+        if (isPhone()) {
+            const float bezel = kBezel * pw * e;
+            if (bezel > 0.5f) {
+                dl->AddRectFilled(ImVec2(px - bezel, py - bezel), ImVec2(px + pw + bezel, py + ph + bezel),
+                                  alpha(6, 6, 8, 255), 0.16f * pw * e);
+            }
+            dl->AddImageRounded((ImTextureID)(intptr_t)texture_, ImVec2(px, py), ImVec2(px + pw, py + ph),
+                                ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE, 0.12f * pw * e);
+            if (e > 0.0f) dl->AddCircleFilled(ImVec2(px + pw * 0.5f, py + 0.07f * pw), 0.041f * pw * e, alpha(0, 0, 0, 255), 32);
+        } else {
+            dl->AddRectFilled(ImVec2(0, top_h * e), ImVec2(W, H), IM_COL32(0, 0, 0, 255));
+            dl->AddImage((ImTextureID)(intptr_t)texture_, ImVec2(px, py), ImVec2(px + pw, py + ph),
+                         ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE);
         }
+        image_rect_ = { static_cast<int>(px), static_cast<int>(py), static_cast<int>(pw), static_cast<int>(ph) };
     }
 
     // ---- control strip (the phone's window only) ----
@@ -690,7 +645,7 @@ void DisplayWindow::renderChrome(int win_w, int win_h, int out_w, int out_h) {
                 btns[i].icon(dl, ip, icon, col);
                 if (hovered) ImGui::SetTooltip("%s", btns[i].tip);
             }
-            if (clicked && chrome_.on_action) chrome_.on_action(btns[i].act);
+            if (clicked && a >= 0.5f && chrome_.on_action) chrome_.on_action(btns[i].act);
         }
     }
     ImGui::End();
