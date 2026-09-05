@@ -379,6 +379,9 @@ void DisplayWindow::render(const DecodedFrame& frame) {
             if (frame.format == FrameFormat::I420) fmt = SDL_PIXELFORMAT_IYUV;
             else if (frame.format == FrameFormat::NV12) fmt = SDL_PIXELFORMAT_NV12;
             texture_ = SDL_CreateTexture(renderer_, fmt, SDL_TEXTUREACCESS_STREAMING, frame.width, frame.height);
+            // Blend: the rounded picture's anti-aliased edge must fade into the bezel, not
+            // punch low-alpha pixels through the ARGB window (a light line along the edge).
+            if (texture_) SDL_SetTextureBlendMode(texture_, SDL_BLENDMODE_BLEND);
             tex_w_ = frame.width;
             tex_h_ = frame.height;
             tex_format_ = frame.format;
