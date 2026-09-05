@@ -1,5 +1,11 @@
 # rplay-hub-android
 
+[![Latest release](https://img.shields.io/github/v/release/rPlayAI/rplayhub-android?label=download&color=2ea44f)](https://github.com/rPlayAI/rplayhub-android/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/rPlayAI/rplayhub-android/total?color=blue)](https://github.com/rPlayAI/rplayhub-android/releases)
+[![Platform](https://img.shields.io/badge/platform-macOS%2013%2B-lightgrey)](https://github.com/rPlayAI/rplayhub-android/releases/latest)
+[![License: MIT](https://img.shields.io/badge/license-MIT-yellow)](LICENSE)
+[![Stars](https://img.shields.io/github/stars/rPlayAI/rplayhub-android?style=social)](https://github.com/rPlayAI/rplayhub-android/stargazers)
+
 **Your Android phone on your Mac** (Windows, Linux and Raspberry Pi upcoming) — mirror it,
 control it, run its apps in windows of their own, open its files in Finder, and run Android VMs
 without installing Android Studio. Built on Google's own on-device agent (the one behind Android
