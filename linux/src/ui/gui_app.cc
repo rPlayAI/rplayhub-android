@@ -326,7 +326,10 @@ void GuiApp::pollDevices() {
 
 void GuiApp::applyDeviceList(const std::vector<AdbDevice>& list) {
     devices_ = list;
-    for (const auto& d : devices_) ensureGlyphs(d.displayName());
+    for (const auto& d : devices_) {
+        ensureGlyphs(d.displayName());
+        if (d.isReady()) fetchDeviceRelease(d.serial);
+    }
 
     // Re-find the selection by serial: adb reorders the list as devices come and go.
     selected_device_idx_ = -1;
@@ -370,6 +373,65 @@ void GuiApp::selectDevice(int idx) {
         refreshPackages(serial);
         refreshFiles(serial);
     }
+}
+
+// The Android version shown at the right of a sidebar row, asked once per device.
+void GuiApp::fetchDeviceRelease(const std::string& serial) {
+    if (device_release_.count(serial) || release_inflight_.count(serial)) return;
+    release_inflight_.insert(serial);
+    jobs_.run<std::string>(
+        [this, serial] {
+            std::string out = adb_.shell(serial, "getprop ro.build.version.release");
+            while (!out.empty() && (out.back() == '\n' || out.back() == '\r' || out.back() == ' ')) out.pop_back();
+            return out;
+        },
+        [this, serial](std::string release) {
+            release_inflight_.erase(serial);
+            if (!release.empty()) device_release_[serial] = release;
+        });
+}
+
+// A flat sidebar row like the Mac's: no box, a rounded highlight when selected, the status
+// dot and icon at the left, title over subtitle, a caption (the Android version) at the right.
+bool GuiApp::sidebarRow(const char* id, float width, bool selected, ImU32 dot, bool phone_icon,
+                        const std::string& title, const std::string& sub, const std::string& right) {
+    ImDrawList* draw_list = ImGui::GetWindowDrawList();
+    ImVec2 pos = ImGui::GetCursorScreenPos();
+    const float row_w = width - 24.0f * scale_, row_h = 46.0f * scale_;
+    ImGui::InvisibleButton(id, ImVec2(row_w, row_h));
+    const bool hovered = ImGui::IsItemHovered();
+    const bool clicked = ImGui::IsItemClicked(ImGuiMouseButton_Left);
+    if (selected) {
+        draw_list->AddRectFilled(pos, ImVec2(pos.x + row_w, pos.y + row_h), IM_COL32(222, 222, 228, 255), 7.0f * scale_);
+    } else if (hovered) {
+        draw_list->AddRectFilled(pos, ImVec2(pos.x + row_w, pos.y + row_h), IM_COL32(232, 232, 237, 255), 7.0f * scale_);
+    }
+    draw_list->AddCircleFilled(ImVec2(pos.x + 13.0f * scale_, pos.y + row_h * 0.5f), 4.5f * scale_, dot);
+    const ImU32 icon_col = IM_COL32(110, 110, 116, 255);
+    if (phone_icon) {
+        Icons::drawPhone(draw_list, ImVec2(pos.x + 25.0f * scale_, pos.y + (row_h - 20.0f * scale_) * 0.5f), 20.0f * scale_, icon_col);
+    } else {
+        Icons::drawScreen(draw_list, ImVec2(pos.x + 25.0f * scale_, pos.y + (row_h - 20.0f * scale_) * 0.5f), 20.0f * scale_, icon_col);
+    }
+    // Room for the caption at the right; the title and subtitle are clipped before it.
+    float right_w = 0.0f;
+    if (!right.empty()) {
+        ImVec2 rs = font_caption_ ? font_caption_->CalcTextSizeA(12.5f * scale_, FLT_MAX, 0.0f, right.c_str()) : ImGui::CalcTextSize(right.c_str());
+        right_w = rs.x + 12.0f * scale_;
+        if (font_caption_) {
+            draw_list->AddText(font_caption_, 12.5f * scale_, ImVec2(pos.x + row_w - rs.x - 10.0f * scale_, pos.y + (row_h - rs.y) * 0.5f),
+                               IM_COL32(128, 128, 134, 255), right.c_str());
+        } else {
+            draw_list->AddText(ImVec2(pos.x + row_w - rs.x - 10.0f * scale_, pos.y + (row_h - rs.y) * 0.5f), IM_COL32(128, 128, 134, 255), right.c_str());
+        }
+    }
+    const float text_x = pos.x + 50.0f * scale_;
+    const ImVec4 clip(text_x, pos.y, pos.x + row_w - right_w, pos.y + row_h);
+    if (font_medium_) draw_list->AddText(font_medium_, font_medium_->FontSize, ImVec2(text_x, pos.y + 6.0f * scale_), IM_COL32(28, 28, 30, 255), title.c_str(), nullptr, 0.0f, &clip);
+    else draw_list->AddText(ImVec2(text_x, pos.y + 6.0f * scale_), IM_COL32(28, 28, 30, 255), title.c_str());
+    if (font_caption_) draw_list->AddText(font_caption_, 12.0f * scale_, ImVec2(text_x, pos.y + 25.0f * scale_), IM_COL32(142, 142, 147, 255), sub.c_str(), nullptr, 0.0f, &clip);
+    else draw_list->AddText(ImVec2(text_x, pos.y + 25.0f * scale_), IM_COL32(142, 142, 147, 255), sub.c_str());
+    return clicked;
 }
 
 void GuiApp::loadDeviceInfo(const std::string& serial) {
@@ -1182,7 +1244,7 @@ void GuiApp::renderEmulatorRows(float width) {
     if (avds_.empty()) return;
     ImGui::Spacing();
     if (font_caption_) ImGui::PushFont(font_caption_);
-    ImGui::TextColored(Theme::ColorTextSecondary, "EMULATORS");
+    ImGui::TextColored(Theme::ColorTextSecondary, "Emulators");
     if (font_caption_) ImGui::PopFont();
     ImGui::Spacing();
     ImDrawList* draw_list = ImGui::GetWindowDrawList();
@@ -1202,31 +1264,29 @@ void GuiApp::renderEmulatorRows(float width) {
 
         ImGui::PushID(static_cast<int>(1000 + i));
         ImVec2 card_pos = ImGui::GetCursorScreenPos();
-        float card_w = width - 24.0f * scale_;
-        float card_h = 50.0f * scale_;
-        ImU32 bg_color = is_selected ? IM_COL32(232, 242, 255, 255) : IM_COL32(255, 255, 255, 255);
-        ImU32 border_color = is_selected ? IM_COL32(0, 122, 255, 180) : IM_COL32(225, 225, 230, 200);
-        draw_list->AddRectFilled(card_pos, ImVec2(card_pos.x + card_w, card_pos.y + card_h), bg_color, 8.0f * scale_);
-        draw_list->AddRect(card_pos, ImVec2(card_pos.x + card_w, card_pos.y + card_h), border_color, 8.0f * scale_);
-
+        const float card_h = 46.0f * scale_;
         ImU32 dot = ready ? IM_COL32(52, 199, 89, 255) : booting ? IM_COL32(255, 204, 0, 255) : IM_COL32(180, 180, 185, 255);
-        draw_list->AddCircleFilled(ImVec2(card_pos.x + 14.0f * scale_, card_pos.y + card_h * 0.5f), 4.5f * scale_, dot);
-        Icons::drawScreen(draw_list, ImVec2(card_pos.x + 26.0f * scale_, card_pos.y + 15.0f * scale_), 20.0f * scale_, IM_COL32(120, 120, 128, 255));
 
-        std::string title = avd.display_name;
-        std::string sub = booting ? "starting..." : ready ? serial : "stopped";
-        if (!avd.api_level.empty()) sub += (sub.empty() ? "" : " · API ") + avd.api_level;
-        if (!avd.abi.empty()) sub += " · " + avd.abi;
-        if (font_medium_) ImGui::PushFont(font_medium_);
-        draw_list->AddText(ImVec2(card_pos.x + 52.0f * scale_, card_pos.y + 8.0f * scale_), IM_COL32(28, 28, 30, 255), title.c_str());
-        if (font_medium_) ImGui::PopFont();
-        if (font_caption_) {
-            draw_list->AddText(font_caption_, 12.0f * scale_, ImVec2(card_pos.x + 52.0f * scale_, card_pos.y + 28.0f * scale_),
-                               IM_COL32(142, 142, 147, 255), sub.c_str());
+        // Like the Mac: "Emulator · <name>" over "<device> · API <n> · <abi>"; while it runs
+        // the serial stands in for the device, while it boots "starting" does.
+        std::string title = "Emulator \u00b7 " + avd.display_name;
+        std::string profile = avd.device;   // hw.device.name, e.g. pixel_3a
+        for (size_t k = 0; k < profile.size(); ++k) {
+            if (profile[k] == '_') profile[k] = ' ';
+            if (k == 0 || profile[k - 1] == ' ') profile[k] = static_cast<char>(::toupper(static_cast<unsigned char>(profile[k])));
         }
+        std::vector<std::string> parts;
+        if (booting) parts.push_back("starting\u2026");
+        else if (ready) parts.push_back(serial);
+        else if (!profile.empty()) parts.push_back(profile);
+        if (!avd.api_level.empty()) parts.push_back("API " + avd.api_level);
+        if (!avd.abi.empty()) parts.push_back(avd.abi);
+        std::string sub;
+        for (const auto& part : parts) sub += (sub.empty() ? "" : " \u00b7 ") + part;
+        std::string right;
+        if (ready) { auto rel = device_release_.find(serial); if (rel != device_release_.end()) right = rel->second; }
 
-        ImGui::SetCursorScreenPos(card_pos);
-        if (ImGui::InvisibleButton("##AvdBtn", ImVec2(card_w, card_h))) {
+        if (sidebarRow("##AvdBtn", width, is_selected, dot, false, title, sub, right)) {
             selected_avd_ = avd.name;
             if (ready) selectDevice(dev_idx);
         }
@@ -1258,7 +1318,7 @@ void GuiApp::renderEmulatorRows(float width) {
             }
             ImGui::EndPopup();
         }
-        ImGui::SetCursorScreenPos(ImVec2(card_pos.x, card_pos.y + card_h + 8.0f * scale_));
+        ImGui::SetCursorScreenPos(ImVec2(card_pos.x, card_pos.y + card_h + 2.0f * scale_));
         ImGui::PopID();
     }
 }
@@ -1766,7 +1826,7 @@ void GuiApp::renderLeftSidebar(float width, float height) {
 
     ImGui::Spacing();
     if (font_caption_) ImGui::PushFont(font_caption_);
-    ImGui::TextColored(Theme::ColorTextSecondary, "AVAILABLE");
+    ImGui::TextColored(Theme::ColorTextSecondary, "Available");
     if (font_caption_) ImGui::PopFont();
     ImGui::Spacing();
 
@@ -1793,41 +1853,13 @@ void GuiApp::renderLeftSidebar(float width, float height) {
 
         ImGui::PushID(i);
         ImVec2 card_pos = ImGui::GetCursorScreenPos();
-        float card_w = width - 24.0f * scale_;
-        float card_h = 50.0f * scale_;
-
-        // Custom Card Drawing
-        ImU32 bg_color = is_selected ? IM_COL32(232, 242, 255, 255) : IM_COL32(255, 255, 255, 255);
-        ImU32 border_color = is_selected ? IM_COL32(0, 122, 255, 180) : IM_COL32(225, 225, 230, 200);
-        draw_list->AddRectFilled(card_pos, ImVec2(card_pos.x + card_w, card_pos.y + card_h), bg_color, 8.0f * scale_);
-        draw_list->AddRect(card_pos, ImVec2(card_pos.x + card_w, card_pos.y + card_h), border_color, 8.0f * scale_, 0, is_selected ? 1.5f : 1.0f);
-
-        // Status Dot
+        const float card_h = 46.0f * scale_;
         ImU32 status_col = dev.isReady() ? IM_COL32(52, 199, 89, 255) :
                            (dev.state == "unauthorized" ? IM_COL32(255, 204, 0, 255) : IM_COL32(255, 59, 48, 255));
-        draw_list->AddCircleFilled(ImVec2(card_pos.x + 13.0f * scale_, card_pos.y + card_h * 0.5f), 5.0f * scale_, status_col);
-
-        // Phone Icon
-        Icons::drawPhone(draw_list, ImVec2(card_pos.x + 24.0f * scale_, card_pos.y + (card_h - 22.0f * scale_) * 0.5f), 22.0f * scale_,
-                         is_selected ? IM_COL32(0, 122, 255, 255) : IM_COL32(100, 100, 105, 255));
-
-        // Device Title & Subtitle
-        std::string sub = dev.serial;
-        if (dev.serial.find(":") != std::string::npos) sub = dev.serial;
-
-        ImGui::SetCursorScreenPos(ImVec2(card_pos.x + 48.0f * scale_, card_pos.y + 6.0f * scale_));
-        if (font_bold_) ImGui::PushFont(font_bold_);
-        ImGui::TextColored(Theme::ColorTextPrimary, "%s", display_title.c_str());
-        if (font_bold_) ImGui::PopFont();
-
-        ImGui::SetCursorScreenPos(ImVec2(card_pos.x + 48.0f * scale_, card_pos.y + 26.0f * scale_));
-        if (font_caption_) ImGui::PushFont(font_caption_);
-        ImGui::TextColored(Theme::ColorTextSecondary, "%s", sub.c_str());
-        if (font_caption_) ImGui::PopFont();
-
-        // Invisible button to catch clicks
-        ImGui::SetCursorScreenPos(card_pos);
-        if (ImGui::InvisibleButton("##CardBtn", ImVec2(card_w, card_h))) {
+        std::string sub = dev.isReady() ? dev.serial : dev.serial + " \u00b7 " + dev.state;
+        auto rel = device_release_.find(dev.serial);
+        if (sidebarRow("##CardBtn", width, is_selected, status_col, true, display_title, sub,
+                       rel != device_release_.end() ? rel->second : std::string())) {
             selectDevice(i);
         }
 
@@ -1947,7 +1979,7 @@ void GuiApp::renderLeftSidebar(float width, float height) {
             ImGui::EndPopup();
         }
 
-        ImGui::SetCursorScreenPos(ImVec2(card_pos.x, card_pos.y + card_h + 8.0f * scale_));
+        ImGui::SetCursorScreenPos(ImVec2(card_pos.x, card_pos.y + card_h + 2.0f * scale_));
         ImGui::PopID();
     }
 
@@ -2643,9 +2675,11 @@ void GuiApp::renderRightInspector(float width, float height) {
         if (current_serial.empty()) {
             ImGui::TextColored(Theme::ColorTextSecondary, "No device selected");
         } else {
-            // Scrollable app list: icon, launcher label, (package)
-            float list_h = height - 175.0f * scale_;
+            // Scrollable app list: icon, launcher label, (package). It ends above the
+            // count / System apps / Install APK / filter block that sits at the bottom.
+            float list_h = std::max(40.0f * scale_, (height - 80.0f * scale_) - ImGui::GetCursorPosY() - 10.0f * scale_);
             ImGui::BeginChild("##AppList", ImVec2(width - 24.0f * scale_, list_h), false);
+            ImDrawList* list_dl = ImGui::GetWindowDrawList();   // the child's: rows clip to the list
 
             std::string q = app_filter_;
             std::transform(q.begin(), q.end(), q.begin(), ::tolower);
@@ -2687,11 +2721,11 @@ void GuiApp::renderRightInspector(float width, float height) {
                 float badge_size = 22.0f * scale_;
                 ImVec2 icon_tl(row_pos.x + 2.0f * scale_, row_pos.y + (row_h - badge_size) * 0.5f);
                 if (app.icon) {
-                    draw_list->AddImageRounded((ImTextureID)app.icon, icon_tl,
+                    list_dl->AddImageRounded((ImTextureID)app.icon, icon_tl,
                                                ImVec2(icon_tl.x + badge_size, icon_tl.y + badge_size),
                                                ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE, 5.0f * scale_);
                 } else {
-                    Icons::drawAppBadge(draw_list, icon_tl, badge_size, title, pkg, font_bold_);
+                    Icons::drawAppBadge(list_dl, icon_tl, badge_size, title, pkg, font_bold_);
                 }
 
                 // Title & package name
@@ -2699,21 +2733,21 @@ void GuiApp::renderRightInspector(float width, float height) {
                 float font_cap_size = 12.5f * scale_;
                 float title_w = 0.0f;
                 if (font_bold_) {
-                    draw_list->AddText(font_bold_, font_bold_size, ImVec2(row_pos.x + 30.0f * scale_, row_pos.y + 3.5f * scale_),
+                    list_dl->AddText(font_bold_, font_bold_size, ImVec2(row_pos.x + 30.0f * scale_, row_pos.y + 3.5f * scale_),
                                        IM_COL32(28, 28, 30, 255), title.c_str());
                     title_w = font_bold_->CalcTextSizeA(font_bold_size, FLT_MAX, 0.0f, title.c_str()).x;
                 } else {
-                    draw_list->AddText(ImVec2(row_pos.x + 30.0f * scale_, row_pos.y + 3.5f * scale_),
+                    list_dl->AddText(ImVec2(row_pos.x + 30.0f * scale_, row_pos.y + 3.5f * scale_),
                                        IM_COL32(28, 28, 30, 255), title.c_str());
                     title_w = ImGui::CalcTextSize(title.c_str()).x;
                 }
 
                 std::string pkg_paren = " (" + pkg + ")";
                 if (font_caption_) {
-                    draw_list->AddText(font_caption_, font_cap_size, ImVec2(row_pos.x + 30.0f * scale_ + title_w + 6.0f * scale_, row_pos.y + 5.5f * scale_),
+                    list_dl->AddText(font_caption_, font_cap_size, ImVec2(row_pos.x + 30.0f * scale_ + title_w + 6.0f * scale_, row_pos.y + 5.5f * scale_),
                                        IM_COL32(142, 142, 147, 255), pkg_paren.c_str());
                 } else {
-                    draw_list->AddText(ImVec2(row_pos.x + 30.0f * scale_ + title_w + 6.0f * scale_, row_pos.y + 5.5f * scale_),
+                    list_dl->AddText(ImVec2(row_pos.x + 30.0f * scale_ + title_w + 6.0f * scale_, row_pos.y + 5.5f * scale_),
                                        IM_COL32(142, 142, 147, 255), pkg_paren.c_str());
                 }
 
@@ -2831,6 +2865,7 @@ void GuiApp::renderRightInspector(float width, float height) {
 
             float list_h = height - 128.0f * scale_;
             ImGui::BeginChild("##FileList", ImVec2(width - 24.0f * scale_, list_h), false);
+            ImDrawList* list_dl = ImGui::GetWindowDrawList();   // the child's: rows clip to the list
             float row_w = width - 24.0f * scale_;
             for (size_t i = 0; i < remote_entries_.size(); ++i) {
                 const DirEntry& e = remote_entries_[i];
@@ -2858,18 +2893,18 @@ void GuiApp::renderRightInspector(float width, float height) {
                 float icon_sz = 18.0f * scale_;
                 ImVec2 icon_tl(row_pos.x + 2.0f * scale_, row_pos.y + (row_h - icon_sz) * 0.5f);
                 if (e.isDirectory || e.isLink) {
-                    Icons::drawFolder(draw_list, icon_tl, icon_sz, IM_COL32(0, 122, 255, 255));
+                    Icons::drawFolder(list_dl, icon_tl, icon_sz, IM_COL32(0, 122, 255, 255));
                 } else if (is_apk) {
-                    draw_list->AddRectFilled(icon_tl, ImVec2(icon_tl.x + icon_sz, icon_tl.y + icon_sz), IM_COL32(52, 199, 89, 255), 4.0f * scale_);
-                    draw_list->AddText(ImVec2(icon_tl.x + 4.0f * scale_, icon_tl.y + 1.0f * scale_), IM_COL32(255, 255, 255, 255), "A");
+                    list_dl->AddRectFilled(icon_tl, ImVec2(icon_tl.x + icon_sz, icon_tl.y + icon_sz), IM_COL32(52, 199, 89, 255), 4.0f * scale_);
+                    list_dl->AddText(ImVec2(icon_tl.x + 4.0f * scale_, icon_tl.y + 1.0f * scale_), IM_COL32(255, 255, 255, 255), "A");
                 } else if (is_img) {
-                    Icons::drawCamera(draw_list, icon_tl, icon_sz, IM_COL32(175, 82, 222, 255));
+                    Icons::drawCamera(list_dl, icon_tl, icon_sz, IM_COL32(175, 82, 222, 255));
                 } else {
-                    Icons::drawFile(draw_list, icon_tl, icon_sz, IM_COL32(140, 140, 145, 255));
+                    Icons::drawFile(list_dl, icon_tl, icon_sz, IM_COL32(140, 140, 145, 255));
                 }
 
                 // Name, then size right-aligned for files
-                draw_list->AddText(ImVec2(row_pos.x + 28.0f * scale_, row_pos.y + 4.0f * scale_),
+                list_dl->AddText(ImVec2(row_pos.x + 28.0f * scale_, row_pos.y + 4.0f * scale_),
                                    IM_COL32(30, 30, 34, 255), e.name.c_str());
                 if (!e.isDirectory && font_caption_) {
                     char size_buf[32];
@@ -2878,7 +2913,7 @@ void GuiApp::renderRightInspector(float width, float height) {
                     else if (e.size >= 1024) snprintf(size_buf, sizeof(size_buf), "%lld KB", e.size / 1024);
                     else snprintf(size_buf, sizeof(size_buf), "%lld B", e.size);
                     float tw = font_caption_->CalcTextSizeA(12.0f * scale_, FLT_MAX, 0.0f, size_buf).x;
-                    draw_list->AddText(font_caption_, 12.0f * scale_,
+                    list_dl->AddText(font_caption_, 12.0f * scale_,
                                        ImVec2(row_pos.x + row_w - tw - 6.0f * scale_, row_pos.y + 6.0f * scale_),
                                        IM_COL32(142, 142, 147, 255), size_buf);
                 }
