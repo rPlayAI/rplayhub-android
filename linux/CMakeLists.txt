@@ -55,6 +55,7 @@ set(SOURCES
     src/protocol/control_messages.cc
     src/video/video_decoder.cc
     src/video/stream_recorder.cc
+    src/audio/audio_player.cc
     src/session/agent_session.cc
     src/session/app_catalog.cc
     src/util/png_decode.cc
@@ -82,10 +83,12 @@ add_executable(test_session
     src/protocol/control_messages.cc
     src/video/video_decoder.cc
     src/video/stream_recorder.cc
+    src/audio/audio_player.cc
     src/session/agent_session.cc
 )
 
 target_link_libraries(test_session PRIVATE
+    PkgConfig::SDL2
     PkgConfig::AVCODEC
     PkgConfig::AVFORMAT
     PkgConfig::SWSCALE

@@ -5,6 +5,7 @@
 #include "adb/adb_client.h"
 #include "video/video_decoder.h"
 #include "video/stream_recorder.h"
+#include "audio/audio_player.h"
 #include "protocol/control_messages.h"
 #include <string>
 #include <vector>
@@ -33,6 +34,7 @@ public:
         int max_h = 2400;
         std::string codec = "avc";  // agent --codec: avc, hevc, vp8, vp9, av1
         std::string decoder;        // FFmpeg decoder name; empty = generic
+        bool audio = true;          // forward device audio once the session is up (API 31+)
     };
 
     bool start(const Options& options);
@@ -45,6 +47,12 @@ public:
 
     VideoDecoder& getDecoder() { return decoder_; }
     StreamRecorder& getRecorder() { return recorder_; }
+    // Device audio through the host's speakers. Works any time while RUNNING on API 31+;
+    // the agent starts and stops capture by control message.
+    void setAudioForwarding(bool enabled);
+    bool isAudioForwarding() const { return audio_enabled_.load(); }
+    bool hasAudioChannel() const { return audio_socket_.isValid(); }
+    const AudioPlayer* getAudioPlayer() const { return audio_player_.get(); }
     // Codec the agent reported in the channel header ("h264", "hevc"); empty until RUNNING.
     std::string getCodecName() const;
 
@@ -79,7 +87,9 @@ private:
 
     TCPSocket video_socket_;
     TCPSocket control_socket_;
-    TCPSocket audio_socket_; // Parked to keep agent audio writer happy
+    TCPSocket audio_socket_; // Opened by the agent on API 31+; read by audio_player_ when forwarding
+    std::unique_ptr<AudioPlayer> audio_player_;
+    std::atomic<bool> audio_enabled_{false};
     std::unique_ptr<TCPSocket> shell_socket_;
     std::string socket_name_;
 

@@ -77,6 +77,9 @@ public:
     static std::vector<uint8_t> startVideoStream(int32_t displayId, int32_t width, int32_t height);
     static std::vector<uint8_t> stopVideoStream(int32_t displayId = 0);
 
+    static std::vector<uint8_t> startAudioStream();
+    static std::vector<uint8_t> stopAudioStream();
+
     static std::vector<uint8_t> startClipboardSync(int32_t maxSyncedLength, const std::string& text);
     static std::vector<uint8_t> stopClipboardSync();
 

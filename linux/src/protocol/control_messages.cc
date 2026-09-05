@@ -10,6 +10,8 @@ constexpr int32_t TYPE_SET_DEVICE_ORIENTATION = 4;
 constexpr int32_t TYPE_SET_MAX_VIDEO_RESOLUTION = 5;
 constexpr int32_t TYPE_START_VIDEO_STREAM = 6;
 constexpr int32_t TYPE_STOP_VIDEO_STREAM = 7;
+constexpr int32_t TYPE_START_AUDIO_STREAM = 8;
+constexpr int32_t TYPE_STOP_AUDIO_STREAM = 9;
 constexpr int32_t TYPE_START_CLIPBOARD_SYNC = 10;
 constexpr int32_t TYPE_STOP_CLIPBOARD_SYNC = 11;
 constexpr int32_t TYPE_DISPLAY_CONFIGURATION_REQUEST = 20;
@@ -81,6 +83,18 @@ std::vector<uint8_t> ControlMessages::stopVideoStream(int32_t displayId) {
     Base128Writer w;
     w.writeInt32(TYPE_STOP_VIDEO_STREAM);
     w.writeInt32(displayId);
+    return w.data();
+}
+
+std::vector<uint8_t> ControlMessages::startAudioStream() {
+    Base128Writer w;
+    w.writeInt32(TYPE_START_AUDIO_STREAM);
+    return w.data();
+}
+
+std::vector<uint8_t> ControlMessages::stopAudioStream() {
+    Base128Writer w;
+    w.writeInt32(TYPE_STOP_AUDIO_STREAM);
     return w.data();
 }
 

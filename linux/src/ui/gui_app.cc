@@ -35,7 +35,7 @@ GuiApp::~GuiApp() {
 }
 
 bool GuiApp::init() {
-    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER | SDL_INIT_GAMECONTROLLER) != 0) {
+    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_TIMER | SDL_INIT_GAMECONTROLLER) != 0) {
         std::cerr << "Error: SDL_Init: " << SDL_GetError() << "\n";
         return false;
     }
@@ -816,7 +816,13 @@ void GuiApp::run() {
                     std::cerr << "stats: decoded " << std::fixed << std::setprecision(1)
                               << (decoded - stats_decoded_last_) / dt << " fps, rendered "
                               << (frame_count_ - stats_rendered_last_) / dt << " fps, texture "
-                              << tex_w_ << "x" << tex_h_ << "\n";
+                              << tex_w_ << "x" << tex_h_;
+                    if (session_ && session_->getAudioPlayer()) {
+                        const AudioPlayer* ap = session_->getAudioPlayer();
+                        std::cerr << ", audio " << ap->packetsReceived() << " pkts, peak "
+                                  << std::setprecision(0) << ap->peakDb() << " dB, dropped " << ap->packetsDropped();
+                    }
+                    std::cerr << "\n";
                 }
                 stats_last_ = t;
                 stats_decoded_last_ = decoded;
@@ -1010,6 +1016,18 @@ void GuiApp::renderLeftSidebar(float width, float height) {
                 if (session_ && session_serial_ == serial) stopMirroring();
                 jobs_.run([this, serial] { adb_.disconnectNetwork(serial); },
                           [this] { pollDevices(); });
+            }
+            ImGui::Separator();
+            {
+                bool on = session_ && session_serial_ == dev.serial && session_->isAudioForwarding();
+                bool live = session_ && session_serial_ == dev.serial && session_->getState() == SessionState::RUNNING;
+                if (ImGui::MenuItem("Forward Audio", nullptr, on || (!live && session_options_.audio))) {
+                    session_options_.audio = !(on || (!live && session_options_.audio));
+                    if (live) {
+                        if (!session_->hasAudioChannel()) showToast("No audio channel: the device is below Android 12");
+                        session_->setAudioForwarding(session_options_.audio);
+                    }
+                }
             }
             ImGui::Separator();
             if (MenuItemWithIcon("Take Screenshot", nullptr, Icons::drawCamera, scale_)) {
