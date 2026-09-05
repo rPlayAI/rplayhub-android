@@ -12,6 +12,9 @@ int main(int argc, char* argv[]) {
     bool stats = false;
     int tab = -1;
     bool clipboard = true;
+    bool desktop = false;
+    bool pop_out = false;
+    std::string app_package;
     rplayhub::AgentSession::Options opts;
     if (const char* env = std::getenv("RPLAYHUB_DECODER")) opts.decoder = env;
 
@@ -49,6 +52,12 @@ int main(int argc, char* argv[]) {
             }
         } else if (arg == "--no-audio") {
             opts.audio = false;
+        } else if (arg == "--desktop") {
+            desktop = true;
+        } else if (arg == "--pop-out") {
+            pop_out = true;
+        } else if (arg == "--app" && i + 1 < argc) {
+            app_package = argv[++i];
         } else if (arg == "--no-clipboard") {
             clipboard = false;
         } else if (arg == "--screen-off") {
@@ -79,11 +88,14 @@ int main(int argc, char* argv[]) {
                          "  -v, --verbose         echo the device agent's log to stderr\n"
                          "      --tab <name>      inspector tab to open with: info, apps, files, logcat\n"
                          "      --no-audio        do not forward device audio (Android 12+ devices)\n"
+                         "      --desktop         once mirroring, open Android's desktop in a window (Desktop Mode)\n"
+                         "      --app <package>   once mirroring, open that app in a window of its own\n"
+                         "      --pop-out         once mirroring, open the phone's screen in a bare window too\n"
                          "      --no-clipboard    do not sync the clipboard with the device\n"
                          "      --screen-off      turn the phone's screen off while mirroring\n"
                          "      --codec <c>       agent video codec: avc (default), hevc, vp8, vp9, av1\n"
                          "      --decoder <name>  FFmpeg decoder, e.g. h264_v4l2m2m (default: generic), or RPLAYHUB_DECODER\n"
-                         "      --max-size WxH    agent frame size cap (default 1080x2400)\n";
+                         "      --max-size WxH    agent frame size cap per dimension (default 1920x2400; 720x1600 for a Pi)\n";
             return 0;
         }
     }
@@ -97,6 +109,9 @@ int main(int argc, char* argv[]) {
     if (tab >= 0) app.setInspectorTab(tab);
     app.setSessionOptions(opts);
     app.setClipboardSyncDefault(clipboard);
+    app.setStartupDesktop(desktop);
+    app.setStartupApp(app_package);
+    app.setStartupPopOut(pop_out);
 
     if (!app.init()) {
         std::cerr << "Failed to initialize rPlayHub Linux GUI\n";

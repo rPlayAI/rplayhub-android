@@ -13,6 +13,8 @@
 #include <atomic>
 #include <mutex>
 #include <functional>
+#include <map>
+#include <memory>
 
 namespace rplayhub {
 
@@ -30,8 +32,8 @@ public:
     ~AgentSession();
 
     struct Options {
-        int max_w = 1080;           // agent --max_size
-        int max_h = 2400;
+        int max_w = 1920;           // agent --max_size, applied per dimension: a phone streams at
+        int max_h = 2400;           // (nearly) native size and a 1920x1080 desktop display in full.
         std::string codec = "avc";  // agent --codec: avc, hevc, vp8, vp9, av1
         std::string decoder;        // FFmpeg decoder name; empty = generic
         bool audio = true;          // forward device audio once the session is up (API 31+)
@@ -48,7 +50,8 @@ public:
 
     // What the agent sends unprompted on the control channel, queued for the UI thread.
     struct AgentEvent {
-        enum Kind { CLIPBOARD_CHANGED, DISPLAYS, DISPLAY_ADDED_OR_CHANGED, DISPLAY_REMOVED, ERROR_RESPONSE };
+        enum Kind { CLIPBOARD_CHANGED, DISPLAYS, DISPLAY_ADDED_OR_CHANGED, DISPLAY_REMOVED, ERROR_RESPONSE,
+                    NEW_DISPLAY_STREAM };   // first video packet of a display id we had not seen
         Kind kind = ERROR_RESPONSE;
         std::string text;                          // clipboard text / error message
         DisplayDescriptor display;                 // DISPLAY_ADDED_OR_CHANGED / DISPLAY_REMOVED
@@ -65,6 +68,13 @@ public:
     const std::string& getSerial() const { return serial_; }
 
     VideoDecoder& getDecoder() { return decoder_; }
+    // Decoder of a virtual display's stream (nullptr until its first packet). Display 0 is getDecoder().
+    VideoDecoder* decoderFor(int32_t display_id);
+    void forgetDisplay(int32_t display_id);
+    // Virtual displays (rPlayHub agent addition). The new display announces itself by its
+    // first video packet: a NEW_DISPLAY_STREAM event with the id and size.
+    void requestNewDisplay(int32_t width, int32_t height, int32_t dpi, bool decorations);
+    void destroyDisplay(int32_t display_id);
     StreamRecorder& getRecorder() { return recorder_; }
     // Device audio through the host's speakers. Works any time while RUNNING on API 31+;
     // the agent starts and stops capture by control message.
@@ -76,9 +86,9 @@ public:
     std::string getCodecName() const;
 
     // Input injection
-    void sendTouch(int x, int y, int action);
+    void sendTouch(int x, int y, int action, int32_t display_id = 0);
     // Mouse wheel at (x, y): one unit of hscroll / vscroll per notch.
-    void sendScroll(int x, int y, float hscroll, float vscroll);
+    void sendScroll(int x, int y, float hscroll, float vscroll, int32_t display_id = 0);
     void sendKey(int keycode, int action = KeyAction::DOWN_AND_UP);
     void sendText(const std::string& text);
     void setOrientation(int quadrants);
@@ -112,6 +122,8 @@ private:
 
     AdbClient adb_;
     VideoDecoder decoder_;
+    std::mutex displays_mutex_;
+    std::map<int32_t, std::unique_ptr<VideoDecoder>> display_decoders_;
     StreamRecorder recorder_;
     std::string codec_name_;
 

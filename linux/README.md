@@ -113,7 +113,7 @@ Options:
 | `--stats` | | Print decoded / rendered frames per second to stderr every 5 s |
 | `--codec <c>` | | Video codec the agent encodes: `avc` (default), `hevc`, `vp8`, `vp9`, `av1` |
 | `--decoder <name>` | `RPLAYHUB_DECODER` | FFmpeg decoder to use, e.g. `h264_v4l2m2m` on a Raspberry Pi 4; default is the generic software decoder. A decoder that is missing or fails to open falls back to the generic one (see stderr) |
-| `--max-size WxH` | | Frame size cap passed to the agent (default `1080x2400`); `720x1600` halves the decode work |
+| `--max-size WxH` | | Frame size cap per dimension passed to the agent (default `1920x2400`); `720x1600` halves the decode work on a Pi |
 | | `RPLAYHUB_AGENT_DIR` | Directory holding the device agent (see above) |
 
 Run from the repository root so the agent and `linux/fonts/` are found (Roboto is the fallback).

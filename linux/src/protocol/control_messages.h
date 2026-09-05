@@ -84,6 +84,12 @@ public:
     static std::vector<uint8_t> stopClipboardSync();
 
     static std::vector<uint8_t> displayConfigurationRequest(int32_t requestId = 1);
+
+    // rPlayHub agent additions (scrcpy's --new-display): a standalone virtual display the agent
+    // starts streaming at once; its id shows up in the video packet headers. decorations = the
+    // Android taskbar and launcher (Desktop Mode); off for a single app's window.
+    static std::vector<uint8_t> createNewDisplay(int32_t width, int32_t height, int32_t dpi, bool decorations);
+    static std::vector<uint8_t> destroyNewDisplay(int32_t displayId);
 };
 
 } // namespace rplayhub
