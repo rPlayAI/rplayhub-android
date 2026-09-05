@@ -14,6 +14,8 @@
 #include <cmath>
 #include <cstring>
 #include <csignal>
+#include <ctime>
+#include <sys/stat.h>
 #include <atomic>
 #include <unistd.h>
 #include <sys/wait.h>
@@ -575,6 +577,78 @@ void GuiApp::restartSession() {
     session_active_ = true;
 }
 
+std::string GuiApp::mediaDir(const char* subdir) {
+    const char* home = std::getenv("HOME");
+    std::string base = home ? home : ".";
+    std::string dir = base + "/" + subdir;
+    if (::access(dir.c_str(), W_OK) == 0) return dir;
+    if (::mkdir(dir.c_str(), 0755) == 0) return dir;
+    return base;
+}
+
+std::string GuiApp::timestampName(const std::string& model, const char* ext) {
+    std::time_t t = std::time(nullptr);
+    char stamp[32];
+    std::strftime(stamp, sizeof(stamp), "%Y-%m-%d_%H-%M-%S", std::localtime(&t));
+    std::string name = model.empty() ? "Android" : model;
+    for (char& c : name) if (c == ' ' || c == '/') c = '_';
+    return "rPlayHub_" + name + "_" + stamp + ext;
+}
+
+// The device's own screenshot (screencap over exec-out) to ~/Pictures.
+void GuiApp::takeScreenshot() {
+    if (selected_serial_.empty()) {
+        showToast("Select a device first");
+        return;
+    }
+    std::string serial = selected_serial_;
+    std::string model = (selected_device_idx_ >= 0) ? devices_[selected_device_idx_].model : "";
+    std::string dest = mediaDir("Pictures") + "/" + timestampName(model, ".png");
+    struct Result { bool ok = false; std::string err; };
+    jobs_.run<Result>(
+        [this, serial, dest] {
+            Result r;
+            std::vector<uint8_t> png;
+            if (!adb_.execOut(serial, "screencap -p", png) || png.size() < 8 || png[1] != 'P') {
+                r.err = "screencap failed";
+                return r;
+            }
+            FILE* fp = fopen(dest.c_str(), "wb");
+            if (!fp) { r.err = "cannot write " + dest; return r; }
+            r.ok = fwrite(png.data(), 1, png.size(), fp) == png.size();
+            fclose(fp);
+            return r;
+        },
+        [this, dest](Result r) {
+            showToast(r.ok ? "Screenshot saved to " + dest : "Screenshot failed: " + r.err, 6);
+        });
+}
+
+// Host-side recording of the mirror stream to ~/Videos, started and stopped from the same button.
+void GuiApp::toggleRecording() {
+    if (!session_ || session_->getState() != SessionState::RUNNING) {
+        showToast("Start mirroring first");
+        return;
+    }
+    StreamRecorder& rec = session_->getRecorder();
+    if (rec.isRecording()) {
+        std::string path = rec.path();
+        bool kept = rec.stop();
+        showToast(kept ? "Recording saved to " + path : "Recording discarded: no frames arrived", 6);
+        return;
+    }
+    std::string model = (selected_device_idx_ >= 0) ? devices_[selected_device_idx_].model : "";
+    std::string dest = mediaDir("Videos") + "/" + timestampName(model, ".mp4");
+    int w = live_frame_.width, h = live_frame_.height;
+    if (!rec.start(dest, session_->getCodecName(), w, h)) {
+        showToast("Recording failed: " + rec.error(), 8);
+        return;
+    }
+    recording_started_ = std::chrono::steady_clock::now();
+    session_->requestKeyframe();
+    showToast("Recording to " + dest, 4);
+}
+
 // Called every frame. A session that ended on its own (USB unplugged, agent killed, adb
 // restarted) is restarted with backoff once the device is listed as ready again; a session the
 // user stopped stays stopped.
@@ -939,13 +1013,11 @@ void GuiApp::renderLeftSidebar(float width, float height) {
             }
             ImGui::Separator();
             if (MenuItemWithIcon("Take Screenshot", nullptr, Icons::drawCamera, scale_)) {
-                std::string path = "/tmp/screenshot_" + dev.serial + ".png";
-                if (adb_.takeScreenshot(dev.serial, path)) {
-                    showToast("Screenshot saved to " + path);
-                }
+                takeScreenshot();
             }
-            if (MenuItemWithIcon("Record Screen", nullptr, Icons::drawRecord, scale_)) {
-                showToast("Recording started...");
+            bool recording = session_ && session_->getRecorder().isRecording();
+            if (MenuItemWithIcon(recording ? "Stop Recording" : "Record Screen", nullptr, Icons::drawRecord, scale_)) {
+                toggleRecording();
             }
             ImGui::Separator();
             if (MenuItemWithIcon("Back", nullptr, Icons::drawBack, scale_)) {
@@ -1389,16 +1461,10 @@ void GuiApp::renderControlStrip(ImVec2 pos, float width) {
         { "##VolUp", Icons::drawVolumeUp, "Volume Up", [this]() { if (session_) session_->sendKey(AndroidKey::VOLUME_UP); } },
         { "##Power", Icons::drawPower, "Power Button", [this]() { if (session_) session_->sendKey(AndroidKey::POWER); } },
         { "##Rotate", Icons::drawRotate, "Rotate Screen", [this]() { if (session_) session_->setOrientation(-1); } },
-        { "##Camera", Icons::drawCamera, "Take Screenshot", [this]() {
-            if (selected_device_idx_ >= 0) {
-                std::string path = "/tmp/screenshot.png";
-                if (adb_.takeScreenshot(devices_[selected_device_idx_].serial, path)) {
-                    showToast("Saved " + path);
-                }
-            }
-        }},
-        { "##Record", Icons::drawRecord, "Record Screen", [this]() { showToast("Record toggled"); } }
+        { "##Camera", Icons::drawCamera, "Take Screenshot", [this]() { takeScreenshot(); } },
+        { "##Record", Icons::drawRecord, "Record Screen", [this]() { toggleRecording(); } }
     };
+    bool recording = session_ && session_->getRecorder().isRecording();
 
     float btn_w = 38.0f * scale_;
     float btn_h = 34.0f * scale_;
@@ -1408,6 +1474,25 @@ void GuiApp::renderControlStrip(ImVec2 pos, float width) {
 
     for (size_t i = 0; i < buttons.size(); ++i) {
         ImGui::SetCursorScreenPos(ImVec2(start_x + i * spacing, pos.y + 8.0f * scale_));
+        bool is_record = (i == buttons.size() - 1);
+        if (is_record && recording) {
+            // Red dot while recording, with the elapsed time and whether frames are flowing yet.
+            ImVec2 c(start_x + i * spacing + btn_w * 0.5f, pos.y + 8.0f * scale_ + btn_h * 0.5f);
+            draw_list->AddCircleFilled(c, 6.0f * scale_, IM_COL32(255, 59, 48, 255));
+            if (FlatNavButton(buttons[i].id, [](ImDrawList*, ImVec2, float, ImU32) {}, ImVec2(btn_w, btn_h), "Stop Recording", scale_)) {
+                buttons[i].action();
+            }
+            StreamRecorder& rec = session_->getRecorder();
+            int secs = static_cast<int>(rec.seconds());
+            char label[48];
+            if (rec.hasStarted()) snprintf(label, sizeof(label), "REC %d:%02d", secs / 60, secs % 60);
+            else snprintf(label, sizeof(label), "REC waiting for keyframe");
+            if (font_caption_) {
+                draw_list->AddText(font_caption_, 12.0f * scale_, ImVec2(c.x + 14.0f * scale_, c.y - 7.0f * scale_),
+                                   IM_COL32(255, 59, 48, 255), label);
+            }
+            continue;
+        }
         if (FlatNavButton(buttons[i].id, buttons[i].draw_icon, ImVec2(btn_w, btn_h), buttons[i].tooltip, scale_)) {
             buttons[i].action();
         }

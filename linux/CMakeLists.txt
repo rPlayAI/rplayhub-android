@@ -54,6 +54,7 @@ set(SOURCES
     src/protocol/base128.cc
     src/protocol/control_messages.cc
     src/video/video_decoder.cc
+    src/video/stream_recorder.cc
     src/session/agent_session.cc
     src/session/app_catalog.cc
     src/util/png_decode.cc
@@ -80,6 +81,7 @@ add_executable(test_session
     src/protocol/base128.cc
     src/protocol/control_messages.cc
     src/video/video_decoder.cc
+    src/video/stream_recorder.cc
     src/session/agent_session.cc
 )
 

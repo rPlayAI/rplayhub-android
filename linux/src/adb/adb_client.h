@@ -76,9 +76,6 @@ public:
     bool connectNetwork(const std::string& address, std::string& out_msg);
     bool disconnectNetwork(const std::string& address);
 
-    // Take screenshot to local PNG
-    bool takeScreenshot(const std::string& serial, const std::string& local_png_path);
-
     // Install an APK: pushed to /data/local/tmp, `pm install -r`, removed again.
     bool installApk(const std::string& serial, const std::string& apk_path, std::string& out_err);
 
