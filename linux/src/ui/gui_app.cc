@@ -553,6 +553,7 @@ void GuiApp::startMirroring(int device_idx) {
     session_->start(session_options_);
     session_started_ = std::chrono::steady_clock::now();
     session_active_ = true;
+    clipboard_started_ = false;
     showToast("Connecting to " + dev.displayName() + "...");
 }
 
@@ -575,6 +576,7 @@ void GuiApp::restartSession() {
     session_->start(session_options_);
     session_started_ = std::chrono::steady_clock::now();
     session_active_ = true;
+    clipboard_started_ = false;
 }
 
 std::string GuiApp::mediaDir(const char* subdir) {
@@ -647,6 +649,64 @@ void GuiApp::toggleRecording() {
     recording_started_ = std::chrono::steady_clock::now();
     session_->requestKeyframe();
     showToast("Recording to " + dest, 4);
+}
+
+// Device-side notifications, drained on the UI thread once per frame.
+void GuiApp::pumpAgentEvents() {
+    if (!session_) return;
+    for (const auto& ev : session_->takeEvents()) {
+        switch (ev.kind) {
+        case AgentSession::AgentEvent::CLIPBOARD_CHANGED:
+            if (clipboard_sync_ && !ev.text.empty() && ev.text != last_clipboard_text_) {
+                last_clipboard_text_ = ev.text;
+                SDL_SetClipboardText(ev.text.c_str());
+                std::cerr << "clipboard: " << ev.text.size() << " chars from the device\n";
+                showToast("Clipboard: " + std::to_string(ev.text.size()) + " chars from the device", 2);
+            }
+            break;
+        case AgentSession::AgentEvent::ERROR_RESPONSE:
+            showToast("Agent: " + ev.text, 6);
+            break;
+        default:
+            break;   // display events are for the virtual-display windows
+        }
+    }
+}
+
+void GuiApp::pollHostClipboard() {
+    if (!session_ || session_->getState() != SessionState::RUNNING) {
+        clipboard_started_ = false;
+        return;
+    }
+    if (!clipboard_sync_) return;
+    auto now = std::chrono::steady_clock::now();
+    if (clipboard_started_ && now - last_clipboard_poll_ < std::chrono::seconds(1)) return;
+    last_clipboard_poll_ = now;
+
+    std::string text;
+    if (SDL_HasClipboardText()) {
+        char* t = SDL_GetClipboardText();
+        if (t) { text = t; SDL_free(t); }
+    }
+    if (!clipboard_started_) {
+        // First message of the session: sets the device clipboard and subscribes to its changes.
+        clipboard_started_ = true;
+        last_clipboard_text_ = text;
+        session_->syncClipboard(text);
+        return;
+    }
+    if (text.empty() || text == last_clipboard_text_) return;
+    last_clipboard_text_ = text;
+    session_->syncClipboard(text);
+    std::cerr << "clipboard: " << text.size() << " chars to the device\n";
+}
+
+void GuiApp::setClipboardSync(bool on) {
+    clipboard_sync_ = on;
+    if (!on && session_) {
+        session_->stopClipboardSync();
+        clipboard_started_ = false;
+    }
 }
 
 // Called every frame. A session that ended on its own (USB unplugged, agent killed, adb
@@ -733,6 +793,8 @@ void GuiApp::run() {
             last_device_poll_ = now;
         }
         maintainSession();
+        pumpAgentEvents();
+        pollHostClipboard();
 
         // Start the Dear ImGui frame
         ImGui_ImplSDLRenderer2_NewFrame();
@@ -1019,6 +1081,21 @@ void GuiApp::renderLeftSidebar(float width, float height) {
             }
             ImGui::Separator();
             {
+                bool live = session_ && session_serial_ == dev.serial && session_->getState() == SessionState::RUNNING;
+                bool paused = live && session_->isDisplayPaused();
+                if (live && MenuItemWithIcon(paused ? "Resume Display" : "Pause Display", nullptr, Icons::drawScreen, scale_)) {
+                    session_->setDisplayPaused(!paused);
+                    showToast(paused ? "Display resumed" : "Display paused: no frames, no bandwidth");
+                }
+                if (ImGui::MenuItem("Synchronize Clipboard", nullptr, clipboard_sync_)) {
+                    setClipboardSync(!clipboard_sync_);
+                }
+                if (ImGui::MenuItem("Turn Screen Off While Mirroring", nullptr, session_options_.turn_screen_off)) {
+                    session_options_.turn_screen_off = !session_options_.turn_screen_off;
+                    if (live) showToast("Applies when mirroring is restarted (Reconnect)", 5);
+                }
+            }
+            {
                 bool on = session_ && session_serial_ == dev.serial && session_->isAudioForwarding();
                 bool live = session_ && session_serial_ == dev.serial && session_->getState() == SessionState::RUNNING;
                 if (ImGui::MenuItem("Forward Audio", nullptr, on || (!live && session_options_.audio))) {
@@ -1151,6 +1228,7 @@ void GuiApp::renderCenterStage(float start_x, float width, float height) {
     if (session_ && font_caption_) {
         std::string status = session_->getStatusMessage();
         if (reconnect_pending_) status += " (reconnecting)";
+        if (session_->isDisplayPaused()) status += " (paused)";
         SessionState st = session_->getState();
         ImU32 col = (st == SessionState::RUNNING) ? IM_COL32(52, 160, 90, 255)
                   : (st == SessionState::FAILED)  ? IM_COL32(200, 60, 60, 255)

@@ -30,6 +30,7 @@ public:
     void setInspectorTab(int tab) { inspector_tab_ = tab; }
     // Agent / decoder settings used for every mirror session started from the UI.
     void setSessionOptions(const AgentSession::Options& o) { session_options_ = o; }
+    void setClipboardSyncDefault(bool on) { clipboard_sync_ = on; }
 
     bool init();
     void run();
@@ -93,6 +94,13 @@ private:
     std::chrono::steady_clock::time_point session_started_;
     bool connect_inflight_ = false;
     std::chrono::steady_clock::time_point recording_started_;
+
+    // Clipboard sync (both ways, on by default): device changes land on the host clipboard,
+    // host changes are pushed on a one-second poll (SDL has no reliable clipboard event on X11).
+    bool clipboard_sync_ = true;
+    std::string last_clipboard_text_;
+    std::chrono::steady_clock::time_point last_clipboard_poll_;
+    bool clipboard_started_ = false;
 
     // UI state
     char search_filter_[128] = {0};
@@ -158,6 +166,9 @@ private:
     void restartSession();
     void maintainSession();
     void takeScreenshot();
+    void pumpAgentEvents();
+    void pollHostClipboard();
+    void setClipboardSync(bool on);
     void toggleRecording();
     static std::string mediaDir(const char* subdir);
     static std::string timestampName(const std::string& model, const char* ext);
