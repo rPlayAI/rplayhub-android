@@ -21,11 +21,12 @@ When designing the Linux client to match the macOS UI (see the macOS screenshot)
 
 ## Features
 
-- **Menu bar** (Device, View, Window, Help) with the Mac client's commands: mirroring, Desktop Mode, front app on a virtual display, screenshot and recording, the Android keys, Pause Display, Turn Screen Off While Mirroring, Forward Audio, Synchronize Clipboard, network connect, View Screen in 3D, the inspector tabs, pop-out window and Pin on Top.
+- **macOS-style window**: the main window is borderless and draws its own title row, with the traffic lights (close, minimize, zoom), the toolbar, the device pill and the inspector buttons; the strip drags the window, its edges resize it, a double-click zooms. `--system-titlebar` keeps the desktop's own title bar (and a classic menu bar) instead.
+- **⋮ menu** at the top right, like Chrome Remote Desktop's, with the Mac client's commands: mirroring, Desktop Mode, front app on a virtual display, Open Screen in New Window, Pin Window on Top, screenshot and recording, View Screen in 3D, Pause Display, Rotate, Follow Device Rotation, Turn Screen Off While Mirroring, Forward Audio, Synchronize Clipboard, the Android keys, the inspector tabs, network connect, refresh, About and Quit (Ctrl+D Desktop Mode, Ctrl+Q quit).
+- **Phone in its own window** (Open Screen in New Window, `--pop-out`): a bare, rounded window showing nothing but the phone's screen, which the main window's stage then leaves to it ("Bring Back" returns it). When the pointer comes near, the window turns into a normal one like the embedded viewer: light title bar with traffic lights, the phone in its bezel, the control strip; it goes bare again when the pointer leaves. The corners are real on X11 (the window has an alpha channel; the compositor shows the desktop through them), square on Wayland. Desktop Mode and app windows are the same kind of window.
 - **3D device twin** (View ▸ View Screen in 3D, or `--3d`): a phone that turns as the real one turns, driven by the rotation vector sensor over the agent's orientation channel, the live mirror on its face and the Pixel back artwork on its back. Set Facing Me (R) captures the reference pose; touches land through the rotated screen.
 - **3-Pane macOS-Style Interface**:
   - **Left Sidebar**:
-    - macOS traffic lights window controls.
     - Pill-shaped device search bar.
     - Available devices card list with live status indicators (green dot for ready, yellow for unauthorized, red for offline).
     - Device display name and serial/network address.
@@ -69,8 +70,10 @@ When designing the Linux client to match the macOS UI (see the macOS screenshot)
 Debian / Ubuntu / Raspberry Pi OS (Bookworm or later; verified on Ubuntu 22.04 x86_64):
 ```bash
 sudo apt install build-essential cmake pkg-config git \
-     libsdl2-dev libavcodec-dev libavformat-dev libswscale-dev libavutil-dev adb
+     libsdl2-dev libavcodec-dev libavformat-dev libswscale-dev libavutil-dev adb \
+     libx11-dev libgl-dev
 ```
+The last two are optional: they give the pop-out windows their rounded corners on X11 (an ARGB visual chosen through Xlib and GLX); without them the build still works and the corners are square.
 The adb package is `android-tools-adb` on older releases. Add yourself to `plugdev` if adb cannot see a USB phone.
 
 Dear ImGui is fetched automatically at configure time via CMake `FetchContent` (network needed once).
@@ -113,7 +116,14 @@ Options:
 | `-m`, `--mirror` | | Start mirroring immediately |
 | `--serial <s>` | `RPLAYHUB_SERIAL` | Device `--mirror` picks (a USB serial or `ip:port`); default is the first ready device |
 | `-s`, `--scale <f>` | `RPLAYHUB_SCALE` | UI scale factor (auto-detected from the display size) |
-| `--dump-frame <path>` | | Save a BMP of the window once the mirror is showing video, then keep running |
+| `--dump-frame <path>` | | Save a BMP of the window once the mirror is showing video, then keep running (`RPLAYHUB_DUMP_DELAY` seconds after it settles; pop-out windows go to `<path>.display<N>.bmp`) |
+| `--system-titlebar` | | Use the desktop's window title bar and a classic menu bar instead of the borderless macOS-style window |
+| `--pop-out` | | Once mirroring, open the phone's screen in its own bare window |
+| `--desktop`, `--app <pkg>` | | Once mirroring, open Android's desktop / that app on a virtual display in a window of its own |
+| `--3d`, `--no-3d` | | Show the 3D twin once mirroring / do not ask the agent for the orientation channel |
+| `--tab <name>` | | Inspector tab to open with: `info`, `apps`, `files`, `logcat` |
+| `--no-audio`, `--no-clipboard`, `--screen-off` | | Do not forward audio / do not sync the clipboard / turn the phone's screen off while mirroring |
+| `-v`, `--verbose` | | Echo the device agent's log to stderr |
 | `--stats` | | Print decoded / rendered frames per second to stderr every 5 s |
 | `--codec <c>` | | Video codec the agent encodes: `avc` (default), `hevc`, `vp8`, `vp9`, `av1` |
 | `--decoder <name>` | `RPLAYHUB_DECODER` | FFmpeg decoder to use, e.g. `h264_v4l2m2m` on a Raspberry Pi 4; default is the generic software decoder. A decoder that is missing or fails to open falls back to the generic one (see stderr) |

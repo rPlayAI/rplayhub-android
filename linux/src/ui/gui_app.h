@@ -41,6 +41,8 @@ public:
     void setStartupApp(const std::string& package) { startup_app_ = package; }
     void setStartupPopOut(bool on) { startup_pop_out_ = on; }
     void setStartupTwin(bool on) { startup_twin_ = on; }
+    // Keep the desktop's own title bar instead of the macOS-style one drawn in the window.
+    void setSystemTitlebar(bool on) { system_titlebar_ = on; }
 
     bool init();
     void run();
@@ -49,7 +51,15 @@ public:
 private:
     bool auto_mirror_ = false;
     float scale_ = 0.0f;
-    float menu_h_ = 0.0f;                // height of the menu bar this frame
+    float menu_h_ = 0.0f;                // height of the title bar this frame
+    bool system_titlebar_ = false;
+    bool sidebar_hidden_ = false;
+    // Title-bar hit testing for the borderless window: the strip drags the window except over
+    // these widget rectangles (x0, y0, x1, y1 in window pixels), refreshed every frame.
+    std::vector<ImVec4> no_drag_rects_;
+    static SDL_HitTestResult hitTest(SDL_Window* win, const SDL_Point* pt, void* data);
+    void noteNoDrag() { no_drag_rects_.push_back(ImVec4(ImGui::GetItemRectMin().x, ImGui::GetItemRectMin().y, ImGui::GetItemRectMax().x, ImGui::GetItemRectMax().y)); }
+    void renderTrafficLights(ImVec2 pos);
     std::string dump_frame_path_;
     std::chrono::steady_clock::time_point dump_settled_at_;
     std::string preferred_serial_;
@@ -73,6 +83,8 @@ private:
     void buildFonts();
     void ensureGlyphs(const std::string& utf8);
     std::set<ImWchar> extra_codepoints_;
+    std::string font_regular_path_, font_bold_path_, cjk_font_path_;   // for the pop-out chrome
+    int cjk_font_face_ = 0;
     bool fonts_dirty_ = false;
 
     // Font hierarchy
@@ -227,7 +239,9 @@ private:
     void openPhoneWindow();
     void togglePinOnTop();
     void openDisplayWindow(const AgentSession::DisplayDescriptor& d, const PendingDisplay& req);
-    void closeDisplayWindows();
+    void closeDisplayWindows(bool virtual_only = false);
+    DisplayChrome makeChrome();
+    bool phonePoppedOut() const;
     void renderDisplayWindows();
     bool routeEventToDisplayWindows(const SDL_Event& e);
     void pollHostClipboard();
@@ -238,11 +252,12 @@ private:
 
     // Render components
     void renderMenuBar();
+    void renderPrimaryMenuItems();
     void renderLeftSidebar(float width, float height);
     void renderCenterStage(float start_x, float width, float height);
     void renderRightInspector(float width, float height);
 
-    void renderPhoneMockup(ImVec2 center, ImVec2 max_size);
+    void renderPhoneMockup(ImVec2 center, ImVec2 max_size, bool popped_out = false);
     void renderLiveMirror(ImVec2 origin, ImVec2 size, const DecodedFrame& frame);
     void uploadLiveTexture(const DecodedFrame& frame);
     void renderTwin(ImVec2 origin, ImVec2 size, const DecodedFrame& frame);

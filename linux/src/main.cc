@@ -15,6 +15,7 @@ int main(int argc, char* argv[]) {
     bool desktop = false;
     bool pop_out = false;
     bool twin = false;
+    bool system_titlebar = false;
     std::string app_package;
     rplayhub::AgentSession::Options opts;
     if (const char* env = std::getenv("RPLAYHUB_DECODER")) opts.decoder = env;
@@ -57,6 +58,8 @@ int main(int argc, char* argv[]) {
             desktop = true;
         } else if (arg == "--pop-out") {
             pop_out = true;
+        } else if (arg == "--system-titlebar") {
+            system_titlebar = true;
         } else if (arg == "--3d") {
             twin = true;
         } else if (arg == "--no-3d") {
@@ -96,6 +99,7 @@ int main(int argc, char* argv[]) {
                          "      --desktop         once mirroring, open Android's desktop in a window (Desktop Mode)\n"
                          "      --app <package>   once mirroring, open that app in a window of its own\n"
                          "      --pop-out         once mirroring, open the phone's screen in a bare window too\n"
+                         "      --system-titlebar keep the desktop's window title bar instead of the macOS-style one\n"
                          "      --3d              once mirroring, show the 3D twin (turns with the phone's gyroscope)\n"
                          "      --no-3d           do not ask the agent for the orientation channel\n"
                          "      --no-clipboard    do not sync the clipboard with the device\n"
@@ -120,6 +124,7 @@ int main(int argc, char* argv[]) {
     app.setStartupApp(app_package);
     app.setStartupPopOut(pop_out);
     app.setStartupTwin(twin);
+    app.setSystemTitlebar(system_titlebar);
 
     if (!app.init()) {
         std::cerr << "Failed to initialize rPlayHub Linux GUI\n";

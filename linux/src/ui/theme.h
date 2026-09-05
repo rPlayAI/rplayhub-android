@@ -65,7 +65,7 @@ namespace Theme {
         colors[ImGuiCol_TextDisabled]          = ColorTextSecondary;
         colors[ImGuiCol_WindowBg]              = ColorBgWindow;
         colors[ImGuiCol_ChildBg]               = ColorBgStage;
-        colors[ImGuiCol_PopupBg]               = ImVec4(1.00f, 1.00f, 1.00f, 0.98f);
+        colors[ImGuiCol_PopupBg]               = ImVec4(1.00f, 1.00f, 1.00f, 1.00f);
         colors[ImGuiCol_Border]                = ColorBorder;
         colors[ImGuiCol_BorderShadow]          = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
         colors[ImGuiCol_FrameBg]               = ImVec4(1.00f, 1.00f, 1.00f, 1.00f);

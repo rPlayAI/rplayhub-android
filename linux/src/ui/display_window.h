@@ -8,11 +8,28 @@
 
 #include "session/agent_session.h"
 #include "video/video_decoder.h"
+#include "imgui.h"
 #include <SDL2/SDL.h>
+#include <chrono>
 #include <cstdint>
+#include <functional>
 #include <string>
 
 namespace rplayhub {
+
+// The buttons on the bar that appears along the bottom of a bare window when the pointer
+// comes near; the app decides what each does.
+enum class ChromeAction { Back, Home, Recents, VolumeDown, VolumeUp, Power, Rotate, Screenshot, Record };
+
+// What the hover chrome (title bar, bottom toolbar) needs from the app.
+struct DisplayChrome {
+    std::string regular_font, bold_font;   // TTF paths; empty = ImGui's bitmap font
+    std::string cjk_font;                  // merged in for title glyphs outside Latin
+    int cjk_face = 0;
+    float scale = 1.0f;
+    std::function<void(ChromeAction)> on_action;
+    std::function<bool()> recording;
+};
 
 class DisplayWindow {
 public:
@@ -29,6 +46,11 @@ public:
     const std::string& package() const { return package_; }
     void setPackage(const std::string& p) { package_ = p; }
     void setTitle(const std::string& title);
+    // Give the window its hover chrome: the macOS-style title bar and the bottom toolbar,
+    // shown while the pointer is in or near the window. Without it the window is picture only.
+    void setChrome(const DisplayChrome& chrome);
+    void requestClose(const char* why);
+    const std::string& closeReason() const { return close_reason_; }
 
     bool pinned() const { return pinned_; }
     void setPinned(bool on);
@@ -43,7 +65,31 @@ public:
     bool saveScreenshotBmp(const std::string& path);
 
 private:
+    // Bare window, no frame: a strip along the top drags it, the edges resize it, a close dot
+    // appears when the pointer nears the top. On X11 the window has an alpha channel and the
+    // corners are painted transparent, which is what rounds them.
+    static SDL_HitTestResult hitTest(SDL_Window* win, const SDL_Point* pt, void* data);
+    void cutCorners(int out_w, int out_h, float px_per_unit);
+    bool argb_ = false;
     void mapToDisplay(int mx, int my, int& dx, int& dy) const;
+
+    // Hover chrome: while the pointer is in or near the window it becomes a normal window
+    // like the main window's phone viewer (title bar, phone in its bezel, control strip),
+    // drawn with its own Dear ImGui context; otherwise it is the bare picture.
+    void buildChromeFonts();
+    float updateChromeAlpha(int win_w, int win_h);   // fade toward shown/hidden; returns the alpha
+    void renderChrome(int win_w, int win_h, int out_w, int out_h);
+    bool overChrome(int x, int y) const;
+    float titleBarHeight() const { return 40.0f * chrome_.scale; }
+    float toolbarHeight() const { return 52.0f * chrome_.scale; }
+    DisplayChrome chrome_;
+    ImGuiContext* ui_ = nullptr;
+    ImFont* ui_font_ = nullptr;
+    ImFont* ui_font_bold_ = nullptr;
+    std::string title_;
+    std::string font_title_;          // the title the atlas was built for
+    float chrome_alpha_ = 0.0f;       // 0 = hidden, 1 = fully shown
+    std::chrono::steady_clock::time_point chrome_clock_{};
 
     int32_t display_id_;
     bool decorated_;
@@ -61,6 +107,7 @@ private:
     bool touch_down_ = false;
     bool pinned_ = false;
     bool close_requested_ = false;
+    std::string close_reason_;
 };
 
 } // namespace rplayhub
