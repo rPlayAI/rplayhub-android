@@ -44,6 +44,8 @@ int main(int argc, char* argv[]) {
                 std::cerr << "--tab: expected info, apps, files or logcat\n";
                 return 2;
             }
+        } else if (arg == "--no-audio") {
+            opts.audio = false;
         } else if (arg == "--decoder" && i + 1 < argc) {
             opts.decoder = argv[++i];
         } else if (arg == "--codec" && i + 1 < argc) {
@@ -68,6 +70,7 @@ int main(int argc, char* argv[]) {
                          "      --dump-frame <p>  save a BMP of the window once the mirror is up\n"
                          "      --stats           print decoded / rendered fps to stderr every 5 s\n"
                          "      --tab <name>      inspector tab to open with: info, apps, files, logcat\n"
+                         "      --no-audio        do not forward device audio (Android 12+ devices)\n"
                          "      --codec <c>       agent video codec: avc (default), hevc, vp8, vp9, av1\n"
                          "      --decoder <name>  FFmpeg decoder, e.g. h264_v4l2m2m (default: generic), or RPLAYHUB_DECODER\n"
                          "      --max-size WxH    agent frame size cap (default 1080x2400)\n";

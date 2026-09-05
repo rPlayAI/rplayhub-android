@@ -93,6 +93,11 @@ void AgentSession::stop() {
     if (session_thread_.joinable()) session_thread_.join();
     if (video_thread_.joinable()) video_thread_.join();
     if (log_thread_.joinable()) log_thread_.join();
+    if (audio_player_) {
+        audio_player_->stop();
+        audio_player_.reset();
+    }
+    audio_enabled_.store(false);
 
     decoder_.close();
 
@@ -165,8 +170,11 @@ void AgentSession::runBringup() {
 
     // Launch agent via app_process
     setStatus(SessionState::DEPLOYING, "Launching screen-sharing agent...");
+    // RPLAYHUB_AUDIO_SUBMIX=2: capture device audio with an AudioRecord on REMOTE_SUBMIX
+    // (scrcpy's route; rPlayHub's patch in the agent's audio_streamer.cc). Upstream's API 34+
+    // AudioPolicy loopback yields silence on recent Pixels.
     std::ostringstream cmd;
-    cmd << "CLASSPATH=" << remote_base << "/screen-sharing-agent.jar"
+    cmd << "RPLAYHUB_AUDIO_SUBMIX=2 CLASSPATH=" << remote_base << "/screen-sharing-agent.jar"
         << " app_process " << remote_base
         << " com.android.tools.screensharing.Main"
         << " --socket=" << socket_name_
@@ -249,6 +257,33 @@ void AgentSession::runBringup() {
 
     video_thread_ = std::thread(&AgentSession::runVideoLoop, this);
     setStatus(SessionState::RUNNING, "Mirroring active");
+    if (options_.audio) setAudioForwarding(true);
+}
+
+void AgentSession::setAudioForwarding(bool enabled) {
+    if (!control_socket_.isValid()) return;
+    if (enabled) {
+        if (!audio_socket_.isValid()) {
+            addLog("Audio: no audio channel (device below API 31)");
+            return;
+        }
+        if (!audio_player_) {
+            audio_player_ = std::make_unique<AudioPlayer>(audio_socket_);
+            audio_player_->start();
+        }
+        audio_player_->setPlaying(true);
+        auto msg = ControlMessages::startAudioStream();
+        std::lock_guard<std::mutex> lock(control_mutex_);
+        control_socket_.writeAll(msg.data(), msg.size());
+    } else {
+        auto msg = ControlMessages::stopAudioStream();
+        {
+            std::lock_guard<std::mutex> lock(control_mutex_);
+            control_socket_.writeAll(msg.data(), msg.size());
+        }
+        if (audio_player_) audio_player_->setPlaying(false);
+    }
+    audio_enabled_.store(enabled);
 }
 
 void AgentSession::runVideoLoop() {
