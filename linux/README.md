@@ -56,6 +56,8 @@ When designing the Linux client to match the macOS UI (see the macOS screenshot)
 
 ## Build & Run
 
+*Continuing this port on a Linux host or a Raspberry Pi? See [`doc/LINUX-AND-RPI.md`](../doc/LINUX-AND-RPI.md).*
+
 ### Prerequisites
 - GCC / G++ (C++17)
 - CMake (>= 3.16)
