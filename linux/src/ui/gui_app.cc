@@ -206,6 +206,7 @@ bool GuiApp::init() {
 
 void GuiApp::cleanup() {
     stopMirroring();
+    display_windows_.clear();
     jobs_.shutdown();
     stopMirroring();
 
@@ -554,12 +555,14 @@ void GuiApp::startMirroring(int device_idx) {
     session_started_ = std::chrono::steady_clock::now();
     session_active_ = true;
     clipboard_started_ = false;
+    startup_requests_sent_ = false;
     showToast("Connecting to " + dev.displayName() + "...");
 }
 
 void GuiApp::stopMirroring() {
     user_stopped_ = true;
     reconnect_pending_ = false;
+    closeDisplayWindows();
     if (session_) {
         session_->stop();
         session_.reset();
@@ -571,6 +574,7 @@ void GuiApp::stopMirroring() {
 
 // Bring the same device back after the stream died; the last frame stays on screen meanwhile.
 void GuiApp::restartSession() {
+    closeDisplayWindows();   // virtual displays die with the previous agent
     if (session_) session_->stop();
     session_ = std::make_unique<AgentSession>(session_serial_);
     session_->start(session_options_);
@@ -667,8 +671,28 @@ void GuiApp::pumpAgentEvents() {
         case AgentSession::AgentEvent::ERROR_RESPONSE:
             showToast("Agent: " + ev.text, 6);
             break;
+        case AgentSession::AgentEvent::NEW_DISPLAY_STREAM:
+            // A display we asked for announces itself by its first packet; requests are
+            // answered in the order they were made.
+            if (!pending_displays_.empty()) {
+                PendingDisplay req = pending_displays_.front();
+                pending_displays_.pop_front();
+                openDisplayWindow(ev.display, req);
+            } else {
+                std::cerr << "display " << ev.display.id << " started streaming without a request; ignoring\n";
+            }
+            break;
+        case AgentSession::AgentEvent::DISPLAY_REMOVED:
+            for (auto it = display_windows_.begin(); it != display_windows_.end(); ++it) {
+                if ((*it)->displayId() == ev.display.id) {
+                    session_->forgetDisplay(ev.display.id);
+                    display_windows_.erase(it);
+                    break;
+                }
+            }
+            break;
         default:
-            break;   // display events are for the virtual-display windows
+            break;
         }
     }
 }
@@ -709,6 +733,184 @@ void GuiApp::setClipboardSync(bool on) {
     }
 }
 
+// ---- virtual displays and the bare phone window ----
+
+void GuiApp::openDesktopMode() {
+    if (!session_ || session_->getState() != SessionState::RUNNING) {
+        showToast("Start mirroring first");
+        return;
+    }
+    for (auto& dw : display_windows_) {
+        if (dw->decorated()) { SDL_RaiseWindow(SDL_GetWindowFromID(dw->windowId())); return; }   // one desktop is enough
+    }
+    session_->wakeOrPower(false);
+    runShellAsync(session_serial_, "wm dismiss-keyguard", "");
+    pending_displays_.push_back({"", true});
+    session_->requestNewDisplay(1920, 1080, 240, true);
+    showToast("Opening Android's desktop on a virtual display...", 4);
+}
+
+void GuiApp::openAppOnVirtualDisplay(const std::string& package) {
+    if (!session_ || session_->getState() != SessionState::RUNNING) {
+        showToast("Start mirroring first");
+        return;
+    }
+    session_->wakeOrPower(false);
+    pending_displays_.push_back({package, false});
+    // Same display the Mac client asks for; ROTATES_WITH_CONTENT lets a portrait app turn it.
+    session_->requestNewDisplay(1920, 1080, 240, false);
+    showToast("Opening " + package + " on a virtual display...", 4);
+}
+
+void GuiApp::openFrontAppOnVirtualDisplay() {
+    if (!session_ || session_->getState() != SessionState::RUNNING) {
+        showToast("Start mirroring first");
+        return;
+    }
+    std::string serial = session_serial_;
+    jobs_.run<std::string>(
+        [this, serial] { return adb_.frontPackage(serial); },
+        [this, serial](std::string pkg) {
+            if (pkg.empty() || pkg.find("launcher") != std::string::npos) {
+                showToast("Open an app on the phone first, or use Desktop Mode for the whole desktop", 6);
+                return;
+            }
+            if (serial == session_serial_) openAppOnVirtualDisplay(pkg);
+        });
+}
+
+// The phone's own screen in a bare window: same frames as the stage, its own texture.
+void GuiApp::openPhoneWindow() {
+    if (session_ && live_frame_.empty() && session_->getDecoder().getLatestFrame(live_frame_)) {
+        texture_dirty_ = true;   // asked before the stage pulled its first frame
+    }
+    if (!session_ || live_frame_.empty()) {
+        showToast("Start mirroring first");
+        return;
+    }
+    for (auto& dw : display_windows_) {
+        if (dw->displayId() == 0) { SDL_RaiseWindow(SDL_GetWindowFromID(dw->windowId())); return; }
+    }
+    AgentSession::DisplayDescriptor d;
+    d.id = 0;
+    d.width = live_frame_.displayWidth;
+    d.height = live_frame_.displayHeight;
+    d.rotation = live_frame_.displayOrientation;
+    openDisplayWindow(d, {"", false});
+}
+
+void GuiApp::togglePinOnTop() {
+    // The newest pop-out window if there is one, else the main window.
+    if (!display_windows_.empty()) {
+        DisplayWindow& dw = *display_windows_.back();
+        dw.setPinned(!dw.pinned());
+        showToast(dw.pinned() ? "Window pinned on top" : "Window unpinned");
+        return;
+    }
+    main_pinned_ = !main_pinned_;
+    SDL_SetWindowAlwaysOnTop(window_, main_pinned_ ? SDL_TRUE : SDL_FALSE);
+    showToast(main_pinned_ ? "Window pinned on top" : "Window unpinned");
+}
+
+void GuiApp::openDisplayWindow(const AgentSession::DisplayDescriptor& d, const PendingDisplay& req) {
+    std::string device = (selected_device_idx_ >= 0) ? devices_[selected_device_idx_].displayName() : "Android";
+    std::string title = req.decorated ? device + " Desktop"
+                      : req.package.empty() ? device
+                      : req.package.substr(req.package.rfind('.') + 1);
+    if (!req.package.empty()) {
+        for (const auto& row : apps_) if (row.id == req.package && !row.label.empty()) title = row.label;
+    }
+
+    // Size: fit the display's aspect into three quarters of the screen.
+    SDL_DisplayMode dm{};
+    SDL_GetCurrentDisplayMode(0, &dm);
+    int dw_ = (d.rotation % 2 == 1) ? d.height : d.width;
+    int dh_ = (d.rotation % 2 == 1) ? d.width : d.height;
+    if (dw_ <= 0 || dh_ <= 0) { dw_ = 1080; dh_ = 2400; }
+    float aspect = static_cast<float>(dw_) / dh_;
+    int win_h = static_cast<int>((dm.h > 0 ? dm.h : 1080) * 0.75f);
+    int win_w = static_cast<int>(win_h * aspect);
+    int max_w = static_cast<int>((dm.w > 0 ? dm.w : 1920) * 0.75f);
+    if (win_w > max_w) { win_w = max_w; win_h = static_cast<int>(win_w / aspect); }
+
+    auto win = std::make_unique<DisplayWindow>(d.id, title, win_w, win_h, req.decorated);
+    if (!win->valid()) {
+        showToast("Could not open a window for display " + std::to_string(d.id), 6);
+        if (d.id != 0) session_->destroyDisplay(d.id);
+        return;
+    }
+    // Each new window steps down and right from the last, so they do not stack exactly.
+    int step = (display_windows_opened_++ % 6) * 32;
+    int wx, wy;
+    SDL_GetWindowPosition(SDL_GetWindowFromID(win->windowId()), &wx, &wy);
+    SDL_SetWindowPosition(SDL_GetWindowFromID(win->windowId()), wx + step, wy + step);
+    win->setPackage(req.package);
+    display_windows_.push_back(std::move(win));
+
+    if (d.id != 0) {
+        std::string serial = session_serial_;
+        std::string pkg = req.package;
+        int32_t id = d.id;
+        jobs_.run<std::string>(
+            [this, serial, pkg, id] {
+                // The display mirrors the phone's keyguard when the phone sits locked; dismiss it.
+                adb_.shell(serial, "wm dismiss-keyguard");
+                std::string err;
+                if (!pkg.empty() && !adb_.launchPackage(serial, pkg, id, &err)) return err;
+                return std::string();
+            },
+            [this](std::string err) { if (!err.empty()) showToast("Launch failed: " + err, 8); });
+        std::cerr << (req.package.empty() ? "desktop mode" : req.package) << " on display " << d.id
+                  << " (" << d.width << "x" << d.height << ")\n";
+    }
+}
+
+void GuiApp::closeDisplayWindows() {
+    for (auto& dw : display_windows_) {
+        if (session_ && dw->displayId() != 0) session_->destroyDisplay(dw->displayId());
+    }
+    display_windows_.clear();
+    display_frames_.clear();
+    pending_displays_.clear();
+}
+
+bool GuiApp::routeEventToDisplayWindows(const SDL_Event& e) {
+    AgentSession* s = (session_ && session_->getState() == SessionState::RUNNING) ? session_.get() : nullptr;
+    for (auto& dw : display_windows_) {
+        if (dw->handleEvent(e, s)) return true;
+    }
+    return false;
+}
+
+void GuiApp::renderDisplayWindows() {
+    if (display_windows_.empty()) return;
+    bool any_focus = false;
+    for (auto it = display_windows_.begin(); it != display_windows_.end();) {
+        DisplayWindow& dw = **it;
+        if (dw.closeRequested()) {
+            // Closing the window closes the display; nothing is left running on the phone.
+            if (session_ && dw.displayId() != 0) session_->destroyDisplay(dw.displayId());
+            display_frames_.erase(dw.displayId());
+            it = display_windows_.erase(it);
+            continue;
+        }
+        if (dw.hasFocus()) any_focus = true;
+        if (dw.displayId() == 0) {
+            dw.render(live_frame_);
+        } else {
+            // One frame per window, pulled only when its decoder has a new one.
+            DecodedFrame& mine = display_frames_[dw.displayId()];
+            if (VideoDecoder* dec = session_ ? session_->decoderFor(dw.displayId()) : nullptr) {
+                dec->getLatestFrame(mine, /*only_if_new=*/true);
+            }
+            dw.render(mine);
+        }
+        ++it;
+    }
+    // ImGui stops SDL text input whenever no ImGui field wants it; a focused display window needs it.
+    if (any_focus && !SDL_IsTextInputActive()) SDL_StartTextInput();
+}
+
 // Called every frame. A session that ended on its own (USB unplugged, agent killed, adb
 // restarted) is restarted with backoff once the device is listed as ready again; a session the
 // user stopped stays stopped.
@@ -722,6 +924,12 @@ void GuiApp::maintainSession() {
             reconnect_attempts_ = 0;   // stable again; forget the backoff
         }
         reconnect_pending_ = false;
+        if (!startup_requests_sent_ && session_->getDecoder().hasFrame()) {
+            startup_requests_sent_ = true;
+            if (startup_desktop_) openDesktopMode();
+            if (!startup_app_.empty()) openAppOnVirtualDisplay(startup_app_);
+            if (startup_pop_out_) openPhoneWindow();
+        }
         return;
     }
     if (st != SessionState::STOPPED && st != SessionState::FAILED) return;
@@ -771,6 +979,12 @@ void GuiApp::run() {
 
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
+            if ((event.type == SDL_MOUSEBUTTONDOWN || event.type == SDL_MOUSEBUTTONUP) && std::getenv("RPLAYHUB_INPUT_DEBUG")) {
+                std::cerr << "sdl: button " << (event.type == SDL_MOUSEBUTTONDOWN ? "down" : "up") << " window "
+                          << event.button.windowID << " (main " << SDL_GetWindowID(window_) << ") at "
+                          << event.button.x << "," << event.button.y << "\n";
+            }
+            if (routeEventToDisplayWindows(event)) continue;
             ImGui_ImplSDL2_ProcessEvent(&event);
             if (event.type == SDL_QUIT) {
                 done = true;
@@ -846,7 +1060,7 @@ void GuiApp::run() {
             dump_settled_at_ = std::chrono::steady_clock::now();
         }
         if (!dump_frame_path_.empty() && frame_count_ >= 30 && mirror_settled &&
-            std::chrono::steady_clock::now() - dump_settled_at_ > std::chrono::seconds(4)) {
+            std::chrono::steady_clock::now() - dump_settled_at_ > std::chrono::seconds(std::getenv("RPLAYHUB_DUMP_DELAY") ? std::atoi(std::getenv("RPLAYHUB_DUMP_DELAY")) : 4)) {
             SDL_Surface* sshot = SDL_CreateRGBSurfaceWithFormat(0, win_w, win_h, 32, SDL_PIXELFORMAT_ARGB8888);
             if (sshot) {
                 if (SDL_RenderReadPixels(renderer_, NULL, SDL_PIXELFORMAT_ARGB8888, sshot->pixels, sshot->pitch) == 0) {
@@ -855,10 +1069,15 @@ void GuiApp::run() {
                 }
                 SDL_FreeSurface(sshot);
             }
+            for (auto& dw : display_windows_) {
+                std::string path = dump_frame_path_ + ".display" + std::to_string(dw->displayId()) + ".bmp";
+                if (dw->saveScreenshotBmp(path)) std::cout << "Dumped display window to " << path << "\n";
+            }
             dump_frame_path_.clear();
         }
 
         SDL_RenderPresent(renderer_);
+        renderDisplayWindows();
 
         // Without vsync (software renderer, hidden window) the loop would spin; cap it.
         {
@@ -1067,7 +1286,14 @@ void GuiApp::renderLeftSidebar(float width, float height) {
                 }
             }
             if (MenuItemWithIcon("Desktop Mode", nullptr, Icons::drawScreen, scale_)) {
-                showToast("Desktop Mode triggered");
+                if (!session_ || session_serial_ != dev.serial) startMirroring(i);
+                startup_desktop_ = true;                 // fires once the mirror is up
+                startup_requests_sent_ = false;
+                if (session_ && session_serial_ == dev.serial && session_->getState() == SessionState::RUNNING) {
+                    startup_desktop_ = false;
+                    startup_requests_sent_ = true;
+                    openDesktopMode();
+                }
             }
             if (MenuItemWithIcon("Copy Serial", nullptr, Icons::drawCopy, scale_)) {
                 ImGui::SetClipboardText(dev.serial.c_str());
@@ -1136,17 +1362,17 @@ void GuiApp::renderLeftSidebar(float width, float height) {
             }
             ImGui::Separator();
             if (MenuItemWithIcon("View in 3D", nullptr, Icons::drawCube, scale_)) {
-                showToast("3D Device Twin active");
+                showToast("3D twin: not yet in the Linux client");
             }
             ImGui::Separator();
-            if (MenuItemWithIcon("Open in New Window", nullptr, Icons::drawWindow, scale_)) {
-                showToast("Opened in new window");
+            if (MenuItemWithIcon("Open Front App on Virtual Display", nullptr, Icons::drawWindow, scale_)) {
+                openFrontAppOnVirtualDisplay();
             }
-            if (MenuItemWithIcon("Open in New Tab", nullptr, Icons::drawPlus, scale_)) {
-                showToast("Opened in new tab");
+            if (MenuItemWithIcon("Open in New Window", nullptr, Icons::drawWindow, scale_)) {
+                openPhoneWindow();
             }
             if (MenuItemWithIcon("Pin Window on Top", nullptr, Icons::drawPin, scale_)) {
-                showToast("Pinned on top");
+                togglePinOnTop();
             }
             ImGui::Separator();
             if (MenuItemWithIcon("Reconnect", nullptr, Icons::drawRefresh, scale_)) {
@@ -1784,6 +2010,9 @@ void GuiApp::renderRightInspector(float width, float height) {
                     }
                     if (MenuItemWithIcon("Force Stop", nullptr, Icons::drawPower, scale_)) {
                         runShellAsync(current_serial, "am force-stop " + pkg, "Stopped " + title);
+                    }
+                    if (MenuItemWithIcon("Open on Virtual Display", nullptr, Icons::drawWindow, scale_)) {
+                        openAppOnVirtualDisplay(pkg);
                     }
                     ImGui::Separator();
                     if (MenuItemWithIcon("Export APK...", nullptr, Icons::drawFile, scale_)) {

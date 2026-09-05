@@ -5,6 +5,8 @@
 #include "session/agent_session.h"
 #include "session/app_catalog.h"
 #include "util/async_jobs.h"
+#include "ui/display_window.h"
+#include <deque>
 #include "imgui.h"
 
 #include <SDL2/SDL.h>
@@ -31,6 +33,10 @@ public:
     // Agent / decoder settings used for every mirror session started from the UI.
     void setSessionOptions(const AgentSession::Options& o) { session_options_ = o; }
     void setClipboardSyncDefault(bool on) { clipboard_sync_ = on; }
+    // Once the mirror is up: open Desktop Mode, and/or an app on a virtual display of its own.
+    void setStartupDesktop(bool on) { startup_desktop_ = on; }
+    void setStartupApp(const std::string& package) { startup_app_ = package; }
+    void setStartupPopOut(bool on) { startup_pop_out_ = on; }
 
     bool init();
     void run();
@@ -94,6 +100,21 @@ private:
     std::chrono::steady_clock::time_point session_started_;
     bool connect_inflight_ = false;
     std::chrono::steady_clock::time_point recording_started_;
+
+    // Virtual displays (Desktop Mode, app windows) and the bare phone window.
+    struct PendingDisplay {
+        std::string package;   // empty = Desktop Mode
+        bool decorated = false;
+    };
+    std::vector<std::unique_ptr<DisplayWindow>> display_windows_;
+    std::map<int32_t, DecodedFrame> display_frames_;   // newest frame per virtual display
+    std::deque<PendingDisplay> pending_displays_;
+    int display_windows_opened_ = 0;
+    bool startup_desktop_ = false;
+    std::string startup_app_;
+    bool startup_pop_out_ = false;
+    bool startup_requests_sent_ = false;
+    bool main_pinned_ = false;
 
     // Clipboard sync (both ways, on by default): device changes land on the host clipboard,
     // host changes are pushed on a one-second poll (SDL has no reliable clipboard event on X11).
@@ -167,6 +188,15 @@ private:
     void maintainSession();
     void takeScreenshot();
     void pumpAgentEvents();
+    void openDesktopMode();
+    void openAppOnVirtualDisplay(const std::string& package);
+    void openFrontAppOnVirtualDisplay();
+    void openPhoneWindow();
+    void togglePinOnTop();
+    void openDisplayWindow(const AgentSession::DisplayDescriptor& d, const PendingDisplay& req);
+    void closeDisplayWindows();
+    void renderDisplayWindows();
+    bool routeEventToDisplayWindows(const SDL_Event& e);
     void pollHostClipboard();
     void setClipboardSync(bool on);
     void toggleRecording();

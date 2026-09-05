@@ -63,6 +63,12 @@ public:
     // path is unreadable as the shell user.
     bool listDirectory(const std::string& serial, const std::string& path, std::vector<DirEntry>& out);
 
+    // The package in front on the phone's own screen, from dumpsys; empty when none.
+    std::string frontPackage(const std::string& serial);
+    // Launch a package's launcher activity: on display 0 via monkey; on another display by
+    // resolving the activity and `am start --display`. Returns false with a reason.
+    bool launchPackage(const std::string& serial, const std::string& package, int32_t display_id, std::string* out_err = nullptr);
+
     // Single-quote for the device shell.
     static std::string shellQuote(const std::string& s);
 

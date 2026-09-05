@@ -39,9 +39,10 @@ StreamRecorder::~StreamRecorder() {
     closeFile(frames_ > 0);
 }
 
-bool StreamRecorder::start(const std::string& path, const std::string& codec_name, int width, int height) {
+bool StreamRecorder::start(const std::string& path, const std::string& codec_name, int width, int height, int32_t display_id) {
     std::lock_guard<std::mutex> lock(mutex_);
     closeFile(frames_ > 0);
+    display_id_ = display_id;
     error_.clear();
     path_ = path;
     hevc_ = (codec_name == "hevc" || codec_name == "h265");
@@ -93,7 +94,7 @@ bool StreamRecorder::isKeyframe(const uint8_t* data, size_t size) const {
 
 void StreamRecorder::write(const uint8_t* data, size_t size, const VideoPacketHeader& header) {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (!fmt_ || size == 0) return;
+    if (!fmt_ || size == 0 || header.displayId != display_id_) return;
 
     if (header.isConfig()) {
         config_.assign(data, data + size);

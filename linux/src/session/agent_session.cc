@@ -105,6 +105,10 @@ void AgentSession::stop() {
     audio_enabled_.store(false);
 
     decoder_.close();
+    {
+        std::lock_guard<std::mutex> lock(displays_mutex_);
+        display_decoders_.clear();
+    }
 
     if (!socket_name_.empty()) {
         adb_.reverseRemove(serial_, socket_name_);
@@ -469,7 +473,37 @@ void AgentSession::runVideoLoop() {
         std::memset(payload_buf.data() + pkt_sz, 0, 64);
 
         recorder_.write(payload_buf.data(), pkt_sz, header);
-        decoder_.decode(payload_buf.data(), pkt_sz, header);
+        if (header.displayId == 0) {
+            decoder_.decode(payload_buf.data(), pkt_sz, header);
+            continue;
+        }
+        // One channel carries every display; each virtual display gets its own decoder.
+        VideoDecoder* dec = nullptr;
+        {
+            std::lock_guard<std::mutex> lock(displays_mutex_);
+            auto it = display_decoders_.find(header.displayId);
+            if (it == display_decoders_.end()) {
+                auto d = std::make_unique<VideoDecoder>();
+                if (!d->init(getCodecName(), options_.decoder)) {
+                    addLog("Display " + std::to_string(header.displayId) + ": decoder failed to open");
+                    continue;
+                }
+                dec = d.get();
+                display_decoders_[header.displayId] = std::move(d);
+                AgentEvent ev;
+                ev.kind = AgentEvent::NEW_DISPLAY_STREAM;
+                ev.display.id = header.displayId;
+                ev.display.width = header.displayWidth;
+                ev.display.height = header.displayHeight;
+                ev.display.rotation = header.displayOrientation;
+                pushEvent(std::move(ev));
+                addLog("Display " + std::to_string(header.displayId) + ": stream started, " +
+                       std::to_string(header.displayWidth) + "x" + std::to_string(header.displayHeight));
+            } else {
+                dec = it->second.get();
+            }
+        }
+        dec->decode(payload_buf.data(), pkt_sz, header);
     }
 
     if (!stopping_.load()) {
@@ -528,19 +562,40 @@ std::string AgentSession::getCodecName() const {
     return codec_name_;
 }
 
-void AgentSession::sendTouch(int x, int y, int action) {
+VideoDecoder* AgentSession::decoderFor(int32_t display_id) {
+    if (display_id == 0) return &decoder_;
+    std::lock_guard<std::mutex> lock(displays_mutex_);
+    auto it = display_decoders_.find(display_id);
+    return it == display_decoders_.end() ? nullptr : it->second.get();
+}
+
+void AgentSession::forgetDisplay(int32_t display_id) {
+    std::lock_guard<std::mutex> lock(displays_mutex_);
+    display_decoders_.erase(display_id);
+}
+
+void AgentSession::requestNewDisplay(int32_t width, int32_t height, int32_t dpi, bool decorations) {
+    sendControl(ControlMessages::createNewDisplay(width, height, dpi, decorations));
+}
+
+void AgentSession::destroyDisplay(int32_t display_id) {
+    sendControl(ControlMessages::destroyNewDisplay(display_id));
+    forgetDisplay(display_id);
+}
+
+void AgentSession::sendTouch(int x, int y, int action, int32_t display_id) {
     if (!control_socket_.isValid()) return;
     Pointer p;
     p.x = x;
     p.y = y;
     p.pointerId = 0;
 
-    auto msg = ControlMessages::motionEvent({p}, action, 0, 0, 0, false);
+    auto msg = ControlMessages::motionEvent({p}, action, 0, 0, display_id, false);
     std::lock_guard<std::mutex> lock(control_mutex_);
     control_socket_.writeAll(msg.data(), msg.size());
 }
 
-void AgentSession::sendScroll(int x, int y, float hscroll, float vscroll) {
+void AgentSession::sendScroll(int x, int y, float hscroll, float vscroll, int32_t display_id) {
     if (!control_socket_.isValid()) return;
     Pointer p;
     p.x = x;
@@ -548,7 +603,7 @@ void AgentSession::sendScroll(int x, int y, float hscroll, float vscroll) {
     p.pointerId = 0;
     p.axisValues[MotionAxis::HSCROLL] = hscroll;
     p.axisValues[MotionAxis::VSCROLL] = vscroll;
-    auto msg = ControlMessages::motionEvent({p}, MotionAction::SCROLL, 0, 0, 0, true);
+    auto msg = ControlMessages::motionEvent({p}, MotionAction::SCROLL, 0, 0, display_id, true);
     std::lock_guard<std::mutex> lock(control_mutex_);
     control_socket_.writeAll(msg.data(), msg.size());
 }

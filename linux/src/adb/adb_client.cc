@@ -391,6 +391,43 @@ bool AdbClient::listDirectory(const std::string& serial, const std::string& path
     return true;
 }
 
+std::string AdbClient::frontPackage(const std::string& serial) {
+    // No head/grep -m1: closing the pipe early makes dumpsys write an error into the output.
+    std::string out = shell(serial, "dumpsys activity activities | grep -E 'topResumedActivity=|mResumedActivity='");
+    std::istringstream stream(out);
+    std::string line;
+    if (!std::getline(stream, line)) return "";
+    std::istringstream tokens(line);
+    std::string tok;
+    while (tokens >> tok) {
+        size_t slash = tok.find('/');
+        if (slash == std::string::npos) continue;
+        std::string pkg = tok.substr(0, slash);
+        if (pkg.find('.') != std::string::npos) return pkg;
+    }
+    return "";
+}
+
+bool AdbClient::launchPackage(const std::string& serial, const std::string& package, int32_t display_id, std::string* out_err) {
+    if (display_id == 0) {
+        shell(serial, "monkey -p " + shellQuote(package) + " -c android.intent.category.LAUNCHER 1");
+        return true;
+    }
+    std::string out = shell(serial, "cmd package resolve-activity --brief -c android.intent.category.LAUNCHER "
+                            + shellQuote(package) + " | tail -1");
+    while (!out.empty() && (out.back() == '\n' || out.back() == '\r' || out.back() == ' ')) out.pop_back();
+    if (out.find('/') == std::string::npos) {
+        if (out_err) *out_err = "no launcher activity found for " + package;
+        return false;
+    }
+    std::string res = shell(serial, "am start --display " + std::to_string(display_id) + " -n " + shellQuote(out) + " 2>&1");
+    if (res.find("Error") != std::string::npos || res.find("Exception") != std::string::npos) {
+        if (out_err) *out_err = res;
+        return false;
+    }
+    return true;
+}
+
 std::vector<std::string> AdbClient::getPackages(const std::string& serial, bool third_party_only) {
     std::string cmd = third_party_only ? "pm list packages -3" : "pm list packages";
     std::string raw = shell(serial, cmd);

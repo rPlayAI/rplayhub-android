@@ -25,7 +25,7 @@ public:
 
     // codec_name is what the agent reported ("h264", "hevc"). Returns false and
     // sets error() if the file cannot be opened.
-    bool start(const std::string& path, const std::string& codec_name, int width, int height);
+    bool start(const std::string& path, const std::string& codec_name, int width, int height, int32_t display_id = 0);
 
     // Called from the video read loop for every packet, config packets included.
     void write(const uint8_t* data, size_t size, const VideoPacketHeader& header);
@@ -51,6 +51,7 @@ private:
     bool hevc_ = false;
     std::vector<uint8_t> config_;   // latest SPS/PPS (Annex-B)
     std::vector<uint8_t> scratch_;
+    int32_t display_id_ = 0;        // packets of other displays share the channel; skip them
     int64_t first_pts_ = -1;
     int64_t last_pts_ = 0;
     uint64_t frames_ = 0;

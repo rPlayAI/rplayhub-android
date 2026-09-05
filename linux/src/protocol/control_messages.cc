@@ -13,6 +13,8 @@ constexpr int32_t TYPE_STOP_VIDEO_STREAM = 7;
 constexpr int32_t TYPE_START_AUDIO_STREAM = 8;
 constexpr int32_t TYPE_STOP_AUDIO_STREAM = 9;
 constexpr int32_t TYPE_START_CLIPBOARD_SYNC = 10;
+constexpr int32_t TYPE_CREATE_NEW_DISPLAY = 120;
+constexpr int32_t TYPE_DESTROY_NEW_DISPLAY = 121;
 constexpr int32_t TYPE_STOP_CLIPBOARD_SYNC = 11;
 constexpr int32_t TYPE_DISPLAY_CONFIGURATION_REQUEST = 20;
 
@@ -116,6 +118,23 @@ std::vector<uint8_t> ControlMessages::displayConfigurationRequest(int32_t reques
     Base128Writer w;
     w.writeInt32(TYPE_DISPLAY_CONFIGURATION_REQUEST);
     w.writeInt32(requestId);
+    return w.data();
+}
+
+std::vector<uint8_t> ControlMessages::createNewDisplay(int32_t width, int32_t height, int32_t dpi, bool decorations) {
+    Base128Writer w;
+    w.writeInt32(TYPE_CREATE_NEW_DISPLAY);
+    w.writeInt32(width);
+    w.writeInt32(height);
+    w.writeInt32(dpi);
+    w.writeInt32(decorations ? 1 : 0);
+    return w.data();
+}
+
+std::vector<uint8_t> ControlMessages::destroyNewDisplay(int32_t displayId) {
+    Base128Writer w;
+    w.writeInt32(TYPE_DESTROY_NEW_DISPLAY);
+    w.writeInt32(displayId);
     return w.data();
 }
 
