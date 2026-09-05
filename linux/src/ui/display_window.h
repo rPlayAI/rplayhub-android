@@ -89,6 +89,7 @@ private:
     std::string title_;
     std::string font_title_;          // the title the atlas was built for
     float chrome_alpha_ = 0.0f;       // 0 = hidden, 1 = fully shown
+    bool normal_sized_ = false;       // window grown to hold the bars and the chassis
     std::chrono::steady_clock::time_point chrome_clock_{};
 
     int32_t display_id_;
