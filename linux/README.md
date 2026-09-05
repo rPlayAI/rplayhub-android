@@ -30,6 +30,7 @@ When designing the Linux client to match the macOS UI (see the macOS screenshot)
     - Complete right-click context menu (Start/Stop Mirroring, Desktop Mode, Copy Serial, Disconnect, Screenshot, Record, Back, Home, Recents, Rotate, Wake, Power, Reconnect).
     - `+` modal to connect to network adb (`ip:port`).
     - Device refresh and live bottom status line (`adb server 5037 - N devices`).
+    - **Emulators** section: the Android SDK's AVDs (`~/.android/avd`), started headless on a known console port, marked running, mirrored like any device through the agent's x86_64 build, shut down through the emulator console.
   - **Center Stage**:
     - Device title and OS status header (`Pixel 8a - Android 17 - Mirroring active`).
     - Realistic phone chassis with rounded black bezel surround and front punch-hole camera cutout.
@@ -46,7 +47,8 @@ When designing the Linux client to match the macOS UI (see the macOS screenshot)
       - Right-click popup: Launch, Force Stop, Uninstall.
       - Package count label, `System apps` filter toggle, and search filter input box.
     - **Info Tab**:
-      - Device properties (Model, Manufacturer, Android Version, SDK API Level, CPU ABI, Serial, Battery %).
+      - Device properties (Model, Manufacturer, Android Version, SDK API Level, CPU ABI, Serial, Build, Battery %).
+      - Live stream statistics while mirroring: codec, packets, bytes, frames decoded and shown, display size, rotation, bitrate, audio packets and peak level, recording time.
     - **Files Tab**:
       - Explore `/sdcard/Download`, refresh, view remote directory contents.
     - **Logcat Tab**:

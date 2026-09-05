@@ -58,6 +58,7 @@ set(SOURCES
     src/audio/audio_player.cc
     src/session/agent_session.cc
     src/session/app_catalog.cc
+    src/session/emulator_launcher.cc
     src/util/png_decode.cc
     src/ui/gui_app.cc
     src/ui/display_window.cc

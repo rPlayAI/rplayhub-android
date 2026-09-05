@@ -474,6 +474,10 @@ void AgentSession::runVideoLoop() {
 
         recorder_.write(payload_buf.data(), pkt_sz, header);
         if (header.displayId == 0) {
+            stat_packets_.fetch_add(1, std::memory_order_relaxed);
+            stat_bytes_.fetch_add(pkt_sz, std::memory_order_relaxed);
+            stat_w_.store(header.displayWidth); stat_h_.store(header.displayHeight);
+            stat_rot_.store(header.displayOrientation); stat_bitrate_.store(header.bitRate);
             decoder_.decode(payload_buf.data(), pkt_sz, header);
             continue;
         }
@@ -555,6 +559,14 @@ void AgentSession::runLogLoop() {
             }
         }
     }
+}
+
+AgentSession::StreamStats AgentSession::getStreamStats() const {
+    StreamStats st;
+    st.packets = stat_packets_.load(); st.bytes = stat_bytes_.load();
+    st.display_width = stat_w_.load(); st.display_height = stat_h_.load();
+    st.rotation = stat_rot_.load(); st.bit_rate = stat_bitrate_.load();
+    return st;
 }
 
 std::string AgentSession::getCodecName() const {

@@ -200,6 +200,7 @@ bool GuiApp::init() {
     last_device_poll_ = std::chrono::steady_clock::now();
     auto_mirror_deadline_ = last_device_poll_ + std::chrono::seconds(20);
     pollDevices();
+    pollEmulators();
 
     return true;
 }
@@ -733,6 +734,160 @@ void GuiApp::setClipboardSync(bool on) {
     }
 }
 
+// ---- emulators ----
+
+void GuiApp::pollEmulators() {
+    if (avd_poll_inflight_) return;
+    avd_poll_inflight_ = true;
+    // Serials adb lists that we have not yet matched to an AVD: ask their consoles.
+    std::vector<std::string> unknown;
+    for (const auto& d : devices_) {
+        if (d.isEmulator() && !emulator_names_.count(d.serial)) unknown.push_back(d.serial);
+    }
+    struct Result { std::vector<Avd> avds; std::map<std::string, std::string> running, names; };
+    jobs_.run<Result>(
+        [unknown] {
+            Result r;
+            r.avds = EmulatorLauncher::list();
+            r.running = EmulatorLauncher::running();
+            for (const auto& serial : unknown) r.names[serial] = EmulatorLauncher::avdNameOf(serial);
+            return r;
+        },
+        [this](Result r) {
+            avd_poll_inflight_ = false;
+            avds_ = std::move(r.avds);
+            for (auto& [serial, name] : r.names) if (!name.empty()) emulator_names_[serial] = name;
+            avds_running_ = std::move(r.running);
+            for (const auto& d : devices_) {
+                auto it = emulator_names_.find(d.serial);
+                if (it != emulator_names_.end()) avds_running_[it->second] = d.serial;
+            }
+            for (auto it = emulator_names_.begin(); it != emulator_names_.end();) {
+                bool listed = false;
+                for (const auto& d : devices_) if (d.serial == it->first) listed = true;
+                it = listed ? std::next(it) : emulator_names_.erase(it);   // gone: forget it
+            }
+            for (auto it = avd_starting_.begin(); it != avd_starting_.end();) {
+                it = avds_running_.count(*it) ? avd_starting_.erase(it) : std::next(it);
+            }
+        });
+}
+
+void GuiApp::startEmulator(const Avd& avd) {
+    if (avds_running_.count(avd.name) || avd_starting_.count(avd.name)) {
+        showToast(avd.display_name + " is already running");
+        return;
+    }
+    avd_starting_.insert(avd.name);
+    showToast("Starting " + avd.display_name + "... (a cold boot can take a minute or more)", 8);
+    struct Result { std::string serial, err; };
+    jobs_.run<Result>(
+        [avd] { Result r; r.serial = EmulatorLauncher::launch(avd, &r.err); return r; },
+        [this, avd](Result r) {
+            if (r.serial.empty()) {
+                avd_starting_.erase(avd.name);
+                showToast("Could not start " + avd.display_name + ": " + r.err, 8);
+            }
+        });
+}
+
+void GuiApp::shutdownEmulator(const std::string& serial) {
+    if (session_ && session_serial_ == serial) stopMirroring();
+    jobs_.run<std::string>(
+        [serial] { std::string err; EmulatorLauncher::shutdown(serial, &err); return err; },
+        [this, serial](std::string err) {
+            showToast(err.empty() ? "Shutting down " + serial : "Shutdown failed: " + err, 6);
+            pollDevices();
+            pollEmulators();
+        });
+}
+
+// The sidebar's EMULATORS section: one row per AVD, running ones mirror like any device.
+void GuiApp::renderEmulatorRows(float width) {
+    if (avds_.empty()) return;
+    ImGui::Spacing();
+    if (font_caption_) ImGui::PushFont(font_caption_);
+    ImGui::TextColored(Theme::ColorTextSecondary, "EMULATORS");
+    if (font_caption_) ImGui::PopFont();
+    ImGui::Spacing();
+    ImDrawList* draw_list = ImGui::GetWindowDrawList();
+
+    for (size_t i = 0; i < avds_.size(); ++i) {
+        const Avd& avd = avds_[i];
+        auto run_it = avds_running_.find(avd.name);
+        std::string serial = run_it != avds_running_.end() ? run_it->second : "";
+        int dev_idx = -1;
+        for (int d = 0; d < static_cast<int>(devices_.size()); ++d) {
+            if (!serial.empty() && devices_[d].serial == serial) dev_idx = d;
+        }
+        bool booting = avd_starting_.count(avd.name) || (!serial.empty() && dev_idx < 0);
+        bool ready = dev_idx >= 0 && devices_[dev_idx].isReady();
+        bool is_selected = (selected_avd_ == avd.name) || (ready && selected_device_idx_ == dev_idx);
+        bool is_mirroring = ready && session_active_ && session_ && session_->getSerial() == serial;
+
+        ImGui::PushID(static_cast<int>(1000 + i));
+        ImVec2 card_pos = ImGui::GetCursorScreenPos();
+        float card_w = width - 24.0f * scale_;
+        float card_h = 50.0f * scale_;
+        ImU32 bg_color = is_selected ? IM_COL32(232, 242, 255, 255) : IM_COL32(255, 255, 255, 255);
+        ImU32 border_color = is_selected ? IM_COL32(0, 122, 255, 180) : IM_COL32(225, 225, 230, 200);
+        draw_list->AddRectFilled(card_pos, ImVec2(card_pos.x + card_w, card_pos.y + card_h), bg_color, 8.0f * scale_);
+        draw_list->AddRect(card_pos, ImVec2(card_pos.x + card_w, card_pos.y + card_h), border_color, 8.0f * scale_);
+
+        ImU32 dot = ready ? IM_COL32(52, 199, 89, 255) : booting ? IM_COL32(255, 204, 0, 255) : IM_COL32(180, 180, 185, 255);
+        draw_list->AddCircleFilled(ImVec2(card_pos.x + 14.0f * scale_, card_pos.y + card_h * 0.5f), 4.5f * scale_, dot);
+        Icons::drawScreen(draw_list, ImVec2(card_pos.x + 26.0f * scale_, card_pos.y + 15.0f * scale_), 20.0f * scale_, IM_COL32(120, 120, 128, 255));
+
+        std::string title = avd.display_name;
+        std::string sub = booting ? "starting..." : ready ? serial : "stopped";
+        if (!avd.api_level.empty()) sub += (sub.empty() ? "" : " · API ") + avd.api_level;
+        if (!avd.abi.empty()) sub += " · " + avd.abi;
+        if (font_medium_) ImGui::PushFont(font_medium_);
+        draw_list->AddText(ImVec2(card_pos.x + 52.0f * scale_, card_pos.y + 8.0f * scale_), IM_COL32(28, 28, 30, 255), title.c_str());
+        if (font_medium_) ImGui::PopFont();
+        if (font_caption_) {
+            draw_list->AddText(font_caption_, 12.0f * scale_, ImVec2(card_pos.x + 52.0f * scale_, card_pos.y + 28.0f * scale_),
+                               IM_COL32(142, 142, 147, 255), sub.c_str());
+        }
+
+        ImGui::SetCursorScreenPos(card_pos);
+        if (ImGui::InvisibleButton("##AvdBtn", ImVec2(card_w, card_h))) {
+            selected_avd_ = avd.name;
+            if (ready) selectDevice(dev_idx);
+        }
+        if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+            if (ready) { selectDevice(dev_idx); startMirroring(dev_idx); }
+            else if (!booting) startEmulator(avd);
+        }
+        if (ImGui::BeginPopupContextItem("AvdContextMenu")) {
+            selected_avd_ = avd.name;
+            if (ready) {
+                if (is_mirroring) {
+                    if (MenuItemWithIcon("Stop Screen Mirroring", nullptr, Icons::drawScreen, scale_)) stopMirroring();
+                } else if (MenuItemWithIcon("Start Screen Mirroring", nullptr, Icons::drawScreen, scale_)) {
+                    selectDevice(dev_idx);
+                    startMirroring(dev_idx);
+                }
+                ImGui::Separator();
+            }
+            if (!serial.empty() || booting) {
+                if (MenuItemWithIcon("Shut Down Emulator", nullptr, Icons::drawPower, scale_)) {
+                    if (!serial.empty()) shutdownEmulator(serial);
+                }
+            } else if (MenuItemWithIcon("Start", nullptr, Icons::drawPower, scale_)) {
+                startEmulator(avd);
+            }
+            if (MenuItemWithIcon("Copy Serial", nullptr, Icons::drawCopy, scale_) && !serial.empty()) {
+                ImGui::SetClipboardText(serial.c_str());
+                showToast("Copied " + serial);
+            }
+            ImGui::EndPopup();
+        }
+        ImGui::SetCursorScreenPos(ImVec2(card_pos.x, card_pos.y + card_h + 8.0f * scale_));
+        ImGui::PopID();
+    }
+}
+
 // ---- virtual displays and the bare phone window ----
 
 void GuiApp::openDesktopMode() {
@@ -1004,6 +1159,7 @@ void GuiApp::run() {
         auto now = std::chrono::steady_clock::now();
         if (std::chrono::duration_cast<std::chrono::seconds>(now - last_device_poll_).count() >= 3) {
             pollDevices();
+            pollEmulators();
             last_device_poll_ = now;
         }
         maintainSession();
@@ -1214,8 +1370,11 @@ void GuiApp::renderLeftSidebar(float width, float height) {
     std::string search_query = search_filter_;
     std::transform(search_query.begin(), search_query.end(), search_query.begin(), ::tolower);
 
+    int listed_devices = 0;
     for (int i = 0; i < static_cast<int>(devices_.size()); ++i) {
         const auto& dev = devices_[i];
+        if (dev.isEmulator() && !avds_.empty()) continue;   // shown under EMULATORS with its AVD
+        listed_devices++;
         std::string display_title = dev.displayName();
         std::string lower_title = display_title;
         std::transform(lower_title.begin(), lower_title.end(), lower_title.begin(), ::tolower);
@@ -1385,11 +1544,13 @@ void GuiApp::renderLeftSidebar(float width, float height) {
         ImGui::PopID();
     }
 
-    if (devices_.empty()) {
+    if (listed_devices == 0) {
         ImGui::Spacing();
         ImGui::TextColored(Theme::ColorTextSecondary, "No devices found");
         ImGui::TextColored(Theme::ColorTextTertiary, "Plug in USB or + connect IP");
     }
+
+    renderEmulatorRows(width);
 
     // Bottom status bar matching macOS "adb server 0029 — no devices"
     ImGui::SetCursorPos(ImVec2(12.0f * scale_, height - 30.0f * scale_));
@@ -1629,6 +1790,7 @@ void GuiApp::renderLiveMirror(ImVec2 origin, ImVec2 size, const DecodedFrame& fr
         }
         if (rc != 0) std::cerr << "SDL_Update*Texture: " << SDL_GetError() << "\n";
         texture_dirty_ = false;
+        frames_shown_++;
     }
 
     // Calculate aspect fit inside center stage
@@ -1922,6 +2084,32 @@ void GuiApp::renderRightInspector(float width, float height) {
             row("CPU ABI", prop("ro.product.cpu.abi"));
             row("Build", prop("ro.build.display.id"));
             row("Battery", !info ? "..." : (info->battery >= 0 ? std::to_string(info->battery) + "%" : "unknown"));
+
+            if (session_ && session_serial_ == current_serial && session_->getState() == SessionState::RUNNING) {
+                ImGui::Spacing();
+                ImGui::TextColored(Theme::ColorTextSecondary, "Stream");
+                ImGui::Spacing();
+                auto st = session_->getStreamStats();
+                char buf[64];
+                row("Codec", session_->getCodecName());
+                row("Packets", std::to_string(st.packets));
+                snprintf(buf, sizeof(buf), "%.0f KiB", st.bytes / 1024.0);
+                row("Bytes", buf);
+                row("Decoded", std::to_string(session_->getDecoder().framesDecoded()));
+                row("Shown", std::to_string(frames_shown_));
+                row("Display", std::to_string(st.display_width) + "x" + std::to_string(st.display_height));
+                row("Rotation", std::to_string(st.rotation));
+                snprintf(buf, sizeof(buf), "%d kbps", st.bit_rate / 1000);
+                row("Bitrate", buf);
+                if (const AudioPlayer* ap = session_->getAudioPlayer()) {
+                    snprintf(buf, sizeof(buf), "%llu pkts, peak %.0f dB", (unsigned long long)ap->packetsReceived(), ap->peakDb());
+                    row("Audio", buf);
+                }
+                if (session_->getRecorder().isRecording()) {
+                    snprintf(buf, sizeof(buf), "%.0f s", session_->getRecorder().seconds());
+                    row("Recording", buf);
+                }
+            }
         }
     }
     // TAB 1: APPS (Exact layout as macOS screenshot!)
