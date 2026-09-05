@@ -23,6 +23,8 @@ public:
     void setPreferredSerial(const std::string& serial) { preferred_serial_ = serial; }
     // Print decoded/rendered frame rates to stderr every few seconds.
     void setStats(bool on) { stats_ = on; }
+    // Agent / decoder settings used for every mirror session started from the UI.
+    void setSessionOptions(const AgentSession::Options& o) { session_options_ = o; }
 
     bool init();
     void run();
@@ -35,6 +37,7 @@ private:
     std::string preferred_serial_;
     int frame_count_ = 0;
     bool stats_ = false;
+    AgentSession::Options session_options_;
     std::chrono::steady_clock::time_point stats_last_;
     uint64_t stats_decoded_last_ = 0;
     int stats_rendered_last_ = 0;

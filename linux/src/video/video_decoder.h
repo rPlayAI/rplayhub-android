@@ -45,7 +45,11 @@ public:
     VideoDecoder();
     ~VideoDecoder();
 
-    bool init(const std::string& codec_name = "h264");
+    // codec_name: what the agent reports ("h264", "hevc", "vp8", "vp9", "av1").
+    // decoder_name: an explicit FFmpeg decoder (e.g. "h264_v4l2m2m"); empty picks
+    // the generic one. A named decoder that is missing, decodes another codec or
+    // fails to open falls back to the generic decoder with a log line.
+    bool init(const std::string& codec_name = "h264", const std::string& decoder_name = "");
     void close();
 
     // Feed a packet (header + payload)

@@ -1,4 +1,5 @@
 #include "ui/gui_app.h"
+#include "session/agent_session.h"
 #include <cstdlib>
 #include <iostream>
 #include <string>
@@ -9,6 +10,18 @@ int main(int argc, char* argv[]) {
     std::string dump_path;
     std::string serial;
     bool stats = false;
+    rplayhub::AgentSession::Options opts;
+    if (const char* env = std::getenv("RPLAYHUB_DECODER")) opts.decoder = env;
+
+    auto parse_size = [&](const std::string& v) -> bool {
+        size_t x = v.find_first_of("xX,");
+        if (x == std::string::npos) return false;
+        try {
+            opts.max_w = std::stoi(v.substr(0, x));
+            opts.max_h = std::stoi(v.substr(x + 1));
+        } catch (...) { return false; }
+        return opts.max_w > 0 && opts.max_h > 0;
+    };
     if (const char* env = std::getenv("RPLAYHUB_SERIAL")) serial = env;
 
     for (int i = 1; i < argc; ++i) {
@@ -23,13 +36,32 @@ int main(int argc, char* argv[]) {
             serial = argv[++i];
         } else if (arg == "--stats") {
             stats = true;
+        } else if (arg == "--decoder" && i + 1 < argc) {
+            opts.decoder = argv[++i];
+        } else if (arg == "--codec" && i + 1 < argc) {
+            opts.codec = argv[++i];
+            if (opts.codec == "h264") opts.codec = "avc";
+            if (opts.codec == "h265") opts.codec = "hevc";
+            if (opts.codec != "avc" && opts.codec != "hevc" && opts.codec != "vp8" &&
+                opts.codec != "vp9" && opts.codec != "av1") {
+                std::cerr << "--codec: expected avc, hevc, vp8, vp9 or av1\n";
+                return 2;
+            }
+        } else if (arg == "--max-size" && i + 1 < argc) {
+            if (!parse_size(argv[++i])) {
+                std::cerr << "--max-size: expected WxH, e.g. 1080x2400\n";
+                return 2;
+            }
         } else if (arg == "-h" || arg == "--help") {
             std::cout << "Usage: rplayhub-android-linux [options]\n"
                          "  -m, --mirror          start mirroring immediately\n"
                          "      --serial <s>      device --mirror picks (default: first ready), or RPLAYHUB_SERIAL\n"
                          "  -s, --scale <f>       UI scale factor, or RPLAYHUB_SCALE\n"
                          "      --dump-frame <p>  save a BMP of the window once the mirror is up\n"
-                         "      --stats           print decoded / rendered fps to stderr every 5 s\n";
+                         "      --stats           print decoded / rendered fps to stderr every 5 s\n"
+                         "      --codec <c>       agent video codec: avc (default), hevc, vp8, vp9, av1\n"
+                         "      --decoder <name>  FFmpeg decoder, e.g. h264_v4l2m2m (default: generic), or RPLAYHUB_DECODER\n"
+                         "      --max-size WxH    agent frame size cap (default 1080x2400)\n";
             return 0;
         }
     }
@@ -40,6 +72,7 @@ int main(int argc, char* argv[]) {
     }
     app.setPreferredSerial(serial);
     app.setStats(stats);
+    app.setSessionOptions(opts);
 
     if (!app.init()) {
         std::cerr << "Failed to initialize rPlayHub Linux GUI\n";

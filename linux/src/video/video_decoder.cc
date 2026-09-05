@@ -5,6 +5,7 @@ extern "C" {
 #include <libswscale/swscale.h>
 #include <libavutil/imgutils.h>
 #include <libavutil/pixdesc.h>
+#include <libavutil/error.h>
 }
 
 #include <iostream>
@@ -37,31 +38,57 @@ void VideoDecoder::close() {
     logged_format_ = false;
 }
 
-bool VideoDecoder::init(const std::string& codec_name) {
+bool VideoDecoder::init(const std::string& codec_name, const std::string& decoder_name) {
     close();
 
     AVCodecID id = AV_CODEC_ID_H264;
     if (codec_name == "hevc" || codec_name == "h265") id = AV_CODEC_ID_HEVC;
     else if (codec_name == "vp8") id = AV_CODEC_ID_VP8;
     else if (codec_name == "vp9") id = AV_CODEC_ID_VP9;
+    else if (codec_name == "av1") id = AV_CODEC_ID_AV1;
 
-    const AVCodec* codec = avcodec_find_decoder(id);
+    const AVCodec* generic = avcodec_find_decoder(id);
+    const AVCodec* codec = nullptr;
+    if (!decoder_name.empty()) {
+        codec = avcodec_find_decoder_by_name(decoder_name.c_str());
+        if (!codec) {
+            std::cerr << "VideoDecoder: no FFmpeg decoder named '" << decoder_name
+                      << "', falling back to the generic " << codec_name << " decoder\n";
+        } else if (codec->id != id) {
+            std::cerr << "VideoDecoder: decoder '" << decoder_name << "' does not decode "
+                      << codec_name << ", falling back to the generic decoder\n";
+            codec = nullptr;
+        }
+    }
+    if (!codec) codec = generic;
     if (!codec) {
         std::cerr << "VideoDecoder: Decoder not found for " << codec_name << "\n";
         return false;
     }
 
-    codec_ctx_ = avcodec_alloc_context3(codec);
-    if (!codec_ctx_) return false;
+    auto open_with = [&](const AVCodec* c) -> bool {
+        codec_ctx_ = avcodec_alloc_context3(c);
+        if (!codec_ctx_) return false;
+        // Enable low latency
+        codec_ctx_->flags |= AV_CODEC_FLAG_LOW_DELAY;
+        codec_ctx_->flags2 |= AV_CODEC_FLAG2_FAST;
+        int ret = avcodec_open2(codec_ctx_, c, nullptr);
+        if (ret < 0) {
+            char err[AV_ERROR_MAX_STRING_SIZE] = {0};
+            av_strerror(ret, err, sizeof(err));
+            std::cerr << "VideoDecoder: avcodec_open2(" << c->name << ") failed: " << err << "\n";
+            avcodec_free_context(&codec_ctx_);
+            return false;
+        }
+        return true;
+    };
 
-    // Enable low latency
-    codec_ctx_->flags |= AV_CODEC_FLAG_LOW_DELAY;
-    codec_ctx_->flags2 |= AV_CODEC_FLAG2_FAST;
-
-    if (avcodec_open2(codec_ctx_, codec, nullptr) < 0) {
-        avcodec_free_context(&codec_ctx_);
-        return false;
+    if (!open_with(codec)) {
+        if (codec == generic || !generic) return false;
+        std::cerr << "VideoDecoder: falling back to the generic " << generic->name << " decoder\n";
+        if (!open_with(generic)) return false;
     }
+    std::cerr << "VideoDecoder: using " << codec_ctx_->codec->name << " for " << codec_name << "\n";
 
     av_frame_ = av_frame_alloc();
     av_pkt_ = av_packet_alloc();

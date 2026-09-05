@@ -10,7 +10,7 @@ int main(int argc, char** argv) {
     std::cout << "Testing AgentSession against "
               << (serial.empty() ? "the connected device" : serial) << "...\n";
     rplayhub::AgentSession session(serial);
-    if (!session.start(1080, 2400)) {
+    if (!session.start()) {
         std::cerr << "Failed to start session\n";
         return 1;
     }

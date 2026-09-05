@@ -68,15 +68,16 @@ std::vector<std::string> AgentSession::getLogs() {
     return logs_;
 }
 
-bool AgentSession::start(int max_w, int max_h) {
+bool AgentSession::start(const Options& options) {
     if (state_.load() == SessionState::RUNNING || state_.load() == SessionState::DEPLOYING) {
         return false;
     }
 
+    options_ = options;
     stopping_.store(false);
     setStatus(SessionState::DEPLOYING, "Preparing agent deployment...");
 
-    session_thread_ = std::thread(&AgentSession::runBringup, this, max_w, max_h);
+    session_thread_ = std::thread(&AgentSession::runBringup, this);
     return true;
 }
 
@@ -103,7 +104,7 @@ void AgentSession::stop() {
     setStatus(SessionState::STOPPED, "Mirroring stopped");
 }
 
-void AgentSession::runBringup(int max_w, int max_h) {
+void AgentSession::runBringup() {
     std::string agent_dir = findAgentDirectory();
     if (agent_dir.empty()) {
         setStatus(SessionState::FAILED, "Agent binaries not found (run tools/build-agent.sh)");
@@ -169,9 +170,9 @@ void AgentSession::runBringup(int max_w, int max_h) {
         << " app_process " << remote_base
         << " com.android.tools.screensharing.Main"
         << " --socket=" << socket_name_
-        << " --max_size=" << max_w << "," << max_h
+        << " --max_size=" << options_.max_w << "," << options_.max_h
         << " --flags=1"
-        << " --codec=avc"
+        << " --codec=" << options_.codec
         << " --log=info";
 
     shell_socket_ = adb_.shellStream(serial_, cmd.str());
@@ -230,8 +231,8 @@ void AgentSession::runBringup(int max_w, int max_h) {
     }
     addLog("Agent video codec: " + codec_name);
 
-    if (!decoder_.init(codec_name.empty() ? "h264" : codec_name)) {
-        setStatus(SessionState::FAILED, "Failed to initialize FFmpeg H.264 video decoder");
+    if (!decoder_.init(codec_name.empty() ? "h264" : codec_name, options_.decoder)) {
+        setStatus(SessionState::FAILED, "Failed to initialize FFmpeg " + codec_name + " video decoder");
         return;
     }
 
