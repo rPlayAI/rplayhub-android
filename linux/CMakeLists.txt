@@ -7,11 +7,14 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(PkgConfig REQUIRED)
 find_package(Threads REQUIRED)
 
-pkg_check_modules(SDL2 REQUIRED sdl2)
-pkg_check_modules(AVCODEC REQUIRED libavcodec)
-pkg_check_modules(AVFORMAT REQUIRED libavformat)
-pkg_check_modules(SWSCALE REQUIRED libswscale)
-pkg_check_modules(AVUTIL REQUIRED libavutil)
+# IMPORTED_TARGET carries pkg-config's include *and* link directories, so a
+# FFmpeg/SDL2 in /usr/local is linked against the same copy whose headers were
+# used (bare -lavcodec would silently pick the distro's /usr/lib copy).
+pkg_check_modules(SDL2 REQUIRED IMPORTED_TARGET sdl2)
+pkg_check_modules(AVCODEC REQUIRED IMPORTED_TARGET libavcodec)
+pkg_check_modules(AVFORMAT REQUIRED IMPORTED_TARGET libavformat)
+pkg_check_modules(SWSCALE REQUIRED IMPORTED_TARGET libswscale)
+pkg_check_modules(AVUTIL REQUIRED IMPORTED_TARGET libavutil)
 
 # Fetch Dear ImGui automatically at configure time
 include(FetchContent)
@@ -34,19 +37,13 @@ add_library(imgui STATIC
 target_include_directories(imgui PUBLIC
     ${imgui_SOURCE_DIR}
     ${imgui_SOURCE_DIR}/backends
-    ${SDL2_INCLUDE_DIRS}
 )
-target_link_libraries(imgui PUBLIC ${SDL2_LIBRARIES})
+target_link_libraries(imgui PUBLIC PkgConfig::SDL2)
 
 include_directories(
     src
     ${imgui_SOURCE_DIR}
     ${imgui_SOURCE_DIR}/backends
-    ${SDL2_INCLUDE_DIRS}
-    ${AVCODEC_INCLUDE_DIRS}
-    ${AVFORMAT_INCLUDE_DIRS}
-    ${SWSCALE_INCLUDE_DIRS}
-    ${AVUTIL_INCLUDE_DIRS}
 )
 
 set(SOURCES
@@ -65,11 +62,11 @@ add_executable(rplayhub-android-linux ${SOURCES})
 
 target_link_libraries(rplayhub-android-linux PRIVATE
     imgui
-    ${SDL2_LIBRARIES}
-    ${AVCODEC_LIBRARIES}
-    ${AVFORMAT_LIBRARIES}
-    ${SWSCALE_LIBRARIES}
-    ${AVUTIL_LIBRARIES}
+    PkgConfig::SDL2
+    PkgConfig::AVCODEC
+    PkgConfig::AVFORMAT
+    PkgConfig::SWSCALE
+    PkgConfig::AVUTIL
     Threads::Threads
 )
 
@@ -85,9 +82,9 @@ add_executable(test_session
 )
 
 target_link_libraries(test_session PRIVATE
-    ${AVCODEC_LIBRARIES}
-    ${AVFORMAT_LIBRARIES}
-    ${SWSCALE_LIBRARIES}
-    ${AVUTIL_LIBRARIES}
+    PkgConfig::AVCODEC
+    PkgConfig::AVFORMAT
+    PkgConfig::SWSCALE
+    PkgConfig::AVUTIL
     Threads::Threads
 )

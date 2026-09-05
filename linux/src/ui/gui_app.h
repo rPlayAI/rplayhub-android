@@ -19,6 +19,10 @@ public:
     ~GuiApp();
 
     void setDumpFrame(const std::string& path) { dump_frame_path_ = path; }
+    // Serial (or ip:port) of the device --mirror should pick; empty = first ready device.
+    void setPreferredSerial(const std::string& serial) { preferred_serial_ = serial; }
+    // Print decoded/rendered frame rates to stderr every few seconds.
+    void setStats(bool on) { stats_ = on; }
 
     bool init();
     void run();
@@ -28,7 +32,12 @@ private:
     bool auto_mirror_ = false;
     float scale_ = 0.0f;
     std::string dump_frame_path_;
+    std::string preferred_serial_;
     int frame_count_ = 0;
+    bool stats_ = false;
+    std::chrono::steady_clock::time_point stats_last_;
+    uint64_t stats_decoded_last_ = 0;
+    int stats_rendered_last_ = 0;
 
     SDL_Window* window_ = nullptr;
     SDL_Renderer* renderer_ = nullptr;

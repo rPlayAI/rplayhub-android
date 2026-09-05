@@ -55,7 +55,7 @@ cd ../..
 ./linux/build/rplayhub-android-linux --mirror      # mirrors the first device
 ```
 
-Other flags today: `--dump <path>` (screenshot), `--scale <f>` / `RPLAYHUB_SCALE` (UI scale).
+Other flags today: `--dump-frame <path>` (screenshot), `--scale <f>` / `RPLAYHUB_SCALE` (UI scale).
 Fonts: `linux/fonts/Inter-*.ttf` are looked up relative to cwd with a Roboto fallback.
 
 Fix whatever the README got wrong for the distro, then commit that before touching code.

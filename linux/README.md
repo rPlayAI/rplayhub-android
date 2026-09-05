@@ -59,19 +59,31 @@ When designing the Linux client to match the macOS UI (see the macOS screenshot)
 *Continuing this port on a Linux host or a Raspberry Pi? See [`doc/LINUX-AND-RPI.md`](../doc/LINUX-AND-RPI.md).*
 
 ### Prerequisites
-- GCC / G++ (C++17)
-- CMake (>= 3.16)
-- SDL2 (`libsdl2-dev`)
-- FFmpeg development libraries (`libavcodec-dev`, `libavformat-dev`, `libswscale-dev`, `libavutil-dev`)
-- Android SDK & NDK (for building the device agent)
+- GCC / G++ (C++17) and CMake (>= 3.16)
+- SDL2 and FFmpeg development libraries, adb, pkg-config
 
-*Note: Dear ImGui is fetched automatically at configure time via CMake `FetchContent` (no submodules or manual installation required).*
+Debian / Ubuntu / Raspberry Pi OS (Bookworm or later; verified on Ubuntu 22.04 x86_64):
+```bash
+sudo apt install build-essential cmake pkg-config git \
+     libsdl2-dev libavcodec-dev libavformat-dev libswscale-dev libavutil-dev adb
+```
+The adb package is `android-tools-adb` on older releases. Add yourself to `plugdev` if adb cannot see a USB phone.
+
+Dear ImGui is fetched automatically at configure time via CMake `FetchContent` (network needed once).
+
+If a second FFmpeg or SDL2 lives in `/usr/local` (a self-built one next to the distro's), pkg-config
+picks it and the build links against that copy — check with `ldd linux/build/rplayhub-android-linux`.
 
 ### 1. Build the Device Agent (Once)
 ```bash
 tools/build-agent.sh
 ```
-This produces `build/agent/screen-sharing-agent.jar` and `<abi>/libscreen-sharing-agent.so`.
+This needs the Android SDK + NDK and an x86_64 or macOS host (Google ships no Linux arm64
+build-tools), and produces `build/agent/screen-sharing-agent.jar` and
+`<abi>/libscreen-sharing-agent.so`. The output is device-side and architecture-independent, so on
+a machine that cannot build it (a Raspberry Pi) copy `build/agent/` over or point
+`RPLAYHUB_AGENT_DIR` at a copy. The client looks in `build/agent`, `../build/agent`,
+`../../build/agent` relative to the working directory, then `$RPLAYHUB_AGENT_DIR`.
 
 ### 2. Build the Linux GUI
 ```bash
@@ -85,7 +97,20 @@ make -j$(nproc)
 ```bash
 ./linux/build/rplayhub-android-linux
 ```
-Or start immediately mirroring the first connected device:
+Or start immediately mirroring the first ready device:
 ```bash
 ./linux/build/rplayhub-android-linux --mirror
 ```
+
+Options:
+
+| Flag | Environment | Meaning |
+|---|---|---|
+| `-m`, `--mirror` | | Start mirroring immediately |
+| `--serial <s>` | `RPLAYHUB_SERIAL` | Device `--mirror` picks (a USB serial or `ip:port`); default is the first ready device |
+| `-s`, `--scale <f>` | `RPLAYHUB_SCALE` | UI scale factor (auto-detected from the display size) |
+| `--dump-frame <path>` | | Save a BMP of the window once the mirror is showing video, then keep running |
+| `--stats` | | Print decoded / rendered frames per second to stderr every 5 s |
+| | `RPLAYHUB_AGENT_DIR` | Directory holding the device agent (see above) |
+
+Run from the repository root so the agent and `linux/fonts/` are found (Roboto is the fallback).
