@@ -447,9 +447,38 @@ float DisplayWindow::updateChromeAlpha(int win_w, int win_h) {
     const bool near = gx >= wx - reach && gx < wx + win_w + reach && gy >= wy - reach && gy < wy + win_h + reach;
     // A touch in progress keeps the view where it is: the picture must not move under it.
     const float target = (near || touch_down_) ? 1.0f : 0.0f;
+    if (std::getenv("RPLAYHUB_INPUT_DEBUG")) {
+        static int last_near = -1;
+        if (static_cast<int>(near) != last_near) {
+            last_near = near;
+            std::cerr << "display window " << display_id_ << ": pointer " << gx << "," << gy << " window " << wx << "," << wy
+                      << " " << win_w << "x" << win_h << " -> " << (near ? "near" : "away") << "\n";
+        }
+    }
     chrome_alpha_ += (target - chrome_alpha_) * std::min(1.0f, dt * 12.0f);
     if (chrome_alpha_ < 0.01f) chrome_alpha_ = 0.0f;
     if (chrome_alpha_ > 0.99f) chrome_alpha_ = 1.0f;
+
+    // The normal window is taller than the bare picture: the bars and the chassis come out
+    // of extra height, not out of the picture, so nothing is left blank around the phone.
+    // Grow when the view starts coming in, shrink back once it has gone.
+    const bool maximized = SDL_GetWindowFlags(window_) & SDL_WINDOW_MAXIMIZED;
+    if (have_frame_ && tex_w_ > 0 && tex_h_ > 0 && !maximized) {
+        const float aspect = static_cast<float>(tex_w_) / tex_h_;
+        auto resize = [this, wx, wy](int w, int h) {
+            SDL_SetWindowSize(window_, w, h);
+            SDL_SetWindowPosition(window_, wx, wy);   // the window manager may otherwise re-place it
+            if (std::getenv("RPLAYHUB_INPUT_DEBUG")) std::cerr << "display window " << display_id_ << ": resized to " << w << "x" << h << "\n";
+        };
+        if (target > 0.5f && !normal_sized_) {
+            const float pw = win_w / (1.0f + 2.0f * 0.045f), bezel = 0.045f * pw;
+            resize(win_w, static_cast<int>(std::lround(titleBarHeight() + pw / aspect + 2.0f * bezel + toolbarHeight())));
+            normal_sized_ = true;
+        } else if (target < 0.5f && normal_sized_ && chrome_alpha_ == 0.0f) {
+            resize(win_w, static_cast<int>(std::lround(win_w / aspect)));
+            normal_sized_ = false;
+        }
+    }
     return chrome_alpha_;
 }
 
@@ -484,8 +513,10 @@ void DisplayWindow::renderChrome(int win_w, int win_h, int out_w, int out_h) {
     ImGui::Begin("##normal", nullptr, flags);
     ImDrawList* dl = ImGui::GetWindowDrawList();
 
-    // The light window over the bare picture
-    dl->AddRectFilled(ImVec2(0, 0), ImVec2(W, H), alpha(247, 247, 250, 255));
+    // The window over the bare picture: white stage, light gray title bar (doc/rPlayHub-android-vm.png)
+    dl->AddRectFilled(ImVec2(0, 0), ImVec2(W, H), alpha(255, 255, 255, 255));
+    dl->AddRectFilled(ImVec2(0, 0), ImVec2(W, top_h), alpha(236, 236, 238, 255));
+    dl->AddLine(ImVec2(0, top_h - 0.5f), ImVec2(W, top_h - 0.5f), alpha(214, 214, 218, 255), 1.0f);
 
     // ---- title bar: traffic lights, title ----
     {
@@ -522,25 +553,33 @@ void DisplayWindow::renderChrome(int win_w, int win_h, int out_w, int out_h) {
                 else SDL_MaximizeWindow(window_);
             }
         }
-        const float title_px = 14.5f * s;
-        ImVec2 sz = ui_font_bold_->CalcTextSizeA(title_px, FLT_MAX, 0.0f, title_.c_str());
-        dl->AddText(ui_font_bold_, title_px, ImVec2((W - sz.x) * 0.5f, (top_h - sz.y) * 0.5f),
-                    alpha(28, 28, 30, 255), title_.c_str());
+        // "rPlayHub — <title>" after the lights, like the Mac's
+        const float title_px = 13.5f * s;
+        const std::string full = "rPlayHub \u2014 " + title_;
+        ImVec2 sz = ui_font_bold_->CalcTextSizeA(title_px, FLT_MAX, 0.0f, full.c_str());
+        dl->AddText(ui_font_bold_, title_px, ImVec2(84.0f * s, (top_h - sz.y) * 0.5f),
+                    alpha(50, 50, 54, 255), full.c_str());
     }
 
     // ---- stage: the phone in its bezel, like the main window ----
+    // The chassis is proportioned like the Mac's: bezel 4.5 % of the screen width, corner radii
+    // 16 % outside and 12 % inside, a camera hole 4 % wide a little below the top; it spans
+    // the window and sits right between the title bar and the strip.
     const float stage_top = top_h, stage_h = std::max(1.0f, H - top_h - strip_h);
     if (texture_ && have_frame_) {
-        const float bezel = 12.0f * s, margin = bezel + 8.0f * s;
         const float aspect = static_cast<float>(tex_w_) / static_cast<float>(tex_h_);
-        float ph = stage_h - 2.0f * margin, pw = ph * aspect;
-        if (pw > W - 2.0f * margin) { pw = W - 2.0f * margin; ph = pw / aspect; }
+        // Solve for the screen size: height first, then the window width as the cap. With the
+        // window grown for this view the chassis fills the stage exactly.
+        float ph = stage_h / (1.0f + 2.0f * 0.045f * aspect);
+        float pw = ph * aspect;
+        const float max_pw = W / (1.0f + 2.0f * 0.045f);
+        if (pw > max_pw) { pw = max_pw; ph = pw / aspect; }
+        const float bezel = 0.045f * pw;
         const float px = (W - pw) * 0.5f, py = stage_top + (stage_h - ph) * 0.5f;
-        dl->AddRectFilled(ImVec2(px - bezel, py - bezel), ImVec2(px + pw + bezel, py + ph + bezel), alpha(18, 18, 22, 255), 28.0f * s);
-        dl->AddRect(ImVec2(px - bezel, py - bezel), ImVec2(px + pw + bezel, py + ph + bezel), alpha(55, 55, 62, 255), 28.0f * s, 0, 1.5f * s);
+        dl->AddRectFilled(ImVec2(px - bezel, py - bezel), ImVec2(px + pw + bezel, py + ph + bezel), alpha(6, 6, 8, 255), 0.16f * pw);
         dl->AddImageRounded((ImTextureID)(intptr_t)texture_, ImVec2(px, py), ImVec2(px + pw, py + ph),
-                            ImVec2(0, 0), ImVec2(1, 1), alpha(255, 255, 255, 255), 20.0f * s);
-        dl->AddCircleFilled(ImVec2(px + pw * 0.5f, py + 14.0f * s), 5.0f * s, alpha(0, 0, 0, 255));
+                            ImVec2(0, 0), ImVec2(1, 1), alpha(255, 255, 255, 255), 0.12f * pw);
+        dl->AddCircleFilled(ImVec2(px + pw * 0.5f, py + 0.07f * pw), 0.041f * pw, alpha(0, 0, 0, 255), 32);
         // Touches map to the picture as drawn here once the normal view has taken over
         if (a >= 0.5f) {
             image_rect_ = { static_cast<int>(px), static_cast<int>(py), static_cast<int>(pw), static_cast<int>(ph) };
