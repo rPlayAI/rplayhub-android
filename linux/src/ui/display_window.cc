@@ -22,8 +22,8 @@ namespace {
 
 // The normal window's chassis, in proportions of the screen width / the window (doc/rPlayHub-android-vm.png)
 constexpr float kBezel = 0.045f;        // bezel each side, of the screen width
-constexpr float kChassisSpan = 1.0f;    // chassis width as a share of the window width (no white margins)
-constexpr float kChassisGap = 0.0f;     // scaled px between the chassis and each bar
+constexpr float kChassisSpan = 0.9f;    // chassis width as a share of the window width
+constexpr float kChassisGap = 2.0f;     // scaled px between the chassis and each bar
 
 // The X11 shape extension would be the classic way to round a window, but GNOME Shell on X11
 // paints unframed shaped windows square (xeyes comes out as a black rectangle). What every
@@ -531,10 +531,9 @@ void DisplayWindow::renderChrome(int win_w, int win_h, int out_w, int out_h) {
     ImGui::Begin("##normal", nullptr, flags);
     ImDrawList* dl = ImGui::GetWindowDrawList();
 
-    // The window over the bare picture: black stage (the user wants no white around the
-    // phone), light gray title bar, white strip (doc/rPlayHub-android-vm.png)
-    dl->AddRectFilled(ImVec2(0, 0), ImVec2(W, H), alpha(6, 6, 8, 255));
-    dl->AddRectFilled(ImVec2(0, H - strip_h), ImVec2(W, H), alpha(255, 255, 255, 255));
+    // The window over the bare picture: white stage and strip, light gray title bar
+    // (doc/rPlayHub-android-vm.png)
+    dl->AddRectFilled(ImVec2(0, 0), ImVec2(W, H), alpha(255, 255, 255, 255));
     dl->AddRectFilled(ImVec2(0, 0), ImVec2(W, top_h), alpha(236, 236, 238, 255));
     dl->AddLine(ImVec2(0, top_h - 0.5f), ImVec2(W, top_h - 0.5f), alpha(214, 214, 218, 255), 1.0f);
 
