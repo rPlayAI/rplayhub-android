@@ -37,6 +37,9 @@ GuiApp::~GuiApp() {
 }
 
 bool GuiApp::init() {
+    // Never ask the compositor to step aside: the pop-out windows rely on it for their
+    // transparent corners, and this is not a game.
+    SDL_SetHint(SDL_HINT_VIDEO_X11_NET_WM_BYPASS_COMPOSITOR, "0");
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_TIMER | SDL_INIT_GAMECONTROLLER) != 0) {
         std::cerr << "Error: SDL_Init: " << SDL_GetError() << "\n";
         return false;
@@ -934,7 +937,7 @@ SDL_HitTestResult GuiApp::hitTest(SDL_Window* win, const SDL_Point* pt, void* da
 // Close, minimise, zoom: drawn like macOS, with the glyphs on hover.
 void GuiApp::renderTrafficLights(ImVec2 pos) {
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    const float r = 6.0f * scale_, gap = 20.0f * scale_;
+    const float r = 7.5f * scale_, gap = 24.0f * scale_;   // macOS discs, a notch larger
     const ImU32 cols[3] = { IM_COL32(255, 95, 87, 255), IM_COL32(254, 188, 46, 255), IM_COL32(40, 200, 64, 255) };
     const ImU32 rims[3] = { IM_COL32(225, 70, 62, 255), IM_COL32(222, 160, 30, 255), IM_COL32(30, 170, 50, 255) };
     ImGui::SetCursorScreenPos(ImVec2(pos.x - r - 4 * scale_, pos.y - r - 4 * scale_));

@@ -20,6 +20,11 @@ namespace rplayhub {
 
 namespace {
 
+// The normal window's chassis, in proportions of the screen width / the window (doc/rPlayHub-android-vm.png)
+constexpr float kBezel = 0.045f;        // bezel each side, of the screen width
+constexpr float kChassisSpan = 0.9f;    // chassis width as a share of the window width
+constexpr float kChassisGap = 2.0f;     // scaled px between the chassis and each bar
+
 // The X11 shape extension would be the classic way to round a window, but GNOME Shell on X11
 // paints unframed shaped windows square (xeyes comes out as a black rectangle). What every
 // compositor does honour is a window with an alpha channel, so the pop-out asks SDL for a
@@ -108,7 +113,10 @@ void DisplayWindow::cutCorners(int out_w, int out_h, float px_per_unit) {
     if (!argb_) return;
     int win_w = 0, win_h = 0;
     SDL_GetWindowSize(window_, &win_w, &win_h);
-    const float r = std::clamp(std::min(win_w, win_h) * 0.1f, 12.0f, 96.0f) * px_per_unit;
+    // Bare: a big arc that follows the window. Normal window: a macOS window's ~10 pt corner.
+    const float bare_r = std::clamp(std::min(win_w, win_h) * 0.1f, 12.0f, 96.0f);
+    const float normal_r = 11.0f * chrome_.scale;
+    const float r = (bare_r + (normal_r - bare_r) * chrome_alpha_) * px_per_unit;
     const int ri = static_cast<int>(std::ceil(r));
     if (ri <= 0) return;
     static const SDL_BlendMode scale_by_alpha = SDL_ComposeCustomBlendMode(
@@ -154,7 +162,7 @@ SDL_HitTestResult DisplayWindow::hitTest(SDL_Window* win, const SDL_Point* pt, v
     if (r) return SDL_HITTEST_RESIZE_RIGHT;
     // The traffic lights at the top-left take the click; the rest of the title strip drags.
     const float s = self->chrome_.scale;
-    if (pt->y < self->titleBarHeight()) return pt->x < 84.0f * s ? SDL_HITTEST_NORMAL : SDL_HITTEST_DRAGGABLE;
+    if (pt->y < self->titleBarHeight()) return pt->x < 90.0f * s ? SDL_HITTEST_NORMAL : SDL_HITTEST_DRAGGABLE;
     return SDL_HITTEST_NORMAL;
 }
 
@@ -459,8 +467,8 @@ float DisplayWindow::updateChromeAlpha(int win_w, int win_h) {
     if (chrome_alpha_ < 0.01f) chrome_alpha_ = 0.0f;
     if (chrome_alpha_ > 0.99f) chrome_alpha_ = 1.0f;
 
-    // The normal window is taller than the bare picture: the bars and the chassis come out
-    // of extra height, not out of the picture, so nothing is left blank around the phone.
+    // The normal window is taller than the bare picture: the bars come out of extra height,
+    // not out of the picture, so nothing is left blank around the phone.
     // Grow when the view starts coming in, shrink back once it has gone.
     const bool maximized = SDL_GetWindowFlags(window_) & SDL_WINDOW_MAXIMIZED;
     if (have_frame_ && tex_w_ > 0 && tex_h_ > 0 && !maximized) {
@@ -470,12 +478,19 @@ float DisplayWindow::updateChromeAlpha(int win_w, int win_h) {
             SDL_SetWindowPosition(window_, wx, wy);   // the window manager may otherwise re-place it
             if (std::getenv("RPLAYHUB_INPUT_DEBUG")) std::cerr << "display window " << display_id_ << ": resized to " << w << "x" << h << "\n";
         };
+        // Mac proportions: the chassis (screen + 4.5 % bezel each side) spans 90 % of the
+        // window's width and touches the bars, so the picture keeps its size and the window
+        // grows around it, right and down.
         if (target > 0.5f && !normal_sized_) {
-            const float pw = win_w / (1.0f + 2.0f * 0.045f), bezel = 0.045f * pw;
-            resize(win_w, static_cast<int>(std::lround(titleBarHeight() + pw / aspect + 2.0f * bezel + toolbarHeight())));
+            bare_w_ = win_w;
+            bare_h_ = win_h;
+            const float pw = static_cast<float>(win_w), bezel = kBezel * pw;
+            const int w = static_cast<int>(std::lround((pw + 2.0f * bezel) / kChassisSpan));
+            const int h = static_cast<int>(std::lround(titleBarHeight() + pw / aspect + 2.0f * bezel + 2.0f * kChassisGap * chrome_.scale + toolbarHeight()));
+            resize(w, h);
             normal_sized_ = true;
         } else if (target < 0.5f && normal_sized_ && chrome_alpha_ == 0.0f) {
-            resize(win_w, static_cast<int>(std::lround(win_w / aspect)));
+            resize(bare_w_ > 0 ? bare_w_ : win_w, bare_h_ > 0 ? bare_h_ : static_cast<int>(std::lround(win_w / aspect)));
             normal_sized_ = false;
         }
     }
@@ -520,7 +535,7 @@ void DisplayWindow::renderChrome(int win_w, int win_h, int out_w, int out_h) {
 
     // ---- title bar: traffic lights, title ----
     {
-        const float r = 6.0f * s, gap = 20.0f * s;
+        const float r = 7.5f * s, gap = 24.0f * s;   // same discs as the main window
         const ImVec2 pos(18.0f * s, top_h * 0.5f);
         const ImU32 cols[3] = { alpha(255, 95, 87, 255), alpha(254, 188, 46, 255), alpha(40, 200, 64, 255) };
         const ImU32 rims[3] = { alpha(225, 70, 62, 255), alpha(222, 160, 30, 255), alpha(30, 170, 50, 255) };
@@ -562,19 +577,18 @@ void DisplayWindow::renderChrome(int win_w, int win_h, int out_w, int out_h) {
     }
 
     // ---- stage: the phone in its bezel, like the main window ----
-    // The chassis is proportioned like the Mac's: bezel 4.5 % of the screen width, corner radii
-    // 16 % outside and 12 % inside, a camera hole 4 % wide a little below the top; it spans
-    // the window and sits right between the title bar and the strip.
+    // ---- stage: the phone in its black chassis, proportioned like the Mac's ----
+    // Bezel 4.5 % of the screen width, corner radii 16 % outside and 12 % inside, a camera
+    // hole 4 % wide; the chassis spans 90 % of the window and touches the bars.
     const float stage_top = top_h, stage_h = std::max(1.0f, H - top_h - strip_h);
     if (texture_ && have_frame_) {
         const float aspect = static_cast<float>(tex_w_) / static_cast<float>(tex_h_);
-        // Solve for the screen size: height first, then the window width as the cap. With the
-        // window grown for this view the chassis fills the stage exactly.
-        float ph = stage_h / (1.0f + 2.0f * 0.045f * aspect);
+        const float gap_v = kChassisGap * s;
+        float ph = (stage_h - 2.0f * gap_v) / (1.0f + 2.0f * kBezel * aspect);
         float pw = ph * aspect;
-        const float max_pw = W / (1.0f + 2.0f * 0.045f);
+        const float max_pw = kChassisSpan * W / (1.0f + 2.0f * kBezel);
         if (pw > max_pw) { pw = max_pw; ph = pw / aspect; }
-        const float bezel = 0.045f * pw;
+        const float bezel = kBezel * pw;
         const float px = (W - pw) * 0.5f, py = stage_top + (stage_h - ph) * 0.5f;
         dl->AddRectFilled(ImVec2(px - bezel, py - bezel), ImVec2(px + pw + bezel, py + ph + bezel), alpha(6, 6, 8, 255), 0.16f * pw);
         dl->AddImageRounded((ImTextureID)(intptr_t)texture_, ImVec2(px, py), ImVec2(px + pw, py + ph),
