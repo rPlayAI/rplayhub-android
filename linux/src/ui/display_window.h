@@ -46,6 +46,9 @@ public:
     const std::string& package() const { return package_; }
     void setPackage(const std::string& p) { package_ = p; }
     void setTitle(const std::string& title);
+    // Height of a bare phone window of the given width: the screen (aspect w/h) plus the
+    // chassis bezel above and below it, so the chassis fills the window exactly.
+    static int bareHeightForWidth(int width, float screen_aspect);
     // Give the window its hover chrome: the macOS-style title bar and the bottom toolbar,
     // shown while the pointer is in or near the window. Without it the window is picture only.
     void setChrome(const DisplayChrome& chrome);
@@ -82,6 +85,8 @@ private:
     bool overChrome(int x, int y) const;
     // Where the picture sits inside the chassis of the normal window, in window units.
     void chassisPicture(float W, float H, float& px, float& py, float& pw, float& ph) const;
+    // Where the screen sits when the chassis fills the whole window (bare mode).
+    void barePicture(float W, float H, float& px, float& py, float& pw, float& ph) const;
     // The phone's own window gets the chassis and the control strip; Desktop Mode and app
     // windows are plain rectangles (doc/mirror-and-youtube.png) with just a title bar.
     bool isPhone() const { return display_id_ == 0; }

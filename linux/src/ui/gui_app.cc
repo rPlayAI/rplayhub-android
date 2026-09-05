@@ -1425,6 +1425,11 @@ void GuiApp::openDisplayWindow(const AgentSession::DisplayDescriptor& d, const P
     int win_w = static_cast<int>(win_h * aspect);
     int max_w = static_cast<int>((dm.w > 0 ? dm.w : 1920) * 0.75f);
     if (win_w > max_w) { win_w = max_w; win_h = static_cast<int>(win_w / aspect); }
+    if (d.id == 0) {
+        // The phone's own window shows the chassis around the screen: room for the bezel.
+        win_w = static_cast<int>(win_w * 0.92f);
+        win_h = DisplayWindow::bareHeightForWidth(win_w, aspect);
+    }
 
     auto win = std::make_unique<DisplayWindow>(d.id, title, win_w, win_h, req.decorated);
     if (!win->valid()) {

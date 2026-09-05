@@ -115,7 +115,16 @@ void DisplayWindow::cutCorners(int out_w, int out_h, float px_per_unit) {
     SDL_GetWindowSize(window_, &win_w, &win_h);
     // Bare: a big arc that follows the window. Normal window: a macOS window's ~10 pt corner.
     const float normal_r = 11.0f * chrome_.scale;
-    const float bare_r = isPhone() ? std::clamp(std::min(win_w, win_h) * 0.16f, 12.0f, 180.0f) : normal_r;
+    float bare_r = normal_r;
+    if (isPhone()) {
+        if (tex_w_ > 0 && tex_h_ > 0) {
+            float bx, by, bw, bh;
+            barePicture(static_cast<float>(win_w), static_cast<float>(win_h), bx, by, bw, bh);
+            bare_r = 0.16f * bw;   // the chassis's own outer corner
+        } else {
+            bare_r = std::min(win_w, win_h) * 0.14f;
+        }
+    }
     const float r = (bare_r + (normal_r - bare_r) * chrome_alpha_) * px_per_unit;
     const int ri = static_cast<int>(std::ceil(r));
     if (ri <= 0) return;
@@ -235,6 +244,24 @@ void DisplayWindow::buildChromeFonts() {
     io.FontDefault = ui_font_;
     font_title_ = title_;
     ImGui::SetCurrentContext(prev);
+}
+
+int DisplayWindow::bareHeightForWidth(int width, float screen_aspect) {
+    const float pw = width / (1.0f + 2.0f * kBezel);
+    return static_cast<int>(std::lround(pw / screen_aspect + 2.0f * kBezel * pw));
+}
+
+void DisplayWindow::barePicture(float W, float H, float& px, float& py, float& pw, float& ph) const {
+    const float aspect = static_cast<float>(tex_w_) / static_cast<float>(tex_h_);
+    if (!isPhone()) {   // no chassis: the picture fills the window
+        pw = W; ph = pw / aspect;
+        if (ph > H) { ph = H; pw = ph * aspect; }
+    } else {
+        pw = std::min(W / (1.0f + 2.0f * kBezel), H / (1.0f / aspect + 2.0f * kBezel));
+        ph = pw / aspect;
+    }
+    px = (W - pw) * 0.5f;
+    py = (H - ph) * 0.5f;
 }
 
 void DisplayWindow::chassisPicture(float W, float H, float& px, float& py, float& pw, float& ph) const {
@@ -580,23 +607,20 @@ void DisplayWindow::renderChrome(int win_w, int win_h, int out_w, int out_h) {
     // 12 % inside, a camera hole 4 % wide, spanning 90 % of the window between the bars.
     // Desktop Mode / app windows just fit under the title bar.
     if (texture_ && have_frame_) {
-        const float aspect = static_cast<float>(tex_w_) / static_cast<float>(tex_h_);
-        float bw = W, bh = bw / aspect;            // bare: fills the window
-        if (bh > H) { bh = H; bw = bh * aspect; }
-        const float bx = (W - bw) * 0.5f, by = (H - bh) * 0.5f;
-        float cx, cy, cw, ch;                       // chassis / under the title bar
+        float bx, by, bw, bh;                       // bare: the chassis fills the window
+        barePicture(W, H, bx, by, bw, bh);
+        float cx, cy, cw, ch;                       // window mode: between the bars
         chassisPicture(W, H, cx, cy, cw, ch);
         const float px = bx + (cx - bx) * e, py = by + (cy - by) * e;
         const float pw = bw + (cw - bw) * e, ph = bh + (ch - bh) * e;
         if (isPhone()) {
-            const float bezel = kBezel * pw * e;
-            if (bezel > 0.5f) {
-                dl->AddRectFilled(ImVec2(px - bezel, py - bezel), ImVec2(px + pw + bezel, py + ph + bezel),
-                                  alpha(6, 6, 8, 255), 0.16f * pw * e);
-            }
+            // The chassis is there in both modes, like the Mac's (doc/mirror-and-youtube.png)
+            const float bezel = kBezel * pw;
+            dl->AddRectFilled(ImVec2(px - bezel, py - bezel), ImVec2(px + pw + bezel, py + ph + bezel),
+                              IM_COL32(6, 6, 8, 255), 0.16f * pw);
             dl->AddImageRounded((ImTextureID)(intptr_t)texture_, ImVec2(px, py), ImVec2(px + pw, py + ph),
-                                ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE, 0.12f * pw * e);
-            if (e > 0.0f) dl->AddCircleFilled(ImVec2(px + pw * 0.5f, py + 0.07f * pw), 0.041f * pw * e, alpha(0, 0, 0, 255), 32);
+                                ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE, 0.12f * pw);
+            dl->AddCircleFilled(ImVec2(px + pw * 0.5f, py + 0.07f * pw), 0.041f * pw, IM_COL32(0, 0, 0, 255), 32);
         } else {
             dl->AddRectFilled(ImVec2(0, top_h * e), ImVec2(W, H), IM_COL32(0, 0, 0, 255));
             dl->AddImage((ImTextureID)(intptr_t)texture_, ImVec2(px, py), ImVec2(px + pw, py + ph),
