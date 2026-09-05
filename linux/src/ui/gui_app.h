@@ -92,6 +92,7 @@ private:
     std::chrono::steady_clock::time_point reconnect_at_;
     std::chrono::steady_clock::time_point session_started_;
     bool connect_inflight_ = false;
+    std::chrono::steady_clock::time_point recording_started_;
 
     // UI state
     char search_filter_[128] = {0};
@@ -156,6 +157,10 @@ private:
     void stopMirroring();
     void restartSession();
     void maintainSession();
+    void takeScreenshot();
+    void toggleRecording();
+    static std::string mediaDir(const char* subdir);
+    static std::string timestampName(const std::string& model, const char* ext);
 
     // Render components
     void renderLeftSidebar(float width, float height);

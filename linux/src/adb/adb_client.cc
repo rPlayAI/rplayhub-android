@@ -454,12 +454,6 @@ bool AdbClient::disconnectNetwork(const std::string& address) {
     return true;
 }
 
-bool AdbClient::takeScreenshot(const std::string& serial, const std::string& local_png_path) {
-    std::string cmd = "adb -s " + serial + " exec-out screencap -p > " + local_png_path;
-    int res = system(cmd.c_str());
-    return res == 0;
-}
-
 bool AdbClient::installApk(const std::string& serial, const std::string& apk_path, std::string& out_err) {
     std::string remote = "/data/local/tmp/rplayhub-install-" + std::to_string(getpid()) + ".apk";
     if (!pushFile(serial, apk_path, remote, 0644)) {

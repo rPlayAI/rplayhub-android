@@ -4,6 +4,7 @@
 #include "net/tcp_listener.h"
 #include "adb/adb_client.h"
 #include "video/video_decoder.h"
+#include "video/stream_recorder.h"
 #include "protocol/control_messages.h"
 #include <string>
 #include <vector>
@@ -43,6 +44,9 @@ public:
     const std::string& getSerial() const { return serial_; }
 
     VideoDecoder& getDecoder() { return decoder_; }
+    StreamRecorder& getRecorder() { return recorder_; }
+    // Codec the agent reported in the channel header ("h264", "hevc"); empty until RUNNING.
+    std::string getCodecName() const;
 
     // Input injection
     void sendTouch(int x, int y, int action);
@@ -51,6 +55,10 @@ public:
     void sendKey(int keycode, int action = KeyAction::DOWN_AND_UP);
     void sendText(const std::string& text);
     void setOrientation(int quadrants);
+    // Restart the primary display's encoder so the next packets are SPS/PPS and an IDR.
+    // The agent's encoders emit no periodic keyframes, and a recording needs one to start.
+    // Costs a ~100 ms gap in the mirror.
+    void requestKeyframe();
     void wakeOrPower(bool power);
 
     // Logs
@@ -66,6 +74,8 @@ private:
 
     AdbClient adb_;
     VideoDecoder decoder_;
+    StreamRecorder recorder_;
+    std::string codec_name_;
 
     TCPSocket video_socket_;
     TCPSocket control_socket_;

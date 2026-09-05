@@ -237,6 +237,10 @@ void AgentSession::runBringup() {
         codec_name.pop_back();
     }
     addLog("Agent video codec: " + codec_name);
+    {
+        std::lock_guard<std::mutex> lock(status_mutex_);
+        codec_name_ = codec_name.empty() ? "h264" : codec_name;
+    }
 
     if (!decoder_.init(codec_name.empty() ? "h264" : codec_name, options_.decoder)) {
         setStatus(SessionState::FAILED, "Failed to initialize FFmpeg " + codec_name + " video decoder");
@@ -274,6 +278,7 @@ void AgentSession::runVideoLoop() {
         }
         std::memset(payload_buf.data() + pkt_sz, 0, 64);
 
+        recorder_.write(payload_buf.data(), pkt_sz, header);
         decoder_.decode(payload_buf.data(), pkt_sz, header);
     }
 
@@ -303,6 +308,11 @@ void AgentSession::runLogLoop() {
             }
         }
     }
+}
+
+std::string AgentSession::getCodecName() const {
+    std::lock_guard<std::mutex> lock(status_mutex_);
+    return codec_name_;
 }
 
 void AgentSession::sendTouch(int x, int y, int action) {
@@ -349,6 +359,15 @@ void AgentSession::setOrientation(int quadrants) {
     auto msg = ControlMessages::setDeviceOrientation(quadrants);
     std::lock_guard<std::mutex> lock(control_mutex_);
     control_socket_.writeAll(msg.data(), msg.size());
+}
+
+void AgentSession::requestKeyframe() {
+    if (!control_socket_.isValid()) return;
+    auto stop = ControlMessages::stopVideoStream(0);
+    auto start = ControlMessages::startVideoStream(0, options_.max_w, options_.max_h);
+    std::lock_guard<std::mutex> lock(control_mutex_);
+    control_socket_.writeAll(stop.data(), stop.size());
+    control_socket_.writeAll(start.data(), start.size());
 }
 
 void AgentSession::wakeOrPower(bool power) {
