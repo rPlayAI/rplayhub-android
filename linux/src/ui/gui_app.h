@@ -70,6 +70,11 @@ private:
     bool texture_dirty_ = false;
     uint64_t frames_shown_ = 0;          // texture uploads, for the Info tab
 
+    void buildFonts();
+    void ensureGlyphs(const std::string& utf8);
+    std::set<ImWchar> extra_codepoints_;
+    bool fonts_dirty_ = false;
+
     // Font hierarchy
     ImFont* font_regular_ = nullptr;
     ImFont* font_medium_ = nullptr;

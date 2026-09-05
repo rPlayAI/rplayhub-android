@@ -7,6 +7,7 @@
 #include "imgui.h"
 #include "backends/imgui_impl_sdl2.h"
 #include "backends/imgui_impl_sdlrenderer2.h"
+#include "imgui_internal.h"   // ImTextCharFromUtf8
 
 #include <iostream>
 #include <sstream>
@@ -111,6 +112,32 @@ bool GuiApp::init() {
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
 
+    buildFonts();
+
+    // Setup Dear ImGui style scaled
+    Theme::applyMacStyle(scale_);
+
+    // Setup Platform/Renderer backends
+    ImGui_ImplSDL2_InitForSDLRenderer(window_, renderer_);
+    ImGui_ImplSDLRenderer2_Init(renderer_);
+
+    last_device_poll_ = std::chrono::steady_clock::now();
+    auto_mirror_deadline_ = last_device_poll_ + std::chrono::seconds(20);
+    pollDevices();
+    pollEmulators();
+
+    return true;
+}
+
+// Load the Inter font family (plus a CJK face and any extra codepoints the device's labels
+// needed) into a fresh atlas. Called at start and again whenever a label shows a glyph the
+// atlas lacks: ImGui 1.91 bakes its atlas up front, so covering every script the device may use
+// means rebuilding it with exactly the codepoints seen, between frames.
+void GuiApp::buildFonts() {
+    ImGuiIO& io = ImGui::GetIO();
+    io.Fonts->Clear();
+    font_regular_ = font_medium_ = font_bold_ = font_title_ = font_caption_ = nullptr;
+
     // Load the Inter font family. The TTFs ship in linux/fonts; look next to the
     // executable first (build dir -> ../fonts) so the client is not tied to a
     // particular working directory, then the usual cwd-relative spots, then
@@ -169,19 +196,62 @@ bool GuiApp::init() {
     float base_bold = 16.5f * scale_;
     float base_title = 20.5f * scale_;
 
-    // Latin plus General Punctuation, so the em dash / bullet in status text render.
-    static const ImWchar glyph_ranges[] = { 0x0020, 0x00FF, 0x2000, 0x206F, 0 };
+    // Latin plus General Punctuation (the em dash / bullet in status text), plus every codepoint
+    // a label has asked for since the last build.
+    static ImVector<ImWchar> base_ranges;
+    base_ranges.clear();
+    {
+        ImFontGlyphRangesBuilder b;
+        static const ImWchar latin[] = { 0x0020, 0x00FF, 0x2000, 0x206F, 0 };
+        b.AddRanges(latin);
+        for (ImWchar c : extra_codepoints_) b.AddChar(c);
+        b.BuildRanges(&base_ranges);
+    }
+    const ImWchar* glyph_ranges = base_ranges.Data;
+
+    // App labels come in the device's languages: merge a CJK face (common Simplified Chinese,
+    // Hiragana, Katakana, Hangul syllables) into the label fonts when the system has one.
+    std::string cjk_path;
+    int cjk_face = 0;
+    for (const auto& [path, face] : std::vector<std::pair<std::string, int>>{
+             {"/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc", 2},   // JP, KR, SC, TC
+             {"/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf", 0},
+             {"/usr/share/fonts/truetype/wqy/wqy-microhei.ttc", 0}}) {
+        if (::access(path.c_str(), R_OK) == 0) { cjk_path = path; cjk_face = face; break; }
+    }
+    static ImVector<ImWchar> cjk_ranges;
+    cjk_ranges.clear();
+    if (!cjk_path.empty()) {
+        ImFontGlyphRangesBuilder b;
+        b.AddRanges(io.Fonts->GetGlyphRangesChineseSimplifiedCommon());
+        static const ImWchar extra[] = { 0x3040, 0x30FF, 0xAC00, 0xD7A3, 0 };   // kana, Hangul
+        b.AddRanges(extra);
+        for (ImWchar c : extra_codepoints_) b.AddChar(c);
+        b.BuildRanges(&cjk_ranges);
+    }
+    auto merge_cjk = [&](float px) {
+        if (cjk_path.empty()) return;
+        ImFontConfig cfg;
+        cfg.MergeMode = true;
+        cfg.FontNo = cjk_face;
+        cfg.OversampleH = 1;   // keeps the atlas within reach of small GPUs
+        io.Fonts->AddFontFromFileTTF(cjk_path.c_str(), px, &cfg, cjk_ranges.Data);
+    };
 
     if (!regular_path.empty()) {
         font_regular_ = io.Fonts->AddFontFromFileTTF(regular_path.c_str(), base_reg, nullptr, glyph_ranges);
+        merge_cjk(base_reg);
         font_caption_ = io.Fonts->AddFontFromFileTTF(regular_path.c_str(), base_cap, nullptr, glyph_ranges);
+        merge_cjk(base_cap);
         if (!medium_path.empty()) {
             font_medium_ = io.Fonts->AddFontFromFileTTF(medium_path.c_str(), base_med, nullptr, glyph_ranges);
+            merge_cjk(base_med);
         } else {
             font_medium_ = font_regular_;
         }
         if (!bold_path.empty()) {
             font_bold_ = io.Fonts->AddFontFromFileTTF(bold_path.c_str(), base_bold, nullptr, glyph_ranges);
+            merge_cjk(base_bold);
             font_title_ = io.Fonts->AddFontFromFileTTF(bold_path.c_str(), base_title, nullptr, glyph_ranges);
         } else {
             font_bold_ = font_regular_;
@@ -191,19 +261,7 @@ bool GuiApp::init() {
         io.Fonts->AddFontDefault();
     }
 
-    // Setup Dear ImGui style scaled
-    Theme::applyMacStyle(scale_);
-
-    // Setup Platform/Renderer backends
-    ImGui_ImplSDL2_InitForSDLRenderer(window_, renderer_);
-    ImGui_ImplSDLRenderer2_Init(renderer_);
-
-    last_device_poll_ = std::chrono::steady_clock::now();
-    auto_mirror_deadline_ = last_device_poll_ + std::chrono::seconds(20);
-    pollDevices();
-    pollEmulators();
-
-    return true;
+    fonts_dirty_ = false;
 }
 
 void GuiApp::cleanup() {
@@ -256,6 +314,7 @@ void GuiApp::pollDevices() {
 
 void GuiApp::applyDeviceList(const std::vector<AdbDevice>& list) {
     devices_ = list;
+    for (const auto& d : devices_) ensureGlyphs(d.displayName());
 
     // Re-find the selection by serial: adb reorders the list as devices come and go.
     selected_device_idx_ = -1;
@@ -372,6 +431,7 @@ void GuiApp::fetchAppLabels(const std::string& serial, std::vector<std::string> 
                 if (it == by_id.end()) continue;
                 const AppEntry& e = *it->second;
                 row.label = e.label;
+                ensureGlyphs(row.label);
                 if (!row.icon && e.icon.valid()) {
                     SDL_Texture* tex = SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_RGBA32,
                                                          SDL_TEXTUREACCESS_STATIC, e.icon.width, e.icon.height);
@@ -510,6 +570,7 @@ void GuiApp::refreshFiles(const std::string& serial) {
             if (serial != selected_serial_) return;
             files_error_ = !r.ok;
             remote_entries_ = std::move(r.entries);
+            for (const auto& e : remote_entries_) ensureGlyphs(e.name);
         });
 }
 
@@ -666,6 +727,7 @@ void GuiApp::pumpAgentEvents() {
         case AgentSession::AgentEvent::CLIPBOARD_CHANGED:
             if (clipboard_sync_ && !ev.text.empty() && ev.text != last_clipboard_text_) {
                 last_clipboard_text_ = ev.text;
+                ensureGlyphs(ev.text.substr(0, 200));
                 SDL_SetClipboardText(ev.text.c_str());
                 std::cerr << "clipboard: " << ev.text.size() << " chars from the device\n";
                 showToast("Clipboard: " + std::to_string(ev.text.size()) + " chars from the device", 2);
@@ -733,6 +795,23 @@ void GuiApp::setClipboardSync(bool on) {
     if (!on && session_) {
         session_->stopClipboardSync();
         clipboard_started_ = false;
+    }
+}
+
+// Any text the device hands us (labels, file names) may use a script the atlas lacks. Note
+// the missing codepoints; the atlas is rebuilt with them before the next frame.
+void GuiApp::ensureGlyphs(const std::string& utf8) {
+    if (!font_regular_) return;
+    const char* p = utf8.c_str();
+    const char* end = p + utf8.size();
+    while (p < end) {
+        unsigned int c = 0;
+        int n = ImTextCharFromUtf8(&c, p, end);
+        if (n <= 0) break;
+        p += n;
+        if (c < 0x80 || c == 0xFFFD) continue;
+        if (font_regular_->FindGlyphNoFallback(static_cast<ImWchar>(c))) continue;
+        if (extra_codepoints_.insert(static_cast<ImWchar>(c)).second) fonts_dirty_ = true;
     }
 }
 
@@ -1224,6 +1303,12 @@ void GuiApp::run() {
         const auto frame_start = std::chrono::steady_clock::now();
         jobs_.pump();
         if (g_quit_requested.load()) done = true;
+        if (fonts_dirty_) {
+            // Outside NewFrame/Render: rebuild the atlas with the codepoints labels asked for.
+            buildFonts();
+            ImGui_ImplSDLRenderer2_DestroyFontsTexture();
+            ImGui_ImplSDLRenderer2_CreateFontsTexture();
+        }
 
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
