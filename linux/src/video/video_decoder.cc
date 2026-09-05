@@ -4,6 +4,7 @@ extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libswscale/swscale.h>
 #include <libavutil/imgutils.h>
+#include <libavutil/pixdesc.h>
 }
 
 #include <iostream>
@@ -33,6 +34,7 @@ void VideoDecoder::close() {
     }
     has_new_frame_ = false;
     has_any_frame_ = false;
+    logged_format_ = false;
 }
 
 bool VideoDecoder::init(const std::string& codec_name) {
@@ -110,8 +112,13 @@ bool VideoDecoder::decode(const uint8_t* payload, size_t size, const VideoPacket
         int frame_h = av_frame_->height;
         if (frame_w <= 0 || frame_h <= 0) continue;
 
-        updateSws(frame_w, frame_h, av_frame_->format);
-        if (!sws_ctx_) continue;
+        const int fmt = av_frame_->format;
+        const bool is_i420 = (fmt == AV_PIX_FMT_YUV420P || fmt == AV_PIX_FMT_YUVJ420P);
+        const bool is_nv12 = (fmt == AV_PIX_FMT_NV12);
+        if (!is_i420 && !is_nv12) {
+            updateSws(frame_w, frame_h, fmt);
+            if (!sws_ctx_) continue;
+        }
 
         {
             std::lock_guard<std::mutex> lock(mutex_);
@@ -123,15 +130,54 @@ bool VideoDecoder::decode(const uint8_t* payload, size_t size, const VideoPacket
             latest_frame_.displayOrientationCorrection = header.displayOrientationCorrection;
             latest_frame_.frameNumber = header.frameNumber;
 
-            size_t num_pixels = static_cast<size_t>(frame_w * frame_h);
-            // Add 128 bytes safety padding for sws_scale SIMD stores to prevent glibc heap corruption
-            latest_frame_.rgba.resize(num_pixels * 4 + 128);
+            // Copy one plane row by row: linesize may exceed the visible width.
+            auto copy_plane = [&](int idx, int row_bytes, int rows) {
+                auto& dst = latest_frame_.planes[idx];
+                dst.resize(static_cast<size_t>(row_bytes) * rows);
+                av_image_copy_plane(dst.data(), row_bytes,
+                                    av_frame_->data[idx], av_frame_->linesize[idx],
+                                    row_bytes, rows);
+                latest_frame_.pitch[idx] = row_bytes;
+            };
 
-            uint8_t* dst_data[4] = { latest_frame_.rgba.data(), nullptr, nullptr, nullptr };
-            int dst_linesize[4] = { frame_w * 4, 0, 0, 0 };
+            if (is_i420 || is_nv12) {
+                const int cw = (frame_w + 1) / 2;
+                const int ch = (frame_h + 1) / 2;
+                copy_plane(0, frame_w, frame_h);
+                if (is_i420) {
+                    copy_plane(1, cw, ch);
+                    copy_plane(2, cw, ch);
+                    latest_frame_.format = FrameFormat::I420;
+                } else {
+                    copy_plane(1, cw * 2, ch);
+                    latest_frame_.planes[2].clear();
+                    latest_frame_.pitch[2] = 0;
+                    latest_frame_.format = FrameFormat::NV12;
+                }
+            } else {
+                size_t num_pixels = static_cast<size_t>(frame_w) * frame_h;
+                auto& rgba = latest_frame_.planes[0];
+                // 128 bytes of slack for sws_scale's SIMD stores past the last row
+                rgba.resize(num_pixels * 4 + 128);
+                uint8_t* dst_data[4] = { rgba.data(), nullptr, nullptr, nullptr };
+                int dst_linesize[4] = { frame_w * 4, 0, 0, 0 };
+                sws_scale(sws_ctx_, av_frame_->data, av_frame_->linesize, 0, frame_h,
+                          dst_data, dst_linesize);
+                latest_frame_.pitch[0] = frame_w * 4;
+                latest_frame_.planes[1].clear();
+                latest_frame_.planes[2].clear();
+                latest_frame_.pitch[1] = latest_frame_.pitch[2] = 0;
+                latest_frame_.format = FrameFormat::RGBA;
+            }
 
-            sws_scale(sws_ctx_, av_frame_->data, av_frame_->linesize, 0, frame_h,
-                      dst_data, dst_linesize);
+            if (!logged_format_) {
+                logged_format_ = true;
+                const char* name = av_get_pix_fmt_name(static_cast<AVPixelFormat>(fmt));
+                std::cerr << "VideoDecoder: " << codec_ctx_->codec->name << " -> "
+                          << (name ? name : "?") << " " << frame_w << "x" << frame_h
+                          << ((is_i420 || is_nv12) ? " (planes uploaded to SDL)" : " (swscale -> RGBA)")
+                          << "\n";
+            }
 
             has_new_frame_ = true;
             has_any_frame_ = true;

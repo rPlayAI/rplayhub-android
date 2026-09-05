@@ -80,6 +80,14 @@ bool GuiApp::init() {
         std::cerr << "Error: SDL_CreateRenderer: " << SDL_GetError() << "\n";
         return false;
     }
+    {
+        SDL_RendererInfo info;
+        if (SDL_GetRendererInfo(renderer_, &info) == 0) {
+            std::cerr << "SDL renderer: " << info.name
+                      << ((info.flags & SDL_RENDERER_ACCELERATED) ? " (accelerated)" : " (SOFTWARE - expect high CPU)")
+                      << ", video driver " << SDL_GetCurrentVideoDriver() << "\n";
+        }
+    }
 
     // Setup ImGui context
     IMGUI_CHECKVERSION();
@@ -188,7 +196,12 @@ bool GuiApp::init() {
         }
         if (idx >= 0) {
             selected_device_idx_ = idx;
-            last_inspected_serial_.clear(); // force the inspector onto this device
+            if (devices_[idx].serial != last_inspected_serial_) {
+                last_inspected_serial_ = devices_[idx].serial;
+                refreshPackages(last_inspected_serial_);
+                refreshFiles(last_inspected_serial_);
+                battery_level_ = adb_.getBatteryLevel(last_inspected_serial_);
+            }
             startMirroring(idx);
         } else {
             std::cerr << "--mirror: no " << (preferred_serial_.empty() ? "ready device" : "device " + preferred_serial_)
@@ -292,6 +305,8 @@ void GuiApp::stopMirroring() {
         session_.reset();
     }
     session_active_ = false;
+    live_frame_ = DecodedFrame();
+    texture_dirty_ = false;
 }
 
 void GuiApp::run() {
@@ -690,11 +705,14 @@ void GuiApp::renderCenterStage(float start_x, float width, float height) {
     float available_h = height - 90.0f * scale_;
     float available_w = width - 30.0f * scale_;
 
-    DecodedFrame frame;
-    bool has_frame = (session_ && session_->getDecoder().getLatestFrame(frame));
+    // Pull a frame only when the decoder has a new one; the copy is a few MB.
+    if (session_ && session_->getDecoder().getLatestFrame(live_frame_, /*only_if_new=*/true)) {
+        texture_dirty_ = true;
+    }
+    bool has_frame = session_ && !live_frame_.empty();
 
     if (session_active_ && has_frame) {
-        renderLiveMirror(ImVec2(start_x + 15.0f * scale_, 42.0f * scale_), ImVec2(available_w, available_h), frame);
+        renderLiveMirror(ImVec2(start_x + 15.0f * scale_, 42.0f * scale_), ImVec2(available_w, available_h), live_frame_);
     } else {
         renderPhoneMockup(ImVec2(start_x + width * 0.5f, 42.0f * scale_ + available_h * 0.44f), ImVec2(available_w, available_h));
     }
@@ -808,18 +826,47 @@ void GuiApp::renderPhoneMockup(ImVec2 center, ImVec2 max_size) {
 
 // Live Mirrored Display inside Bezel
 void GuiApp::renderLiveMirror(ImVec2 origin, ImVec2 size, const DecodedFrame& frame) {
-    if (frame.rgba.empty()) return;
+    if (frame.empty()) return;
 
-    // Update SDL texture
-    if (!video_texture_ || tex_w_ != frame.width || tex_h_ != frame.height) {
+    // (Re)create the texture in the decoder's own layout; SDL converts on the GPU.
+    if (!video_texture_ || tex_w_ != frame.width || tex_h_ != frame.height || tex_format_ != frame.format) {
         if (video_texture_) SDL_DestroyTexture(video_texture_);
-        video_texture_ = SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_RGBA32,
-                                           SDL_TEXTUREACCESS_STREAMING, frame.width, frame.height);
+        Uint32 sdl_fmt = SDL_PIXELFORMAT_RGBA32;
+        if (frame.format == FrameFormat::I420) sdl_fmt = SDL_PIXELFORMAT_IYUV;
+        else if (frame.format == FrameFormat::NV12) sdl_fmt = SDL_PIXELFORMAT_NV12;
+        video_texture_ = SDL_CreateTexture(renderer_, sdl_fmt, SDL_TEXTUREACCESS_STREAMING,
+                                           frame.width, frame.height);
+        if (!video_texture_) {
+            std::cerr << "SDL_CreateTexture: " << SDL_GetError() << "\n";
+            return;
+        }
         tex_w_ = frame.width;
         tex_h_ = frame.height;
+        tex_format_ = frame.format;
+        texture_dirty_ = true;
     }
 
-    SDL_UpdateTexture(video_texture_, nullptr, frame.rgba.data(), frame.width * 4);
+    if (texture_dirty_) {
+        int rc = 0;
+        switch (frame.format) {
+        case FrameFormat::I420:
+            rc = SDL_UpdateYUVTexture(video_texture_, nullptr,
+                                      frame.planes[0].data(), frame.pitch[0],
+                                      frame.planes[1].data(), frame.pitch[1],
+                                      frame.planes[2].data(), frame.pitch[2]);
+            break;
+        case FrameFormat::NV12:
+            rc = SDL_UpdateNVTexture(video_texture_, nullptr,
+                                     frame.planes[0].data(), frame.pitch[0],
+                                     frame.planes[1].data(), frame.pitch[1]);
+            break;
+        default:
+            rc = SDL_UpdateTexture(video_texture_, nullptr, frame.planes[0].data(), frame.pitch[0]);
+            break;
+        }
+        if (rc != 0) std::cerr << "SDL_Update*Texture: " << SDL_GetError() << "\n";
+        texture_dirty_ = false;
+    }
 
     // Calculate aspect fit inside center stage
     int rot_w = (frame.displayOrientation % 2 == 1) ? frame.displayHeight : frame.displayWidth;

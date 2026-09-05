@@ -45,7 +45,8 @@ int main(int argc, char** argv) {
                       << " size=" << frame.width << "x" << frame.height
                       << " display=" << frame.displayWidth << "x" << frame.displayHeight
                       << " rot=" << frame.displayOrientation
-                      << " rgba_bytes=" << frame.rgba.size() << "\n";
+                      << " format=" << static_cast<int>(frame.format)
+                      << " plane0_bytes=" << frame.planes[0].size() << "\n";
             break;
         }
     }
