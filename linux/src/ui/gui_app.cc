@@ -87,23 +87,57 @@ bool GuiApp::init() {
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
 
-    // Load Inter modern font family with scaled sizes for comfortable reading
-    auto find_font = [](const std::string& font_name, const std::string& fallback_system) -> std::string {
-        std::vector<std::string> candidates = {
-            "fonts/" + font_name,
-            "../fonts/" + font_name,
-            "../../fonts/" + font_name,
-            fallback_system
-        };
+    // Load the Inter font family. The TTFs ship in linux/fonts; look next to the
+    // executable first (build dir -> ../fonts) so the client is not tied to a
+    // particular working directory, then the usual cwd-relative spots, then
+    // system fonts. Falling back to ImGui's built-in 13 px bitmap font gives
+    // blurry, upscaled text, so say so on stderr.
+    std::string exe_dir;
+    {
+        char buf[4096];
+        ssize_t n = ::readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+        if (n > 0) {
+            buf[n] = '\0';
+            std::string exe(buf);
+            size_t slash = exe.rfind('/');
+            if (slash != std::string::npos) exe_dir = exe.substr(0, slash);
+        }
+    }
+    auto find_font = [&exe_dir](const std::string& font_name,
+                                const std::vector<std::string>& system_fallbacks) -> std::string {
+        std::vector<std::string> candidates;
+        if (!exe_dir.empty()) {
+            candidates.push_back(exe_dir + "/../fonts/" + font_name);
+            candidates.push_back(exe_dir + "/fonts/" + font_name);
+            candidates.push_back(exe_dir + "/../share/rplayhub-android/fonts/" + font_name);
+        }
+        candidates.push_back("fonts/" + font_name);
+        candidates.push_back("linux/fonts/" + font_name);
+        candidates.push_back("../fonts/" + font_name);
+        candidates.push_back("../../fonts/" + font_name);
+        candidates.insert(candidates.end(), system_fallbacks.begin(), system_fallbacks.end());
         for (const auto& path : candidates) {
             if (::access(path.c_str(), R_OK) == 0) return path;
         }
         return "";
     };
 
-    std::string regular_path = find_font("Inter-Regular.ttf", "/usr/share/fonts/truetype/roboto/unhinted/RobotoTTF/Roboto-Regular.ttf");
-    std::string medium_path = find_font("Inter-Medium.ttf", "/usr/share/fonts/truetype/roboto/unhinted/RobotoTTF/Roboto-Medium.ttf");
-    std::string bold_path = find_font("Inter-SemiBold.ttf", "/usr/share/fonts/truetype/roboto/unhinted/RobotoTTF/Roboto-Bold.ttf");
+    std::string regular_path = find_font("Inter-Regular.ttf", {
+        "/usr/share/fonts/truetype/roboto/unhinted/RobotoTTF/Roboto-Regular.ttf",
+        "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"});
+    std::string medium_path = find_font("Inter-Medium.ttf", {
+        "/usr/share/fonts/truetype/roboto/unhinted/RobotoTTF/Roboto-Medium.ttf",
+        "/usr/share/fonts/truetype/noto/NotoSans-Medium.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"});
+    std::string bold_path = find_font("Inter-SemiBold.ttf", {
+        "/usr/share/fonts/truetype/roboto/unhinted/RobotoTTF/Roboto-Bold.ttf",
+        "/usr/share/fonts/truetype/noto/NotoSans-SemiBold.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"});
+    if (regular_path.empty()) {
+        std::cerr << "Warning: no TrueType font found (looked for linux/fonts/Inter-*.ttf next to the "
+                     "executable and in the working directory); using ImGui's bitmap font\n";
+    }
 
     float base_reg = 16.0f * scale_;
     float base_cap = 13.5f * scale_;
@@ -111,17 +145,20 @@ bool GuiApp::init() {
     float base_bold = 16.5f * scale_;
     float base_title = 20.5f * scale_;
 
+    // Latin plus General Punctuation, so the em dash / bullet in status text render.
+    static const ImWchar glyph_ranges[] = { 0x0020, 0x00FF, 0x2000, 0x206F, 0 };
+
     if (!regular_path.empty()) {
-        font_regular_ = io.Fonts->AddFontFromFileTTF(regular_path.c_str(), base_reg);
-        font_caption_ = io.Fonts->AddFontFromFileTTF(regular_path.c_str(), base_cap);
+        font_regular_ = io.Fonts->AddFontFromFileTTF(regular_path.c_str(), base_reg, nullptr, glyph_ranges);
+        font_caption_ = io.Fonts->AddFontFromFileTTF(regular_path.c_str(), base_cap, nullptr, glyph_ranges);
         if (!medium_path.empty()) {
-            font_medium_ = io.Fonts->AddFontFromFileTTF(medium_path.c_str(), base_med);
+            font_medium_ = io.Fonts->AddFontFromFileTTF(medium_path.c_str(), base_med, nullptr, glyph_ranges);
         } else {
             font_medium_ = font_regular_;
         }
         if (!bold_path.empty()) {
-            font_bold_ = io.Fonts->AddFontFromFileTTF(bold_path.c_str(), base_bold);
-            font_title_ = io.Fonts->AddFontFromFileTTF(bold_path.c_str(), base_title);
+            font_bold_ = io.Fonts->AddFontFromFileTTF(bold_path.c_str(), base_bold, nullptr, glyph_ranges);
+            font_title_ = io.Fonts->AddFontFromFileTTF(bold_path.c_str(), base_title, nullptr, glyph_ranges);
         } else {
             font_bold_ = font_regular_;
             font_title_ = font_regular_;
