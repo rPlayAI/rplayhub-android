@@ -32,9 +32,22 @@ The client logs the SDL renderer (`SDL renderer: opengl (accelerated), video dri
 on the first frame, the decoder and pixel format
 (`VideoDecoder: h264 -> yuv420p 1072x2406 (planes uploaded to SDL)`); check both on the Pi.
 
-Not in the Linux client at all (not Pi-specific, listed so nobody looks for them): audio playback
-(the audio channel is accepted and parked), the 3D device twin, Finder mount, emulator host, AOA
-HID. Google ships no Linux arm64 emulator, so the emulator host can never run on a Pi.
+### Feature parity with the Mac (2026-09-04, Linux host)
+
+Brought across and verified on a Pixel 9a, one commit each: adb off the UI thread with
+auto-reconnect and clean quit; Apps tab with real labels and icons (AppLabel), Install / Export /
+Uninstall; Files tab (browse, pull, push by drop, delete); Take Screenshot; Record Screen
+(stream remux to MP4, no re-encode); audio forwarding (Opus via libavcodec, SDL audio);
+clipboard sync both ways; Pause Display; Turn Screen Off While Mirroring; agent logcat in the
+Logcat pane; Desktop Mode, apps on virtual displays, bare pop-out phone window, Pin on Top;
+emulators in the sidebar (start headless, mirror, shut down); Info tab stream stats; the 3D
+twin driven by the gyroscope; a menu bar; labels in any script.
+
+Still missing versus the Mac: the Android 5-7 legacy agent (no legacy device was available to
+test against; `tools/build-legacy-agent.sh` and `LegacySession.swift` are the reference),
+"Open in New Tab" center tabs, Create Android VM, gRPC emulator hosting, Finder mount (no
+Linux counterpart; the Files tab covers it), AOA HID. Google ships no Linux arm64 emulator, so
+the emulator section is empty on a Pi.
 
 ## Step 0 — build on the Linux host
 
@@ -61,7 +74,8 @@ cd ../..
 ./linux/build/rplayhub-android-linux --mirror      # mirrors the first device
 ```
 
-Other flags today: `--dump-frame <path>` (screenshot), `--scale <f>` / `RPLAYHUB_SCALE` (UI scale).
+`--help` lists every flag; the ones that matter on a Pi are `--decoder`, `--max-size`, `--codec`,
+`--no-audio`, `--no-3d` (skips the sensor channel) and `--serial`.
 Fonts: `linux/fonts/Inter-*.ttf` are looked up relative to cwd with a Roboto fallback.
 
 Fix whatever the README got wrong for the distro, then commit that before touching code.
