@@ -180,9 +180,12 @@ desync or mid-stream agent exit.
 
 ## The 3D device twin (experimental)
 
-![The 3D device twin: the phone as a 3D model turning as the real phone turns, the live mirror mapped onto its glass](doc/rPlayHub-android-3d.gif)
+<p>
+  <img src="doc/rPlayHub-android-3d.png" width="49%" alt="The 3D device twin: the phone as a 3D model, the live mirror mapped onto its glass" />
+  <img src="doc/rPlayHub-android-3d.gif" width="49%" alt="The 3D twin in motion, swinging round to the phone's 3D back" />
+</p>
 
-*The 3D twin — the model turns as the phone turns, gyro-tracked, with the mirror live on its glass; here it swings round to the phone's back. (Full-quality clip: [download the mp4](doc/rPlayHub-android-3d.mp4).)*
+*The 3D twin — the model turns as the phone turns, gyro-tracked, with the mirror live on its glass. On the right it swings round to the phone's back. (Full-quality clip: [download the mp4](doc/rPlayHub-android-3d.mp4).)*
 
 A display mode, not a second viewer: "View in 3D" swaps the flat mirror for a 3D phone whose
 orientation tracks the real device's rotation vector sensor live — turn the phone in your hand
