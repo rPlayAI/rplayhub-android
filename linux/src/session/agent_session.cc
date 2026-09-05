@@ -188,8 +188,15 @@ void AgentSession::runBringup() {
     int expected_channels = (sdk >= 31) ? 3 : 2;
     for (int i = 0; i < expected_channels; ++i) {
         TCPSocket sock;
-        if (!listener.accept(sock, 15000)) {
-            setStatus(SessionState::FAILED, "Timeout waiting for agent connections");
+        // Poll in short slices so stop() is honoured while we wait for the agent.
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(15);
+        bool accepted = false;
+        while (!stopping_.load() && std::chrono::steady_clock::now() < deadline) {
+            if (listener.accept(sock, 250)) { accepted = true; break; }
+        }
+        if (!accepted) {
+            setStatus(stopping_.load() ? SessionState::STOPPED : SessionState::FAILED,
+                      stopping_.load() ? "Mirroring stopped" : "Timeout waiting for agent connections");
             return;
         }
 
@@ -306,6 +313,19 @@ void AgentSession::sendTouch(int x, int y, int action) {
     p.pointerId = 0;
 
     auto msg = ControlMessages::motionEvent({p}, action, 0, 0, 0, false);
+    std::lock_guard<std::mutex> lock(control_mutex_);
+    control_socket_.writeAll(msg.data(), msg.size());
+}
+
+void AgentSession::sendScroll(int x, int y, float hscroll, float vscroll) {
+    if (!control_socket_.isValid()) return;
+    Pointer p;
+    p.x = x;
+    p.y = y;
+    p.pointerId = 0;
+    p.axisValues[MotionAxis::HSCROLL] = hscroll;
+    p.axisValues[MotionAxis::VSCROLL] = vscroll;
+    auto msg = ControlMessages::motionEvent({p}, MotionAction::SCROLL, 0, 0, 0, true);
     std::lock_guard<std::mutex> lock(control_mutex_);
     control_socket_.writeAll(msg.data(), msg.size());
 }

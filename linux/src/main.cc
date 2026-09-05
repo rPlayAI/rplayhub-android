@@ -10,6 +10,7 @@ int main(int argc, char* argv[]) {
     std::string dump_path;
     std::string serial;
     bool stats = false;
+    int tab = -1;
     rplayhub::AgentSession::Options opts;
     if (const char* env = std::getenv("RPLAYHUB_DECODER")) opts.decoder = env;
 
@@ -36,6 +37,13 @@ int main(int argc, char* argv[]) {
             serial = argv[++i];
         } else if (arg == "--stats") {
             stats = true;
+        } else if (arg == "--tab" && i + 1 < argc) {
+            std::string t = argv[++i];
+            tab = (t == "info") ? 0 : (t == "apps") ? 1 : (t == "files") ? 2 : (t == "logcat") ? 3 : -1;
+            if (tab < 0) {
+                std::cerr << "--tab: expected info, apps, files or logcat\n";
+                return 2;
+            }
         } else if (arg == "--decoder" && i + 1 < argc) {
             opts.decoder = argv[++i];
         } else if (arg == "--codec" && i + 1 < argc) {
@@ -59,6 +67,7 @@ int main(int argc, char* argv[]) {
                          "  -s, --scale <f>       UI scale factor, or RPLAYHUB_SCALE\n"
                          "      --dump-frame <p>  save a BMP of the window once the mirror is up\n"
                          "      --stats           print decoded / rendered fps to stderr every 5 s\n"
+                         "      --tab <name>      inspector tab to open with: info, apps, files, logcat\n"
                          "      --codec <c>       agent video codec: avc (default), hevc, vp8, vp9, av1\n"
                          "      --decoder <name>  FFmpeg decoder, e.g. h264_v4l2m2m (default: generic), or RPLAYHUB_DECODER\n"
                          "      --max-size WxH    agent frame size cap (default 1080x2400)\n";
@@ -72,6 +81,7 @@ int main(int argc, char* argv[]) {
     }
     app.setPreferredSerial(serial);
     app.setStats(stats);
+    if (tab >= 0) app.setInspectorTab(tab);
     app.setSessionOptions(opts);
 
     if (!app.init()) {

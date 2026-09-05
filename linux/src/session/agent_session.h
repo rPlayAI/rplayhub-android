@@ -46,6 +46,8 @@ public:
 
     // Input injection
     void sendTouch(int x, int y, int action);
+    // Mouse wheel at (x, y): one unit of hscroll / vscroll per notch.
+    void sendScroll(int x, int y, float hscroll, float vscroll);
     void sendKey(int keycode, int action = KeyAction::DOWN_AND_UP);
     void sendText(const std::string& text);
     void setOrientation(int quadrants);

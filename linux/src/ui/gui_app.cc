@@ -12,7 +12,14 @@
 #include <iomanip>
 #include <algorithm>
 #include <cmath>
+#include <csignal>
+#include <atomic>
 #include <unistd.h>
+
+namespace {
+std::atomic<bool> g_quit_requested{false};
+void onQuitSignal(int) { g_quit_requested.store(true); }
+} // namespace
 
 namespace rplayhub {
 
@@ -28,6 +35,10 @@ bool GuiApp::init() {
         std::cerr << "Error: SDL_Init: " << SDL_GetError() << "\n";
         return false;
     }
+    // Ctrl-C in the terminal or a SIGTERM ends the run loop cleanly (session torn down,
+    // adb reverse removed) instead of leaving the agent running on the phone.
+    std::signal(SIGINT, onQuitSignal);
+    std::signal(SIGTERM, onQuitSignal);
 
     // Auto-detect UI scale if not explicitly set
     if (scale_ <= 0.01f) {
@@ -182,38 +193,16 @@ bool GuiApp::init() {
     ImGui_ImplSDL2_InitForSDLRenderer(window_, renderer_);
     ImGui_ImplSDLRenderer2_Init(renderer_);
 
-    pollDevices();
     last_device_poll_ = std::chrono::steady_clock::now();
-
-    if (auto_mirror_) {
-        int idx = -1;
-        for (int i = 0; i < static_cast<int>(devices_.size()); ++i) {
-            if (preferred_serial_.empty() ? devices_[i].isReady()
-                                          : devices_[i].serial == preferred_serial_) {
-                idx = i;
-                break;
-            }
-        }
-        if (idx >= 0) {
-            selected_device_idx_ = idx;
-            if (devices_[idx].serial != last_inspected_serial_) {
-                last_inspected_serial_ = devices_[idx].serial;
-                refreshPackages(last_inspected_serial_);
-                refreshFiles(last_inspected_serial_);
-                battery_level_ = adb_.getBatteryLevel(last_inspected_serial_);
-            }
-            startMirroring(idx);
-        } else {
-            std::cerr << "--mirror: no " << (preferred_serial_.empty() ? "ready device" : "device " + preferred_serial_)
-                      << " in `adb devices`\n";
-        }
-        auto_mirror_ = false;
-    }
+    auto_mirror_deadline_ = last_device_poll_ + std::chrono::seconds(20);
+    pollDevices();
 
     return true;
 }
 
 void GuiApp::cleanup() {
+    stopMirroring();
+    jobs_.shutdown();
     stopMirroring();
 
     if (video_texture_) {
@@ -242,40 +231,129 @@ void GuiApp::showToast(const std::string& msg, int seconds) {
 }
 
 void GuiApp::pollDevices() {
-    std::vector<AdbDevice> list;
-    if (adb_.getDevices(list)) {
-        devices_ = list;
-        if (selected_device_idx_ >= static_cast<int>(devices_.size())) {
-            selected_device_idx_ = devices_.empty() ? -1 : 0;
-        } else if (selected_device_idx_ < 0 && !devices_.empty()) {
-            selected_device_idx_ = 0;
-        }
+    if (devices_poll_inflight_) return;
+    devices_poll_inflight_ = true;
+    struct Result { bool ok = false; std::vector<AdbDevice> list; };
+    jobs_.run<Result>(
+        [this] { Result r; r.ok = adb_.getDevices(r.list); return r; },
+        [this](Result r) {
+            devices_poll_inflight_ = false;
+            if (r.ok) applyDeviceList(r.list);
+        });
+}
 
-        if (selected_device_idx_ >= 0 && selected_device_idx_ < static_cast<int>(devices_.size())) {
-            const auto& dev = devices_[selected_device_idx_];
-            if (dev.serial != last_inspected_serial_) {
-                last_inspected_serial_ = dev.serial;
-                refreshPackages(dev.serial);
-                refreshFiles(dev.serial);
-                battery_level_ = adb_.getBatteryLevel(dev.serial);
+void GuiApp::applyDeviceList(const std::vector<AdbDevice>& list) {
+    devices_ = list;
+
+    // Re-find the selection by serial: adb reorders the list as devices come and go.
+    selected_device_idx_ = -1;
+    for (int i = 0; i < static_cast<int>(devices_.size()); ++i) {
+        if (devices_[i].serial == selected_serial_) selected_device_idx_ = i;
+    }
+    if (selected_device_idx_ < 0) {
+        selected_serial_.clear();
+        if (!devices_.empty()) selectDevice(0);
+    }
+
+    if (auto_mirror_) {
+        int idx = -1;
+        for (int i = 0; i < static_cast<int>(devices_.size()); ++i) {
+            if (preferred_serial_.empty() ? devices_[i].isReady()
+                                          : devices_[i].serial == preferred_serial_) {
+                idx = i;
+                break;
             }
         }
+        if (idx >= 0 && devices_[idx].isReady()) {
+            auto_mirror_ = false;
+            selectDevice(idx);
+            startMirroring(idx);
+        } else if (std::chrono::steady_clock::now() > auto_mirror_deadline_) {
+            auto_mirror_ = false;
+            std::cerr << "--mirror: no " << (preferred_serial_.empty() ? "ready device" : "device " + preferred_serial_)
+                      << " in `adb devices`\n";
+        }
     }
+}
+
+void GuiApp::selectDevice(int idx) {
+    if (idx < 0 || idx >= static_cast<int>(devices_.size())) return;
+    selected_device_idx_ = idx;
+    const std::string serial = devices_[idx].serial;
+    bool changed = (serial != selected_serial_);
+    selected_serial_ = serial;
+    if (changed) {
+        loadDeviceInfo(serial);
+        refreshPackages(serial);
+        refreshFiles(serial);
+    }
+}
+
+void GuiApp::loadDeviceInfo(const std::string& serial) {
+    DeviceInfo& info = device_info_[serial];
+    if (info.loading) return;
+    info.loading = true;
+    jobs_.run<DeviceInfo>(
+        [this, serial] {
+            DeviceInfo r;
+            // One `getprop` for everything: "[ro.product.model]: [Pixel 9a]" per line.
+            std::istringstream stream(adb_.shell(serial, "getprop"));
+            std::string line;
+            while (std::getline(stream, line)) {
+                size_t k0 = line.find('['), k1 = line.find("]: [");
+                if (k0 == std::string::npos || k1 == std::string::npos) continue;
+                size_t v1 = line.rfind(']');
+                if (v1 == std::string::npos || v1 <= k1 + 3) continue;
+                r.props[line.substr(k0 + 1, k1 - k0 - 1)] = line.substr(k1 + 4, v1 - k1 - 4);
+            }
+            r.battery = adb_.getBatteryLevel(serial);
+            r.loaded = !r.props.empty();
+            return r;
+        },
+        [this, serial](DeviceInfo r) {
+            r.loading = false;
+            device_info_[serial] = std::move(r);
+        });
+}
+
+const GuiApp::DeviceInfo* GuiApp::infoFor(const std::string& serial) const {
+    auto it = device_info_.find(serial);
+    return (it != device_info_.end() && it->second.loaded) ? &it->second : nullptr;
 }
 
 void GuiApp::refreshPackages(const std::string& serial) {
-    packages_ = adb_.getPackages(serial, !show_system_apps_);
+    int gen = ++packages_gen_;
+    packages_loading_ = true;
+    bool third_party_only = !show_system_apps_;
+    jobs_.run<std::vector<std::string>>(
+        [this, serial, third_party_only] { return adb_.getPackages(serial, third_party_only); },
+        [this, serial, gen](std::vector<std::string> pkgs) {
+            if (gen != packages_gen_) return;      // a newer request superseded this one
+            packages_loading_ = false;
+            if (serial == selected_serial_) packages_ = std::move(pkgs);
+        });
 }
 
 void GuiApp::refreshFiles(const std::string& serial) {
-    std::string raw = adb_.shell(serial, "ls -1 " + current_remote_path_);
-    remote_files_.clear();
-    std::istringstream stream(raw);
-    std::string line;
-    while (std::getline(stream, line)) {
-        while (!line.empty() && (line.back() == '\r' || line.back() == '\n')) line.pop_back();
-        if (!line.empty()) remote_files_.push_back(line);
-    }
+    int gen = ++files_gen_;
+    files_loading_ = true;
+    std::string path = current_remote_path_;
+    jobs_.run<std::vector<std::string>>(
+        [this, serial, path] {
+            std::vector<std::string> files;
+            std::istringstream stream(adb_.shell(serial, "ls -1 " + path));
+            std::string line;
+            while (std::getline(stream, line)) {
+                while (!line.empty() && (line.back() == '\r' || line.back() == '\n')) line.pop_back();
+                if (!line.empty()) files.push_back(line);
+            }
+            return files;
+        },
+        [this, serial, gen](std::vector<std::string> files) {
+            if (gen != files_gen_) return;
+            files_loading_ = false;
+            if (serial == selected_serial_) remote_files_ = std::move(files);
+        });
 }
 
 void GuiApp::startMirroring(int device_idx) {
@@ -286,20 +364,28 @@ void GuiApp::startMirroring(int device_idx) {
         return;
     }
 
-    if (session_active_ && session_ && session_->getSerial() == dev.serial) {
+    if (session_active_ && session_ && session_->getSerial() == dev.serial &&
+        session_->getState() != SessionState::STOPPED && session_->getState() != SessionState::FAILED) {
         showToast("Already mirroring " + dev.displayName());
         return;
     }
 
     stopMirroring();
 
+    session_serial_ = dev.serial;
+    user_stopped_ = false;
+    reconnect_attempts_ = 0;
+    reconnect_pending_ = false;
     session_ = std::make_unique<AgentSession>(dev.serial);
     session_->start(session_options_);
+    session_started_ = std::chrono::steady_clock::now();
     session_active_ = true;
     showToast("Connecting to " + dev.displayName() + "...");
 }
 
 void GuiApp::stopMirroring() {
+    user_stopped_ = true;
+    reconnect_pending_ = false;
     if (session_) {
         session_->stop();
         session_.reset();
@@ -309,10 +395,75 @@ void GuiApp::stopMirroring() {
     texture_dirty_ = false;
 }
 
+// Bring the same device back after the stream died; the last frame stays on screen meanwhile.
+void GuiApp::restartSession() {
+    if (session_) session_->stop();
+    session_ = std::make_unique<AgentSession>(session_serial_);
+    session_->start(session_options_);
+    session_started_ = std::chrono::steady_clock::now();
+    session_active_ = true;
+}
+
+// Called every frame. A session that ended on its own (USB unplugged, agent killed, adb
+// restarted) is restarted with backoff once the device is listed as ready again; a session the
+// user stopped stays stopped.
+void GuiApp::maintainSession() {
+    if (!session_ || user_stopped_) return;
+    const auto now = std::chrono::steady_clock::now();
+    const SessionState st = session_->getState();
+
+    if (st == SessionState::RUNNING) {
+        if (reconnect_attempts_ > 0 && now - session_started_ > std::chrono::seconds(10)) {
+            reconnect_attempts_ = 0;   // stable again; forget the backoff
+        }
+        reconnect_pending_ = false;
+        return;
+    }
+    if (st != SessionState::STOPPED && st != SessionState::FAILED) return;
+
+    if (!reconnect_pending_) {
+        // A failure during bring-up (agent missing, adb refused) will not fix itself; a stream
+        // that ended usually will. Bound both.
+        const int max_attempts = (st == SessionState::FAILED) ? 4 : 30;
+        if (reconnect_attempts_ >= max_attempts) {
+            showToast(session_->getStatusMessage() + " (gave up reconnecting)", 6);
+            std::cerr << "session: " << session_->getStatusMessage() << "; giving up after "
+                      << reconnect_attempts_ << " attempts\n";
+            user_stopped_ = true;
+            session_active_ = false;
+            return;
+        }
+        int delay_s = std::min(2 << std::min(reconnect_attempts_, 3), 15);
+        reconnect_attempts_++;
+        reconnect_pending_ = true;
+        reconnect_at_ = now + std::chrono::seconds(delay_s);
+        showToast(session_->getStatusMessage() + " - reconnecting in " + std::to_string(delay_s) + " s", delay_s);
+        std::cerr << "session: " << session_->getStatusMessage() << "; reconnect " << reconnect_attempts_
+                  << " in " << delay_s << " s\n";
+        return;
+    }
+    if (now < reconnect_at_) return;
+
+    bool ready = false;
+    for (const auto& d : devices_) {
+        if (d.serial == session_serial_ && d.isReady()) ready = true;
+    }
+    if (!ready) {
+        reconnect_at_ = now + std::chrono::seconds(2);   // keep waiting for the device
+        return;
+    }
+    reconnect_pending_ = false;
+    restartSession();
+}
+
 void GuiApp::run() {
     bool done = false;
 
     while (!done) {
+        const auto frame_start = std::chrono::steady_clock::now();
+        jobs_.pump();
+        if (g_quit_requested.load()) done = true;
+
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
             ImGui_ImplSDL2_ProcessEvent(&event);
@@ -325,12 +476,13 @@ void GuiApp::run() {
             }
         }
 
-        // Periodic ADB poll
+        // Periodic ADB poll (off the UI thread)
         auto now = std::chrono::steady_clock::now();
         if (std::chrono::duration_cast<std::chrono::seconds>(now - last_device_poll_).count() >= 3) {
             pollDevices();
             last_device_poll_ = now;
         }
+        maintainSession();
 
         // Start the Dear ImGui frame
         ImGui_ImplSDLRenderer2_NewFrame();
@@ -339,6 +491,8 @@ void GuiApp::run() {
 
         int win_w, win_h;
         SDL_GetWindowSize(window_, &win_w, &win_h);
+
+        if (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Q)) done = true;
 
         // Scaled sizes matching macOS GUI
         float sidebar_w = 260.0f * scale_;
@@ -390,11 +544,20 @@ void GuiApp::run() {
 
         SDL_RenderPresent(renderer_);
 
+        // Without vsync (software renderer, hidden window) the loop would spin; cap it.
+        {
+            auto elapsed = std::chrono::steady_clock::now() - frame_start;
+            auto floor_ms = (SDL_GetWindowFlags(window_) & SDL_WINDOW_MINIMIZED) ? 50 : 4;
+            auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count();
+            if (ms < floor_ms) SDL_Delay(static_cast<Uint32>(floor_ms - ms));
+        }
+
         if (stats_) {
             auto t = std::chrono::steady_clock::now();
             double dt = std::chrono::duration<double>(t - stats_last_).count();
             if (dt >= 5.0) {
                 uint64_t decoded = session_ ? session_->getDecoder().framesDecoded() : 0;
+                if (decoded < stats_decoded_last_) stats_decoded_last_ = 0;   // decoder was recreated
                 if (stats_last_.time_since_epoch().count() != 0) {
                     std::cerr << "stats: decoded " << std::fixed << std::setprecision(1)
                               << (decoded - stats_decoded_last_) / dt << " fps, rendered "
@@ -439,7 +602,13 @@ void GuiApp::renderLeftSidebar(float width, float height) {
     ImGui::SameLine();
     if (IconButton("##Refresh", Icons::drawListMenu, top_btn_sz, "Refresh device list")) {
         pollDevices();
-        showToast("Refreshed device list");
+        for (auto& [serial, info] : device_info_) info.loaded = false;   // re-read props too
+        if (!selected_serial_.empty()) {
+            loadDeviceInfo(selected_serial_);
+            refreshPackages(selected_serial_);
+            refreshFiles(selected_serial_);
+        }
+        showToast("Refreshing device list");
     }
     ImGui::SameLine();
     if (IconButton("##SidebarToggle", Icons::drawSidebarToggle, top_btn_sz, "Toggle Sidebar")) {
@@ -459,15 +628,24 @@ void GuiApp::renderLeftSidebar(float width, float height) {
         if (!connect_status_msg_.empty()) {
             ImGui::TextColored(ImVec4(0.8f, 0.2f, 0.2f, 1.0f), "%s", connect_status_msg_.c_str());
         }
-        if (ImGui::Button("Connect", ImVec2(100 * scale_, 0))) {
-            std::string msg;
-            if (adb_.connectNetwork(connect_ip_buf_, msg)) {
-                showToast("Connected: " + msg);
-                show_connect_popup_ = false;
-                pollDevices();
-            } else {
-                connect_status_msg_ = msg;
-            }
+        if (connect_inflight_) ImGui::BeginDisabled();
+        if (ImGui::Button(connect_inflight_ ? "Connecting..." : "Connect", ImVec2(100 * scale_, 0))) {
+            connect_inflight_ = true;
+            connect_status_msg_.clear();
+            std::string address = connect_ip_buf_;
+            struct Result { bool ok = false; std::string msg; };
+            jobs_.run<Result>(
+                [this, address] { Result r; r.ok = adb_.connectNetwork(address, r.msg); return r; },
+                [this](Result r) {
+                    connect_inflight_ = false;
+                    if (r.ok) {
+                        showToast("Connected: " + r.msg);
+                        show_connect_popup_ = false;
+                        pollDevices();
+                    } else {
+                        connect_status_msg_ = r.msg.empty() ? "Connection failed" : r.msg;
+                    }
+                });
         }
         ImGui::SameLine();
         if (ImGui::Button("Cancel", ImVec2(80 * scale_, 0))) {
@@ -546,11 +724,7 @@ void GuiApp::renderLeftSidebar(float width, float height) {
         // Invisible button to catch clicks
         ImGui::SetCursorScreenPos(card_pos);
         if (ImGui::InvisibleButton("##CardBtn", ImVec2(card_w, card_h))) {
-            selected_device_idx_ = i;
-            last_inspected_serial_ = dev.serial;
-            refreshPackages(dev.serial);
-            refreshFiles(dev.serial);
-            battery_level_ = adb_.getBatteryLevel(dev.serial);
+            selectDevice(i);
         }
 
         // Double click to start mirroring
@@ -560,7 +734,7 @@ void GuiApp::renderLeftSidebar(float width, float height) {
 
         // Right-click Context Menu with Icons (Exact match with macOS screenshot!)
         if (ImGui::BeginPopupContextItem("DeviceContextMenu")) {
-            selected_device_idx_ = i;
+            selectDevice(i);
             if (is_mirroring) {
                 if (MenuItemWithIcon("Stop Screen Mirroring", nullptr, Icons::drawScreen, scale_)) {
                     stopMirroring();
@@ -578,8 +752,10 @@ void GuiApp::renderLeftSidebar(float width, float height) {
                 showToast("Copied serial: " + dev.serial);
             }
             if (MenuItemWithIcon("Disconnect", nullptr, Icons::drawDisconnect, scale_)) {
-                adb_.disconnectNetwork(dev.serial);
-                pollDevices();
+                std::string serial = dev.serial;
+                if (session_ && session_serial_ == serial) stopMirroring();
+                jobs_.run([this, serial] { adb_.disconnectNetwork(serial); },
+                          [this] { pollDevices(); });
             }
             ImGui::Separator();
             if (MenuItemWithIcon("Take Screenshot", nullptr, Icons::drawCamera, scale_)) {
@@ -699,6 +875,19 @@ void GuiApp::renderCenterStage(float start_x, float width, float height) {
     } else {
         draw_list->AddText(ImVec2(pill_pos.x + pill_pad_x, text_y),
                            IM_COL32(28, 28, 30, 255), header_title.c_str());
+    }
+
+    // Session status to the right of the pill: "Mirroring active", a failure, "reconnecting".
+    if (session_ && font_caption_) {
+        std::string status = session_->getStatusMessage();
+        if (reconnect_pending_) status += " (reconnecting)";
+        SessionState st = session_->getState();
+        ImU32 col = (st == SessionState::RUNNING) ? IM_COL32(52, 160, 90, 255)
+                  : (st == SessionState::FAILED)  ? IM_COL32(200, 60, 60, 255)
+                                                  : IM_COL32(120, 120, 128, 255);
+        draw_list->AddText(font_caption_, 12.5f * scale_,
+                           ImVec2(pill_pos.x + pill_w + 12.0f * scale_, pill_pos.y + 6.0f * scale_),
+                           col, status.c_str());
     }
 
     // Phone & Stage Area
@@ -959,17 +1148,19 @@ void GuiApp::handleTouchInput(ImVec2 img_pos, ImVec2 img_size, int dev_w, int de
         session_->sendKey(AndroidKey::BACK);
     }
 
-    // Mouse wheel scrolling
-    float wheel = ImGui::GetIO().MouseWheel;
-    if (inside && std::abs(wheel) > 0.01f) {
+    // Mouse wheel = a scroll gesture at the pointer (vertical and horizontal)
+    ImGuiIO& io = ImGui::GetIO();
+    if (inside && (std::abs(io.MouseWheel) > 0.01f || std::abs(io.MouseWheelH) > 0.01f)) {
         auto [dx, dy] = map_coords(mouse_pos);
-        session_->sendTouch(dx, dy, MotionAction::MOVE);
+        session_->sendScroll(dx, dy, io.MouseWheelH, io.MouseWheel);
     }
 }
 
 void GuiApp::handleKeyboardInput() {
     if (!session_) return;
     ImGuiIO& io = ImGui::GetIO();
+    // Typing into the search / filter boxes must not also type on the phone.
+    if (io.WantTextInput) return;
 
     if (ImGui::IsKeyPressed(ImGuiKey_Backspace)) session_->sendKey(AndroidKey::DEL);
     if (ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter)) session_->sendKey(AndroidKey::ENTER);
@@ -1123,21 +1314,27 @@ void GuiApp::renderRightInspector(float width, float height) {
         } else {
             ImGui::TextColored(Theme::ColorTextSecondary, "Device Properties");
             ImGui::Spacing();
-            auto row = [](const char* label, const std::string& value) {
+            auto row = [this](const char* label, const std::string& value) {
                 ImGui::TextColored(Theme::ColorTextSecondary, "%s:", label);
-                ImGui::SameLine(120.0f);
+                ImGui::SameLine(110.0f * scale_);
                 ImGui::TextColored(Theme::ColorTextPrimary, "%s", value.c_str());
             };
 
-            row("Model", adb_.getProp(current_serial, "ro.product.model"));
-            row("Manufacturer", adb_.getProp(current_serial, "ro.product.manufacturer"));
-            row("Android", adb_.getProp(current_serial, "ro.build.version.release"));
-            row("SDK API", adb_.getProp(current_serial, "ro.build.version.sdk"));
-            row("CPU ABI", adb_.getProp(current_serial, "ro.product.cpu.abi"));
+            const DeviceInfo* info = infoFor(current_serial);
+            auto prop = [&](const char* key) -> std::string {
+                if (!info) return "...";
+                auto it = info->props.find(key);
+                return it == info->props.end() ? "" : it->second;
+            };
             row("Serial", current_serial);
-
-            std::string bat_str = (battery_level_ >= 0) ? (std::to_string(battery_level_) + "%") : "Charging";
-            row("Battery", bat_str);
+            row("Model", prop("ro.product.model"));
+            row("Manufacturer", prop("ro.product.manufacturer"));
+            row("Device", prop("ro.product.device"));
+            row("Android", prop("ro.build.version.release"));
+            row("SDK API", prop("ro.build.version.sdk"));
+            row("CPU ABI", prop("ro.product.cpu.abi"));
+            row("Build", prop("ro.build.display.id"));
+            row("Battery", !info ? "..." : (info->battery >= 0 ? std::to_string(info->battery) + "%" : "unknown"));
         }
     }
     // TAB 1: APPS (Exact layout as macOS screenshot!)
