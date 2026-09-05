@@ -21,6 +21,8 @@ When designing the Linux client to match the macOS UI (see the macOS screenshot)
 
 ## Features
 
+- **Menu bar** (Device, View, Window, Help) with the Mac client's commands: mirroring, Desktop Mode, front app on a virtual display, screenshot and recording, the Android keys, Pause Display, Turn Screen Off While Mirroring, Forward Audio, Synchronize Clipboard, network connect, View Screen in 3D, the inspector tabs, pop-out window and Pin on Top.
+- **3D device twin** (View ▸ View Screen in 3D, or `--3d`): a phone that turns as the real one turns, driven by the rotation vector sensor over the agent's orientation channel, the live mirror on its face and the Pixel back artwork on its back. Set Facing Me (R) captures the reference pose; touches land through the rotated screen.
 - **3-Pane macOS-Style Interface**:
   - **Left Sidebar**:
     - macOS traffic lights window controls.

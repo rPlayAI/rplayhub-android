@@ -2,6 +2,7 @@
 #include "theme.h"
 #include "icons.h"
 #include "protocol/control_messages.h"
+#include "util/png_decode.h"
 
 #include "imgui.h"
 #include "backends/imgui_impl_sdl2.h"
@@ -215,6 +216,7 @@ void GuiApp::cleanup() {
         SDL_DestroyTexture(video_texture_);
         video_texture_ = nullptr;
     }
+    if (back_texture_) { SDL_DestroyTexture(back_texture_); back_texture_ = nullptr; }
     for (auto& [key, tex] : app_icons_) {
         if (tex) SDL_DestroyTexture(tex);
     }
@@ -734,6 +736,96 @@ void GuiApp::setClipboardSync(bool on) {
     }
 }
 
+// ---- menu bar: the Mac client's Device / View / Window menus ----
+
+void GuiApp::renderMenuBar() {
+    menu_h_ = 0.0f;
+    if (!ImGui::BeginMainMenuBar()) return;
+    menu_h_ = ImGui::GetFrameHeight();
+
+    const bool have_device = selected_device_idx_ >= 0 && selected_device_idx_ < static_cast<int>(devices_.size());
+    const bool live = session_ && session_->getState() == SessionState::RUNNING;
+    const bool mirroring_selected = have_device && session_active_ && session_ && session_serial_ == devices_[selected_device_idx_].serial;
+
+    if (ImGui::BeginMenu("Device")) {
+        if (mirroring_selected) {
+            if (ImGui::MenuItem("Stop Screen Mirroring")) stopMirroring();
+        } else if (ImGui::MenuItem("Start Screen Mirroring", nullptr, false, have_device)) {
+            startMirroring(selected_device_idx_);
+        }
+        if (ImGui::MenuItem("Reconnect", nullptr, false, have_device)) startMirroring(selected_device_idx_);
+        ImGui::Separator();
+        if (ImGui::MenuItem("Desktop Mode", "Ctrl+D", false, live)) openDesktopMode();
+        if (ImGui::MenuItem("Open Front App on Virtual Display", nullptr, false, live)) openFrontAppOnVirtualDisplay();
+        ImGui::Separator();
+        if (ImGui::MenuItem("Take Screenshot", nullptr, false, have_device)) takeScreenshot();
+        bool recording = session_ && session_->getRecorder().isRecording();
+        if (ImGui::MenuItem(recording ? "Stop Recording" : "Record Screen", nullptr, false, live)) toggleRecording();
+        ImGui::Separator();
+        if (ImGui::MenuItem("Back", nullptr, false, live)) session_->sendKey(AndroidKey::BACK);
+        if (ImGui::MenuItem("Home", nullptr, false, live)) session_->sendKey(AndroidKey::HOME);
+        if (ImGui::MenuItem("Recents", nullptr, false, live)) session_->sendKey(AndroidKey::APP_SWITCH);
+        if (ImGui::MenuItem("Rotate", nullptr, false, live)) session_->setOrientation(-1);
+        if (ImGui::MenuItem("Wake", nullptr, false, live)) session_->wakeOrPower(false);
+        if (ImGui::MenuItem("Power Button", nullptr, false, live)) session_->wakeOrPower(true);
+        ImGui::Separator();
+        bool paused = live && session_->isDisplayPaused();
+        if (ImGui::MenuItem(paused ? "Resume Display" : "Pause Display", nullptr, false, live)) session_->setDisplayPaused(!paused);
+        if (ImGui::MenuItem("Turn Screen Off While Mirroring", nullptr, session_options_.turn_screen_off)) {
+            session_options_.turn_screen_off = !session_options_.turn_screen_off;
+            if (live) showToast("Applies when mirroring is restarted (Reconnect)", 5);
+        }
+        bool audio_on = live ? session_->isAudioForwarding() : session_options_.audio;
+        if (ImGui::MenuItem("Forward Audio", nullptr, audio_on)) {
+            session_options_.audio = !audio_on;
+            if (live) session_->setAudioForwarding(session_options_.audio);
+        }
+        if (ImGui::MenuItem("Synchronize Clipboard", nullptr, clipboard_sync_)) setClipboardSync(!clipboard_sync_);
+        ImGui::Separator();
+        if (ImGui::MenuItem("Connect to Device over Network...")) show_connect_popup_ = true;
+        if (ImGui::MenuItem("Refresh Devices")) { pollDevices(); pollEmulators(); }
+        ImGui::Separator();
+        if (ImGui::MenuItem("Quit", "Ctrl+Q")) g_quit_requested.store(true);
+        ImGui::EndMenu();
+    }
+
+    if (ImGui::BeginMenu("View")) {
+        if (ImGui::MenuItem("View Screen in 3D", nullptr, twin_mode_, true)) {
+            twin_mode_ = !twin_mode_;
+            if (twin_mode_ && live && !session_->hasSensorChannel()) {
+                showToast("This agent offers no orientation channel; the twin will not turn", 6);
+            }
+        }
+        if (ImGui::MenuItem("Set Facing Me", "R", false, twin_mode_)) twin_.recenter();
+        ImGui::Separator();
+        const char* tabs[] = { "Info", "Apps", "Files", "Logcat" };
+        for (int t = 0; t < 4; ++t) {
+            if (ImGui::MenuItem(tabs[t], nullptr, inspector_tab_ == t)) inspector_tab_ = t;
+        }
+        ImGui::EndMenu();
+    }
+
+    if (ImGui::BeginMenu("Window")) {
+        if (ImGui::MenuItem("Open Screen in New Window", nullptr, false, live)) openPhoneWindow();
+        if (ImGui::MenuItem("Pin Window on Top", nullptr, display_windows_.empty() ? main_pinned_ : display_windows_.back()->pinned())) togglePinOnTop();
+        if (ImGui::MenuItem("Close Virtual Displays", nullptr, false, !display_windows_.empty())) closeDisplayWindows();
+        ImGui::EndMenu();
+    }
+
+    if (ImGui::BeginMenu("Help")) {
+        if (ImGui::MenuItem("About rPlayHub Android")) {
+            showToast("rPlayHub Android for Linux: SDL2 + FFmpeg + Dear ImGui. github.com/rPlayAI/rplayhub-android", 8);
+        }
+        ImGui::EndMenu();
+    }
+
+    // Keyboard shortcuts for the menu
+    ImGuiIO& io = ImGui::GetIO();
+    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_D) && live) openDesktopMode();
+
+    ImGui::EndMainMenuBar();
+}
+
 // ---- emulators ----
 
 void GuiApp::pollEmulators() {
@@ -1084,6 +1176,7 @@ void GuiApp::maintainSession() {
             if (startup_desktop_) openDesktopMode();
             if (!startup_app_.empty()) openAppOnVirtualDisplay(startup_app_);
             if (startup_pop_out_) openPhoneWindow();
+            if (startup_twin_) twin_mode_ = true;
         }
         return;
     }
@@ -1183,7 +1276,8 @@ void GuiApp::run() {
         if (stage_w < 360.0f * scale_) stage_w = 360.0f * scale_;
         float main_h = static_cast<float>(win_h);
 
-        // Render the three panels
+        // Menu bar, then the three panels below it
+        renderMenuBar();
         renderLeftSidebar(sidebar_w, main_h);
         renderCenterStage(sidebar_w, stage_w, main_h);
         renderRightInspector(inspector_w, main_h);
@@ -1254,6 +1348,7 @@ void GuiApp::run() {
                               << (decoded - stats_decoded_last_) / dt << " fps, rendered "
                               << (frame_count_ - stats_rendered_last_) / dt << " fps, texture "
                               << tex_w_ << "x" << tex_h_;
+                    if (session_) std::cerr << ", gyro " << session_->orientationPackets() << " pkts";
                     if (session_ && session_->getAudioPlayer()) {
                         const AudioPlayer* ap = session_->getAudioPlayer();
                         std::cerr << ", audio " << ap->packetsReceived() << " pkts, peak "
@@ -1273,7 +1368,8 @@ void GuiApp::run() {
 // LEFT SIDEBAR (Device list, search, status, connect)
 // ----------------------------------------------------------------------------
 void GuiApp::renderLeftSidebar(float width, float height) {
-    ImGui::SetNextWindowPos(ImVec2(0, 0));
+    height -= menu_h_;
+    ImGui::SetNextWindowPos(ImVec2(0, menu_h_));
     ImGui::SetNextWindowSize(ImVec2(width, height));
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
                              ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse;
@@ -1520,8 +1616,11 @@ void GuiApp::renderLeftSidebar(float width, float height) {
                 if (session_) session_->wakeOrPower(true);
             }
             ImGui::Separator();
-            if (MenuItemWithIcon("View in 3D", nullptr, Icons::drawCube, scale_)) {
-                showToast("3D twin: not yet in the Linux client");
+            if (MenuItemWithIcon(twin_mode_ ? "View Flat" : "View in 3D", nullptr, Icons::drawCube, scale_)) {
+                twin_mode_ = !twin_mode_;
+                if (twin_mode_ && session_ && !session_->hasSensorChannel()) {
+                    showToast("This agent offers no orientation channel; the twin will not turn", 6);
+                }
             }
             ImGui::Separator();
             if (MenuItemWithIcon("Open Front App on Virtual Display", nullptr, Icons::drawWindow, scale_)) {
@@ -1573,7 +1672,8 @@ void GuiApp::renderLeftSidebar(float width, float height) {
 // CENTER STAGE (Top header, Phone Bezel + Screen, Bottom Control Strip)
 // ----------------------------------------------------------------------------
 void GuiApp::renderCenterStage(float start_x, float width, float height) {
-    ImGui::SetNextWindowPos(ImVec2(start_x, 0));
+    height -= menu_h_;
+    ImGui::SetNextWindowPos(ImVec2(start_x, menu_h_));
     ImGui::SetNextWindowSize(ImVec2(width, height));
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
                              ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse;
@@ -1635,14 +1735,17 @@ void GuiApp::renderCenterStage(float start_x, float width, float height) {
     }
     bool has_frame = session_ && !live_frame_.empty();
 
-    if (session_active_ && has_frame) {
-        renderLiveMirror(ImVec2(start_x + 15.0f * scale_, 42.0f * scale_), ImVec2(available_w, available_h), live_frame_);
+    const float top = menu_h_ + 42.0f * scale_;
+    if (session_active_ && has_frame && twin_mode_) {
+        renderTwin(ImVec2(start_x + 15.0f * scale_, top), ImVec2(available_w, available_h), live_frame_);
+    } else if (session_active_ && has_frame) {
+        renderLiveMirror(ImVec2(start_x + 15.0f * scale_, top), ImVec2(available_w, available_h), live_frame_);
     } else {
-        renderPhoneMockup(ImVec2(start_x + width * 0.5f, 42.0f * scale_ + available_h * 0.44f), ImVec2(available_w, available_h));
+        renderPhoneMockup(ImVec2(start_x + width * 0.5f, top + available_h * 0.44f), ImVec2(available_w, available_h));
     }
 
     // Bottom Navigation Control Strip
-    renderControlStrip(ImVec2(start_x, height - 52.0f * scale_), width);
+    renderControlStrip(ImVec2(start_x, menu_h_ + height - 52.0f * scale_), width);
 
     ImGui::End();
     ImGui::PopStyleVar();
@@ -1749,10 +1852,10 @@ void GuiApp::renderPhoneMockup(ImVec2 center, ImVec2 max_size) {
 }
 
 // Live Mirrored Display inside Bezel
-void GuiApp::renderLiveMirror(ImVec2 origin, ImVec2 size, const DecodedFrame& frame) {
+// (Re)create the texture in the decoder's own layout and upload a new frame; SDL converts on the GPU.
+void GuiApp::uploadLiveTexture(const DecodedFrame& frame) {
     if (frame.empty()) return;
 
-    // (Re)create the texture in the decoder's own layout; SDL converts on the GPU.
     if (!video_texture_ || tex_w_ != frame.width || tex_h_ != frame.height || tex_format_ != frame.format) {
         if (video_texture_) SDL_DestroyTexture(video_texture_);
         Uint32 sdl_fmt = SDL_PIXELFORMAT_RGBA32;
@@ -1792,6 +1895,12 @@ void GuiApp::renderLiveMirror(ImVec2 origin, ImVec2 size, const DecodedFrame& fr
         texture_dirty_ = false;
         frames_shown_++;
     }
+}
+
+void GuiApp::renderLiveMirror(ImVec2 origin, ImVec2 size, const DecodedFrame& frame) {
+    if (frame.empty()) return;
+    uploadLiveTexture(frame);
+    if (!video_texture_) return;
 
     // Calculate aspect fit inside center stage
     int rot_w = (frame.displayOrientation % 2 == 1) ? frame.displayHeight : frame.displayWidth;
@@ -1836,6 +1945,100 @@ void GuiApp::renderLiveMirror(ImVec2 origin, ImVec2 size, const DecodedFrame& fr
     handleTouchInput(ImVec2(pos_x, pos_y), ImVec2(target_w, target_h),
                      frame.displayWidth, frame.displayHeight, frame.displayOrientation);
     handleKeyboardInput();
+}
+
+void GuiApp::loadBackTexture() {
+    if (back_texture_tried_) return;
+    back_texture_tried_ = true;
+    std::string exe_dir;
+    {
+        char buf[4096];
+        ssize_t n = ::readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+        if (n > 0) { buf[n] = '\0'; std::string e(buf); exe_dir = e.substr(0, e.rfind('/')); }
+    }
+    std::vector<std::string> candidates = {
+        exe_dir + "/../../doc/pixel-backside-transparent.png", exe_dir + "/../doc/pixel-backside-transparent.png",
+        exe_dir + "/../share/rplayhub-android/pixel-backside-transparent.png",
+        "doc/pixel-backside-transparent.png", "../doc/pixel-backside-transparent.png",
+    };
+    for (const auto& path : candidates) {
+        FILE* fp = fopen(path.c_str(), "rb");
+        if (!fp) continue;
+        std::vector<uint8_t> bytes;
+        uint8_t buf[65536];
+        size_t n;
+        while ((n = fread(buf, 1, sizeof(buf), fp)) > 0) bytes.insert(bytes.end(), buf, buf + n);
+        fclose(fp);
+        RgbaImage img = decodePngToRgba(bytes.data(), bytes.size());
+        if (!img.valid()) continue;
+        removeLightBackground(img);
+        back_texture_ = SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC, img.width, img.height);
+        if (back_texture_) {
+            SDL_UpdateTexture(back_texture_, nullptr, img.rgba.data(), img.width * 4);
+            SDL_SetTextureScaleMode(back_texture_, SDL_ScaleModeLinear);
+            SDL_SetTextureBlendMode(back_texture_, SDL_BLENDMODE_BLEND);
+        }
+        return;
+    }
+}
+
+// The 3D twin in the stage: the phone turns as the real one turns; touches land through the
+// rotated screen plane.
+void GuiApp::renderTwin(ImVec2 origin, ImVec2 size, const DecodedFrame& frame) {
+    uploadLiveTexture(frame);
+    loadBackTexture();
+    ImDrawList* draw_list = ImGui::GetWindowDrawList();
+
+    // Backdrop
+    draw_list->AddRectFilledMultiColor(origin, ImVec2(origin.x + size.x, origin.y + size.y),
+                                       IM_COL32(58, 60, 70, 255), IM_COL32(58, 60, 70, 255),
+                                       IM_COL32(22, 22, 28, 255), IM_COL32(22, 22, 28, 255));
+
+    float q[4] = {0, 0, 0, 1};
+    bool have = session_ && session_->latestOrientation(q);
+    twin_.setOrientation({q[0], q[1], q[2], q[3]}, have);
+    twin_.render(draw_list, origin, ImVec2(size.x, size.y - 44.0f * scale_), (ImTextureID)video_texture_,
+                 (ImTextureID)back_texture_, frame.displayWidth, frame.displayHeight, frame.displayOrientation, scale_);
+
+    // Touch through the plane
+    ImVec2 mouse = ImGui::GetMousePos();
+    bool over_stage = mouse.x >= origin.x && mouse.x <= origin.x + size.x && mouse.y >= origin.y && mouse.y <= origin.y + size.y - 44.0f * scale_;
+    int dx, dy;
+    if (session_ && over_stage && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && twin_.hitTest(mouse, dx, dy)) {
+        is_touch_active_ = true;
+        session_->sendTouch(dx, dy, MotionAction::DOWN);
+    } else if (session_ && is_touch_active_ && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 0.5f)) {
+        if (twin_.hitTest(mouse, dx, dy)) session_->sendTouch(dx, dy, MotionAction::MOVE);
+    } else if (session_ && is_touch_active_ && ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
+        is_touch_active_ = false;
+        if (!twin_.hitTest(mouse, dx, dy)) { dx = last_touch_x_; dy = last_touch_y_; }
+        session_->sendTouch(dx, dy, MotionAction::UP);
+    }
+    if (is_touch_active_ && twin_.hitTest(mouse, dx, dy)) { last_touch_x_ = dx; last_touch_y_ = dy; }
+    if (session_ && over_stage && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) session_->sendKey(AndroidKey::BACK);
+    handleKeyboardInput();
+
+    // Set Facing Me (R), and a hint until the reference is set
+    ImVec2 btn_sz(190.0f * scale_, 30.0f * scale_);
+    ImGui::SetCursorScreenPos(ImVec2(origin.x + (size.x - btn_sz.x) * 0.5f, origin.y + size.y - 38.0f * scale_));
+    ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(38, 120, 242, 242));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(58, 135, 250, 255));
+    ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(255, 255, 255, 255));
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 9.0f * scale_);
+    bool pressed = ImGui::Button(twin_.recentering() ? "Hold still..." : "Set Facing Me  (R)", btn_sz);
+    ImGui::PopStyleVar();
+    ImGui::PopStyleColor(3);
+    if (pressed || (!ImGui::GetIO().WantTextInput && ImGui::IsKeyPressed(ImGuiKey_R))) twin_.recenter();
+
+    const char* hint = nullptr;
+    if (!session_ || !session_->hasSensorChannel()) hint = "No orientation channel from this agent";
+    else if (!have) hint = "Waiting for the device's rotation sensor...";
+    else if (!twin_.hasReference()) hint = "Hold the phone facing you and press Set Facing Me";
+    if (hint && font_caption_) {
+        ImVec2 ts = font_caption_->CalcTextSizeA(13.0f * scale_, FLT_MAX, 0.0f, hint);
+        draw_list->AddText(font_caption_, 13.0f * scale_, ImVec2(origin.x + (size.x - ts.x) * 0.5f, origin.y + size.y - 62.0f * scale_),
+                           IM_COL32(230, 230, 235, 220), hint);
+    }
 }
 
 void GuiApp::handleTouchInput(ImVec2 img_pos, ImVec2 img_size, int dev_w, int dev_h, int quadrants) {
@@ -1988,7 +2191,8 @@ void GuiApp::renderControlStrip(ImVec2 pos, float width) {
 // ----------------------------------------------------------------------------
 void GuiApp::renderRightInspector(float width, float height) {
     float start_x = ImGui::GetIO().DisplaySize.x - width;
-    ImGui::SetNextWindowPos(ImVec2(start_x, 0));
+    height -= menu_h_;
+    ImGui::SetNextWindowPos(ImVec2(start_x, menu_h_));
     ImGui::SetNextWindowSize(ImVec2(width, height));
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
                              ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse;
@@ -2101,6 +2305,10 @@ void GuiApp::renderRightInspector(float width, float height) {
                 row("Rotation", std::to_string(st.rotation));
                 snprintf(buf, sizeof(buf), "%d kbps", st.bit_rate / 1000);
                 row("Bitrate", buf);
+                if (session_->hasSensorChannel()) {
+                    snprintf(buf, sizeof(buf), "%llu pkts", (unsigned long long)session_->orientationPackets());
+                    row("Gyro", buf);
+                }
                 if (const AudioPlayer* ap = session_->getAudioPlayer()) {
                     snprintf(buf, sizeof(buf), "%llu pkts, peak %.0f dB", (unsigned long long)ap->packetsReceived(), ap->peakDb());
                     row("Audio", buf);

@@ -38,7 +38,15 @@ public:
         std::string decoder;        // FFmpeg decoder name; empty = generic
         bool audio = true;          // forward device audio once the session is up (API 31+)
         bool turn_screen_off = false;   // agent flag 0x02: phone screen dark while mirroring
+        bool orientation = true;        // agent flag 0x100: the sensor channel for the 3D twin
     };
+
+    // The device's physical orientation from the sensor channel: the rotation vector quaternion
+    // (x, y, z, w) mapping the device frame into Android's East-North-Up world frame. Returns
+    // false before the first packet or without the channel.
+    bool latestOrientation(float q[4]) const;
+    uint64_t orientationPackets() const { return sensor_packets_.load(); }
+    bool hasSensorChannel() const { return sensor_socket_.isValid(); }
 
     struct DisplayDescriptor {
         int32_t id = 0;
@@ -139,6 +147,12 @@ private:
     TCPSocket control_socket_;
     TCPSocket audio_socket_; // Opened by the agent on API 31+; read by audio_player_ when forwarding
     std::unique_ptr<AudioPlayer> audio_player_;
+    TCPSocket sensor_socket_;                    // 'S' channel (agent flag 0x100), 24-byte packets
+    std::thread sensor_thread_;
+    mutable std::mutex sensor_mutex_;
+    float sensor_quat_[4] = {0, 0, 0, 1};
+    bool sensor_have_ = false;
+    std::atomic<uint64_t> sensor_packets_{0};
     std::atomic<bool> audio_enabled_{false};
     std::unique_ptr<TCPSocket> shell_socket_;
     std::unique_ptr<TCPSocket> logcat_socket_;   // `logcat` filtered to the agent's tag
@@ -168,6 +182,7 @@ private:
     void runLogLoop();
     void runLogcatLoop();
     void runControlLoop();
+    void runSensorLoop();
     void sendControl(const std::vector<uint8_t>& msg);
     void pushEvent(AgentEvent ev);
 };

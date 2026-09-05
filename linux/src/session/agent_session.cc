@@ -1,5 +1,7 @@
 #include "agent_session.h"
 #include <algorithm>
+#include <cmath>
+#include <cstring>
 #include <iostream>
 #include <sstream>
 #include <fstream>
@@ -90,6 +92,7 @@ void AgentSession::stop() {
     video_socket_.shutdownAndClose();
     control_socket_.shutdownAndClose();
     audio_socket_.shutdownAndClose();
+    sensor_socket_.shutdownAndClose();
     if (shell_socket_) shell_socket_->shutdownAndClose();
     if (logcat_socket_) logcat_socket_->shutdownAndClose();
 
@@ -98,6 +101,7 @@ void AgentSession::stop() {
     if (log_thread_.joinable()) log_thread_.join();
     if (logcat_thread_.joinable()) logcat_thread_.join();
     if (control_thread_.joinable()) control_thread_.join();
+    if (sensor_thread_.joinable()) sensor_thread_.join();
     if (audio_player_) {
         audio_player_->stop();
         audio_player_.reset();
@@ -188,7 +192,7 @@ void AgentSession::runBringup() {
         << " com.android.tools.screensharing.Main"
         << " --socket=" << socket_name_
         << " --max_size=" << options_.max_w << "," << options_.max_h
-        << " --flags=" << (1 | (options_.turn_screen_off ? 2 : 0))
+        << " --flags=" << (1 | (options_.turn_screen_off ? 2 : 0) | (options_.orientation ? 0x100 : 0))
         << " --codec=" << options_.codec
         << " --log=" << (std::getenv("RPLAYHUB_AGENT_LOG") ? std::getenv("RPLAYHUB_AGENT_LOG") : "info");
 
@@ -207,16 +211,25 @@ void AgentSession::runBringup() {
 
     // Accept channels
     setStatus(SessionState::DEPLOYING, "Waiting for agent channels...");
-    int expected_channels = (sdk >= 31) ? 3 : 2;
+    // Video, control, audio on API 31+, and the sensor channel when asked for. An agent build
+    // without the sensor addition never opens it, so once the others are in we wait only a
+    // little longer for it.
+    int expected_channels = ((sdk >= 31) ? 3 : 2) + (options_.orientation ? 1 : 0);
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(15);
     for (int i = 0; i < expected_channels; ++i) {
         TCPSocket sock;
         // Poll in short slices so stop() is honoured while we wait for the agent.
-        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(15);
         bool accepted = false;
-        while (!stopping_.load() && std::chrono::steady_clock::now() < deadline) {
+        bool essentials_in = video_socket_.isValid() && control_socket_.isValid() && (sdk < 31 || audio_socket_.isValid());
+        auto this_deadline = essentials_in ? std::chrono::steady_clock::now() + std::chrono::seconds(2) : deadline;
+        while (!stopping_.load() && std::chrono::steady_clock::now() < this_deadline) {
             if (listener.accept(sock, 250)) { accepted = true; break; }
         }
         if (!accepted) {
+            if (essentials_in) {
+                addLog("Sensor channel not offered by this agent build; 3D twin unavailable");
+                break;
+            }
             setStatus(stopping_.load() ? SessionState::STOPPED : SessionState::FAILED,
                       stopping_.load() ? "Mirroring stopped" : "Timeout waiting for agent connections");
             return;
@@ -235,6 +248,8 @@ void AgentSession::runBringup() {
             control_socket_.setNoDelay(true);
         } else if (marker == 'A') {
             audio_socket_ = std::move(sock);
+        } else if (marker == 'S') {
+            sensor_socket_ = std::move(sock);
         }
     }
 
@@ -271,6 +286,7 @@ void AgentSession::runBringup() {
 
     video_thread_ = std::thread(&AgentSession::runVideoLoop, this);
     control_thread_ = std::thread(&AgentSession::runControlLoop, this);
+    if (sensor_socket_.isValid()) sensor_thread_ = std::thread(&AgentSession::runSensorLoop, this);
     setStatus(SessionState::RUNNING, "Mirroring active");
     if (options_.audio) setAudioForwarding(true);
 }
@@ -399,6 +415,30 @@ void AgentSession::runControlLoop() {
             break;
         }
     }
+}
+
+// Each packet: four little-endian float32 (quaternion x, y, z, w) plus an int64 timestamp we
+// ignore: orientation is a current value and the newest packet always wins.
+void AgentSession::runSensorLoop() {
+    uint8_t buf[24];
+    while (!stopping_.load()) {
+        if (!sensor_socket_.readFully(buf, sizeof(buf))) break;
+        float q[4];
+        memcpy(q, buf, 16);
+        float len = std::sqrt(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]);
+        if (!(len > 0.5f)) continue;   // malformed or all-zero packet
+        std::lock_guard<std::mutex> lock(sensor_mutex_);
+        for (int i = 0; i < 4; ++i) sensor_quat_[i] = q[i] / len;
+        sensor_have_ = true;
+        sensor_packets_.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
+bool AgentSession::latestOrientation(float q[4]) const {
+    std::lock_guard<std::mutex> lock(sensor_mutex_);
+    if (!sensor_have_) return false;
+    for (int i = 0; i < 4; ++i) q[i] = sensor_quat_[i];
+    return true;
 }
 
 void AgentSession::syncClipboard(const std::string& host_text) {
