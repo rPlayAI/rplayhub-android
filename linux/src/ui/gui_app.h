@@ -3,6 +3,7 @@
 #include "net/tcp_socket.h"
 #include "adb/adb_client.h"
 #include "session/agent_session.h"
+#include "session/app_catalog.h"
 #include "util/async_jobs.h"
 #include "imgui.h"
 
@@ -38,6 +39,7 @@ private:
     bool auto_mirror_ = false;
     float scale_ = 0.0f;
     std::string dump_frame_path_;
+    std::chrono::steady_clock::time_point dump_settled_at_;
     std::string preferred_serial_;
     int frame_count_ = 0;
     bool stats_ = false;
@@ -99,11 +101,21 @@ private:
     std::string connect_status_msg_;
 
     // Apps tab state
-    std::vector<std::string> packages_;
+    struct AppRow {
+        std::string id;
+        std::string label;              // launcher label, empty until AppLabel answers
+        SDL_Texture* icon = nullptr;    // owned by app_icons_
+    };
+    std::vector<AppRow> apps_;
+    std::map<std::string, SDL_Texture*> app_icons_;   // "serial|package" -> texture
     char app_filter_[128] = {0};
     bool show_system_apps_ = false;
     int packages_gen_ = 0;               // bumps per request so a stale reply is dropped
     bool packages_loading_ = false;
+    bool app_labels_loading_ = false;
+    std::string apps_status_;            // transient: "Installing x.apk...", "Exported ..."
+    std::string pending_uninstall_;      // package awaiting confirmation
+    bool open_uninstall_popup_ = false;
 
     // Files tab state
     std::vector<std::string> remote_files_;
@@ -126,7 +138,14 @@ private:
     void loadDeviceInfo(const std::string& serial);
     const DeviceInfo* infoFor(const std::string& serial) const;
     void refreshPackages(const std::string& serial);
+    void fetchAppLabels(const std::string& serial, std::vector<std::string> ids, int gen);
     void refreshFiles(const std::string& serial);
+    void runShellAsync(const std::string& serial, const std::string& command, const std::string& toast);
+    void installApk(const std::string& serial, const std::string& local_path);
+    void pickAndInstallApk(const std::string& serial);
+    void exportApk(const std::string& serial, const std::string& package);
+    void handleDroppedFile(const std::string& path);
+    static std::string downloadsDir();
 
     void startMirroring(int device_idx);
     void stopMirroring();
