@@ -3,6 +3,7 @@
 #include "net/tcp_socket.h"
 #include "adb/adb_client.h"
 #include "session/agent_session.h"
+#include "util/async_jobs.h"
 #include "imgui.h"
 
 #include <SDL2/SDL.h>
@@ -10,6 +11,7 @@
 #include <string>
 #include <memory>
 #include <chrono>
+#include <map>
 
 namespace rplayhub {
 
@@ -23,6 +25,8 @@ public:
     void setPreferredSerial(const std::string& serial) { preferred_serial_ = serial; }
     // Print decoded/rendered frame rates to stderr every few seconds.
     void setStats(bool on) { stats_ = on; }
+    // Inspector tab to open with: 0=Info, 1=Apps, 2=Files, 3=Logcat.
+    void setInspectorTab(int tab) { inspector_tab_ = tab; }
     // Agent / decoder settings used for every mirror session started from the UI.
     void setSessionOptions(const AgentSession::Options& o) { session_options_ = o; }
 
@@ -58,13 +62,34 @@ private:
     ImFont* font_title_ = nullptr;
     ImFont* font_caption_ = nullptr;
 
+    // adb round trips run on worker threads; results land on the UI thread via jobs_.pump().
+    AsyncJobs jobs_;
     AdbClient adb_;
     std::vector<AdbDevice> devices_;
-    int selected_device_idx_ = -1;
+    int selected_device_idx_ = -1;       // index into devices_, recomputed from selected_serial_
+    std::string selected_serial_;        // survives the list reordering between polls
+    bool devices_poll_inflight_ = false;
     std::chrono::steady_clock::time_point last_device_poll_;
+    std::chrono::steady_clock::time_point auto_mirror_deadline_;
+
+    // Per-device properties, fetched once per device off the UI thread.
+    struct DeviceInfo {
+        std::map<std::string, std::string> props;
+        int battery = -1;
+        bool loaded = false;
+        bool loading = false;
+    };
+    std::map<std::string, DeviceInfo> device_info_;
 
     std::unique_ptr<AgentSession> session_;
     bool session_active_ = false;
+    std::string session_serial_;
+    bool user_stopped_ = false;          // stop came from the user, not from the stream ending
+    int reconnect_attempts_ = 0;
+    bool reconnect_pending_ = false;
+    std::chrono::steady_clock::time_point reconnect_at_;
+    std::chrono::steady_clock::time_point session_started_;
+    bool connect_inflight_ = false;
 
     // UI state
     char search_filter_[128] = {0};
@@ -77,12 +102,14 @@ private:
     std::vector<std::string> packages_;
     char app_filter_[128] = {0};
     bool show_system_apps_ = false;
-    std::string last_inspected_serial_;
-    int battery_level_ = -1;
+    int packages_gen_ = 0;               // bumps per request so a stale reply is dropped
+    bool packages_loading_ = false;
 
     // Files tab state
     std::vector<std::string> remote_files_;
     std::string current_remote_path_ = "/sdcard/Download";
+    int files_gen_ = 0;
+    bool files_loading_ = false;
 
     // Touch & input tracking
     bool is_touch_active_ = false;
@@ -94,11 +121,17 @@ private:
 
     void showToast(const std::string& msg, int seconds = 3);
     void pollDevices();
+    void applyDeviceList(const std::vector<AdbDevice>& list);
+    void selectDevice(int idx);
+    void loadDeviceInfo(const std::string& serial);
+    const DeviceInfo* infoFor(const std::string& serial) const;
     void refreshPackages(const std::string& serial);
     void refreshFiles(const std::string& serial);
 
     void startMirroring(int device_idx);
     void stopMirroring();
+    void restartSession();
+    void maintainSession();
 
     // Render components
     void renderLeftSidebar(float width, float height);
