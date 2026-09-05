@@ -110,6 +110,9 @@ private:
     int grown_w_ = 0, grown_h_ = 0;   // the size asked for
     int grow_dx_ = 0, grow_dy_ = 0;   // margins added left of / above the raw view
     bool grownSizeReached(int win_w, int win_h) const { return grown_ && win_w == grown_w_ && win_h == grown_h_; }
+    void computeGrownSize();                       // grown_w_/h_ and grow_dx_/dy_ from bare_w_/h_
+    void fitWindowToFrame();                       // the picture turned: portrait window <-> landscape
+    int tex_landscape_ = -1;                       // orientation parity of the last texture
     void moveResize(int w, int h, int x, int y);   // one X request, so the window does not hop
 
     int32_t display_id_;

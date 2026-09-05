@@ -263,6 +263,51 @@ void DisplayWindow::moveResize(int w, int h, int x, int y) {
     SDL_SetWindowPosition(window_, x, y);
 }
 
+void DisplayWindow::computeGrownSize() {
+    const float gap = isPhone() ? kChassisGap * chrome_.scale : 0.0f;
+    grown_w_ = isPhone() ? static_cast<int>(std::lround(bare_w_ / kChassisSpan)) : bare_w_;
+    grown_h_ = static_cast<int>(std::lround(titleBarHeight() + gap + bare_h_ + gap + toolbarHeight()));
+    grow_dx_ = (grown_w_ - bare_w_) / 2;
+    grow_dy_ = static_cast<int>(std::lround(titleBarHeight() + gap));
+}
+
+// Like the Mac's sizeWindowToMirror: when the picture turns, the window turns with it, keeping
+// its longest side and its centre, so the phone fills it with no dead space either way.
+void DisplayWindow::fitWindowToFrame() {
+    if (!window_ || tex_w_ <= 0 || tex_h_ <= 0) return;
+    if (SDL_GetWindowFlags(window_) & SDL_WINDOW_MAXIMIZED) return;
+    int w = 0, h = 0, x = 0, y = 0;
+    SDL_GetWindowSize(window_, &w, &h);
+    SDL_GetWindowPosition(window_, &x, &y);
+    const int bw = grown_ ? bare_w_ : w, bh = grown_ ? bare_h_ : h;
+    const int longest = std::max(bw, bh);
+    const float aspect = static_cast<float>(tex_w_) / tex_h_;
+    int nw, nh;
+    if (isPhone()) {
+        if (aspect < 1.0f) {   // portrait: the chassis is `longest` tall
+            const float pw = longest / (1.0f / aspect + 2.0f * kBezel);
+            nw = static_cast<int>(std::lround(pw * (1.0f + 2.0f * kBezel)));
+            nh = bareHeightForWidth(nw, aspect);
+        } else {
+            nw = longest;
+            nh = bareHeightForWidth(nw, aspect);
+        }
+    } else if (aspect < 1.0f) {
+        nh = longest; nw = static_cast<int>(std::lround(longest * aspect));
+    } else {
+        nw = longest; nh = static_cast<int>(std::lround(longest / aspect));
+    }
+    const int cx = x + w / 2, cy = y + h / 2;
+    if (!grown_) {
+        moveResize(nw, nh, cx - nw / 2, cy - nh / 2);
+    } else {
+        bare_w_ = nw;
+        bare_h_ = nh;
+        computeGrownSize();
+        moveResize(grown_w_, grown_h_, cx - grown_w_ / 2, cy - grown_h_ / 2);
+    }
+}
+
 int DisplayWindow::bareHeightForWidth(int width, float screen_aspect) {
     const float pw = width / (1.0f + 2.0f * kBezel);
     return static_cast<int>(std::lround(pw / screen_aspect + 2.0f * kBezel * pw));
@@ -449,6 +494,9 @@ void DisplayWindow::render(const DecodedFrame& frame) {
             tex_h_ = frame.height;
             tex_format_ = frame.format;
             uploaded_frame_ = 0;
+            const int landscape = frame.width > frame.height ? 1 : 0;
+            if (tex_landscape_ >= 0 && tex_landscape_ != landscape) fitWindowToFrame();
+            tex_landscape_ = landscape;
             have_frame_ = false;
         }
         if (texture_ && (!have_frame_ || frame.frameNumber != uploaded_frame_)) {
@@ -538,11 +586,7 @@ float DisplayWindow::updateChromeAlpha(int win_w, int win_h) {
         if (target > 0.5f && !grown_) {
             bare_w_ = win_w;
             bare_h_ = win_h;
-            const float gap = isPhone() ? kChassisGap * chrome_.scale : 0.0f;
-            grown_w_ = isPhone() ? static_cast<int>(std::lround(win_w / kChassisSpan)) : win_w;
-            grown_h_ = static_cast<int>(std::lround(titleBarHeight() + gap + win_h + gap + toolbarHeight()));
-            grow_dx_ = (grown_w_ - win_w) / 2;
-            grow_dy_ = static_cast<int>(std::lround(titleBarHeight() + gap));
+            computeGrownSize();
             moveResize(grown_w_, grown_h_, wx - grow_dx_, wy - grow_dy_);
             grown_ = true;
         } else if (target < 0.5f && grown_ && chrome_alpha_ == 0.0f) {
