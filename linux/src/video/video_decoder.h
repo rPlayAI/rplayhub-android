@@ -3,6 +3,7 @@
 #include "protocol/video_packet.h"
 #include <vector>
 #include <mutex>
+#include <atomic>
 #include <string>
 #include <memory>
 #include <cstdint>
@@ -41,6 +42,9 @@ public:
 
     bool hasFrame() const;
 
+    // Total frames decoded since init(); for --stats.
+    uint64_t framesDecoded() const { return frames_decoded_.load(std::memory_order_relaxed); }
+
 private:
     AVCodecContext* codec_ctx_ = nullptr;
     AVFrame* av_frame_ = nullptr;
@@ -54,6 +58,7 @@ private:
     DecodedFrame latest_frame_;
     bool has_new_frame_ = false;
     bool has_any_frame_ = false;
+    std::atomic<uint64_t> frames_decoded_{0};
 
     void updateSws(int src_w, int src_h, int src_fmt);
 };

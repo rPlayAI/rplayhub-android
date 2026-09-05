@@ -136,6 +136,7 @@ bool VideoDecoder::decode(const uint8_t* payload, size_t size, const VideoPacket
             has_new_frame_ = true;
             has_any_frame_ = true;
         }
+        frames_decoded_.fetch_add(1, std::memory_order_relaxed);
     }
 
     return true;

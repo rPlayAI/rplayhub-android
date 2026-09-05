@@ -140,8 +140,23 @@ bool GuiApp::init() {
     pollDevices();
     last_device_poll_ = std::chrono::steady_clock::now();
 
-    if (auto_mirror_ && !devices_.empty() && devices_[0].isReady()) {
-        startMirroring(0);
+    if (auto_mirror_) {
+        int idx = -1;
+        for (int i = 0; i < static_cast<int>(devices_.size()); ++i) {
+            if (preferred_serial_.empty() ? devices_[i].isReady()
+                                          : devices_[i].serial == preferred_serial_) {
+                idx = i;
+                break;
+            }
+        }
+        if (idx >= 0) {
+            selected_device_idx_ = idx;
+            last_inspected_serial_.clear(); // force the inspector onto this device
+            startMirroring(idx);
+        } else {
+            std::cerr << "--mirror: no " << (preferred_serial_.empty() ? "ready device" : "device " + preferred_serial_)
+                      << " in `adb devices`\n";
+        }
         auto_mirror_ = false;
     }
 
@@ -305,7 +320,11 @@ void GuiApp::run() {
         ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData(), renderer_);
 
         frame_count_++;
-        if (!dump_frame_path_.empty() && frame_count_ >= 30) {
+        // Dump once the UI has settled and, if a mirror was requested, once the
+        // first video frame has been shown (or the session gave up).
+        bool mirror_settled = !session_ || session_->getDecoder().hasFrame() ||
+                              session_->getState() == SessionState::FAILED;
+        if (!dump_frame_path_.empty() && frame_count_ >= 30 && mirror_settled) {
             SDL_Surface* sshot = SDL_CreateRGBSurfaceWithFormat(0, win_w, win_h, 32, SDL_PIXELFORMAT_ARGB8888);
             if (sshot) {
                 if (SDL_RenderReadPixels(renderer_, NULL, SDL_PIXELFORMAT_ARGB8888, sshot->pixels, sshot->pitch) == 0) {
@@ -318,6 +337,23 @@ void GuiApp::run() {
         }
 
         SDL_RenderPresent(renderer_);
+
+        if (stats_) {
+            auto t = std::chrono::steady_clock::now();
+            double dt = std::chrono::duration<double>(t - stats_last_).count();
+            if (dt >= 5.0) {
+                uint64_t decoded = session_ ? session_->getDecoder().framesDecoded() : 0;
+                if (stats_last_.time_since_epoch().count() != 0) {
+                    std::cerr << "stats: decoded " << std::fixed << std::setprecision(1)
+                              << (decoded - stats_decoded_last_) / dt << " fps, rendered "
+                              << (frame_count_ - stats_rendered_last_) / dt << " fps, texture "
+                              << tex_w_ << "x" << tex_h_ << "\n";
+                }
+                stats_last_ = t;
+                stats_decoded_last_ = decoded;
+                stats_rendered_last_ = frame_count_;
+            }
+        }
     }
 }
 
