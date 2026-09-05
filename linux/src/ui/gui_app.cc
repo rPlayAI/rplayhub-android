@@ -694,6 +694,14 @@ void GuiApp::takeScreenshot() {
         });
 }
 
+// Ask for the next quadrant explicitly. -1 would hand control back to the device's own
+// sensor, which is a different command (Follow Device Rotation in the Device menu).
+void GuiApp::rotateDevice() {
+    if (!session_ || session_->getState() != SessionState::RUNNING) return;
+    int next = (live_frame_.displayOrientation + 1) % 4;
+    session_->setOrientation(next);
+}
+
 // Host-side recording of the mirror stream to ~/Videos, started and stopped from the same button.
 void GuiApp::toggleRecording() {
     if (!session_ || session_->getState() != SessionState::RUNNING) {
@@ -844,7 +852,8 @@ void GuiApp::renderMenuBar() {
         if (ImGui::MenuItem("Back", nullptr, false, live)) session_->sendKey(AndroidKey::BACK);
         if (ImGui::MenuItem("Home", nullptr, false, live)) session_->sendKey(AndroidKey::HOME);
         if (ImGui::MenuItem("Recents", nullptr, false, live)) session_->sendKey(AndroidKey::APP_SWITCH);
-        if (ImGui::MenuItem("Rotate", nullptr, false, live)) session_->setOrientation(-1);
+        if (ImGui::MenuItem("Rotate", nullptr, false, live)) rotateDevice();
+        if (ImGui::MenuItem("Follow Device Rotation", nullptr, false, live)) session_->setOrientation(-1);
         if (ImGui::MenuItem("Wake", nullptr, false, live)) session_->wakeOrPower(false);
         if (ImGui::MenuItem("Power Button", nullptr, false, live)) session_->wakeOrPower(true);
         ImGui::Separator();
@@ -1691,7 +1700,7 @@ void GuiApp::renderLeftSidebar(float width, float height) {
                 if (session_) session_->sendKey(AndroidKey::APP_SWITCH);
             }
             if (MenuItemWithIcon("Rotate", nullptr, Icons::drawRotate, scale_)) {
-                if (session_) session_->setOrientation(-1);
+                rotateDevice();
             }
             ImGui::Separator();
             if (MenuItemWithIcon("Wake", nullptr, Icons::drawSun, scale_)) {
@@ -2232,7 +2241,7 @@ void GuiApp::renderControlStrip(ImVec2 pos, float width) {
         { "##VolDown", Icons::drawVolumeDown, "Volume Down", [this]() { if (session_) session_->sendKey(AndroidKey::VOLUME_DOWN); } },
         { "##VolUp", Icons::drawVolumeUp, "Volume Up", [this]() { if (session_) session_->sendKey(AndroidKey::VOLUME_UP); } },
         { "##Power", Icons::drawPower, "Power Button", [this]() { if (session_) session_->sendKey(AndroidKey::POWER); } },
-        { "##Rotate", Icons::drawRotate, "Rotate Screen", [this]() { if (session_) session_->setOrientation(-1); } },
+        { "##Rotate", Icons::drawRotate, "Rotate Screen", [this]() { rotateDevice(); } },
         { "##Camera", Icons::drawCamera, "Take Screenshot", [this]() { takeScreenshot(); } },
         { "##Record", Icons::drawRecord, "Record Screen", [this]() { toggleRecording(); } }
     };

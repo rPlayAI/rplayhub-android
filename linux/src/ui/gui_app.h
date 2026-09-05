@@ -215,6 +215,7 @@ private:
     void restartSession();
     void maintainSession();
     void takeScreenshot();
+    void rotateDevice();
     void pollEmulators();
     void startEmulator(const Avd& avd);
     void shutdownEmulator(const std::string& serial);
