@@ -11,6 +11,7 @@ int main(int argc, char* argv[]) {
     std::string serial;
     bool stats = false;
     int tab = -1;
+    bool clipboard = true;
     rplayhub::AgentSession::Options opts;
     if (const char* env = std::getenv("RPLAYHUB_DECODER")) opts.decoder = env;
 
@@ -37,6 +38,8 @@ int main(int argc, char* argv[]) {
             serial = argv[++i];
         } else if (arg == "--stats") {
             stats = true;
+        } else if (arg == "-v" || arg == "--verbose") {
+            rplayhub::AgentSession::setVerbose(true);
         } else if (arg == "--tab" && i + 1 < argc) {
             std::string t = argv[++i];
             tab = (t == "info") ? 0 : (t == "apps") ? 1 : (t == "files") ? 2 : (t == "logcat") ? 3 : -1;
@@ -46,6 +49,10 @@ int main(int argc, char* argv[]) {
             }
         } else if (arg == "--no-audio") {
             opts.audio = false;
+        } else if (arg == "--no-clipboard") {
+            clipboard = false;
+        } else if (arg == "--screen-off") {
+            opts.turn_screen_off = true;
         } else if (arg == "--decoder" && i + 1 < argc) {
             opts.decoder = argv[++i];
         } else if (arg == "--codec" && i + 1 < argc) {
@@ -69,8 +76,11 @@ int main(int argc, char* argv[]) {
                          "  -s, --scale <f>       UI scale factor, or RPLAYHUB_SCALE\n"
                          "      --dump-frame <p>  save a BMP of the window once the mirror is up\n"
                          "      --stats           print decoded / rendered fps to stderr every 5 s\n"
+                         "  -v, --verbose         echo the device agent's log to stderr\n"
                          "      --tab <name>      inspector tab to open with: info, apps, files, logcat\n"
                          "      --no-audio        do not forward device audio (Android 12+ devices)\n"
+                         "      --no-clipboard    do not sync the clipboard with the device\n"
+                         "      --screen-off      turn the phone's screen off while mirroring\n"
                          "      --codec <c>       agent video codec: avc (default), hevc, vp8, vp9, av1\n"
                          "      --decoder <name>  FFmpeg decoder, e.g. h264_v4l2m2m (default: generic), or RPLAYHUB_DECODER\n"
                          "      --max-size WxH    agent frame size cap (default 1080x2400)\n";
@@ -86,6 +96,7 @@ int main(int argc, char* argv[]) {
     app.setStats(stats);
     if (tab >= 0) app.setInspectorTab(tab);
     app.setSessionOptions(opts);
+    app.setClipboardSyncDefault(clipboard);
 
     if (!app.init()) {
         std::cerr << "Failed to initialize rPlayHub Linux GUI\n";

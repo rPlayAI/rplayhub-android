@@ -35,7 +35,26 @@ public:
         std::string codec = "avc";  // agent --codec: avc, hevc, vp8, vp9, av1
         std::string decoder;        // FFmpeg decoder name; empty = generic
         bool audio = true;          // forward device audio once the session is up (API 31+)
+        bool turn_screen_off = false;   // agent flag 0x02: phone screen dark while mirroring
     };
+
+    struct DisplayDescriptor {
+        int32_t id = 0;
+        int32_t width = 0;
+        int32_t height = 0;
+        int32_t rotation = 0;
+        int32_t type = 0;
+    };
+
+    // What the agent sends unprompted on the control channel, queued for the UI thread.
+    struct AgentEvent {
+        enum Kind { CLIPBOARD_CHANGED, DISPLAYS, DISPLAY_ADDED_OR_CHANGED, DISPLAY_REMOVED, ERROR_RESPONSE };
+        Kind kind = ERROR_RESPONSE;
+        std::string text;                          // clipboard text / error message
+        DisplayDescriptor display;                 // DISPLAY_ADDED_OR_CHANGED / DISPLAY_REMOVED
+        std::vector<DisplayDescriptor> displays;   // DISPLAYS
+    };
+    std::vector<AgentEvent> takeEvents();
 
     bool start(const Options& options);
     bool start() { return start(Options()); }
@@ -63,6 +82,14 @@ public:
     void sendKey(int keycode, int action = KeyAction::DOWN_AND_UP);
     void sendText(const std::string& text);
     void setOrientation(int quadrants);
+    // Clipboard: one message both sets the device clipboard and subscribes to its changes
+    // (which arrive as CLIPBOARD_CHANGED events).
+    void syncClipboard(const std::string& host_text);
+    void stopClipboardSync();
+    // Freeze the mirror (no frames, no bandwidth) and resume it.
+    void setDisplayPaused(bool paused);
+    bool isDisplayPaused() const { return display_paused_.load(); }
+    void requestDisplayConfiguration();
     // Restart the primary display's encoder so the next packets are SPS/PPS and an IDR.
     // The agent's encoders emit no periodic keyframes, and a recording needs one to start.
     // Costs a ~100 ms gap in the mirror.
@@ -71,10 +98,13 @@ public:
 
     // Logs
     std::vector<std::string> getLogs();
+    // Echo every agent log line to stderr as well (the -v flag).
+    static void setVerbose(bool on) { verbose_ = on; }
 
     static std::string findAgentDirectory();
 
 private:
+    static inline bool verbose_ = false;
     std::string serial_;
     std::atomic<SessionState> state_{SessionState::IDLE};
     std::string status_message_;
@@ -91,11 +121,17 @@ private:
     std::unique_ptr<AudioPlayer> audio_player_;
     std::atomic<bool> audio_enabled_{false};
     std::unique_ptr<TCPSocket> shell_socket_;
+    std::unique_ptr<TCPSocket> logcat_socket_;   // `logcat` filtered to the agent's tag
     std::string socket_name_;
 
     std::thread session_thread_;
     std::thread video_thread_;
     std::thread log_thread_;
+    std::thread logcat_thread_;
+    std::thread control_thread_;
+    std::atomic<bool> display_paused_{false};
+    std::mutex events_mutex_;
+    std::vector<AgentEvent> events_;
     std::atomic<bool> stopping_{false};
 
     std::mutex control_mutex_;
@@ -110,6 +146,10 @@ private:
     void runBringup();
     void runVideoLoop();
     void runLogLoop();
+    void runLogcatLoop();
+    void runControlLoop();
+    void sendControl(const std::vector<uint8_t>& msg);
+    void pushEvent(AgentEvent ev);
 };
 
 } // namespace rplayhub

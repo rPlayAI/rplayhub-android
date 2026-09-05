@@ -1,4 +1,5 @@
 #include "agent_session.h"
+#include <algorithm>
 #include <iostream>
 #include <sstream>
 #include <fstream>
@@ -56,6 +57,7 @@ void AgentSession::setStatus(SessionState state, const std::string& msg) {
 }
 
 void AgentSession::addLog(const std::string& line) {
+    if (verbose_) std::cerr << line << "\n";
     std::lock_guard<std::mutex> lock(log_mutex_);
     logs_.push_back(line);
     if (logs_.size() > 500) {
@@ -89,10 +91,13 @@ void AgentSession::stop() {
     control_socket_.shutdownAndClose();
     audio_socket_.shutdownAndClose();
     if (shell_socket_) shell_socket_->shutdownAndClose();
+    if (logcat_socket_) logcat_socket_->shutdownAndClose();
 
     if (session_thread_.joinable()) session_thread_.join();
     if (video_thread_.joinable()) video_thread_.join();
     if (log_thread_.joinable()) log_thread_.join();
+    if (logcat_thread_.joinable()) logcat_thread_.join();
+    if (control_thread_.joinable()) control_thread_.join();
     if (audio_player_) {
         audio_player_->stop();
         audio_player_.reset();
@@ -179,9 +184,9 @@ void AgentSession::runBringup() {
         << " com.android.tools.screensharing.Main"
         << " --socket=" << socket_name_
         << " --max_size=" << options_.max_w << "," << options_.max_h
-        << " --flags=1"
+        << " --flags=" << (1 | (options_.turn_screen_off ? 2 : 0))
         << " --codec=" << options_.codec
-        << " --log=info";
+        << " --log=" << (std::getenv("RPLAYHUB_AGENT_LOG") ? std::getenv("RPLAYHUB_AGENT_LOG") : "info");
 
     shell_socket_ = adb_.shellStream(serial_, cmd.str());
     if (!shell_socket_) {
@@ -190,6 +195,11 @@ void AgentSession::runBringup() {
     }
 
     log_thread_ = std::thread(&AgentSession::runLogLoop, this);
+
+    // The agent logs to logcat under studio.screen.sharing, not to the stdout of its shell
+    // (which only ever carries app_process's own complaints), so tail that tag from now on.
+    logcat_socket_ = adb_.shellStream(serial_, "logcat -v brief -T 1 studio.screen.sharing:V '*:S'");
+    if (logcat_socket_) logcat_thread_ = std::thread(&AgentSession::runLogcatLoop, this);
 
     // Accept channels
     setStatus(SessionState::DEPLOYING, "Waiting for agent channels...");
@@ -256,8 +266,153 @@ void AgentSession::runBringup() {
     }
 
     video_thread_ = std::thread(&AgentSession::runVideoLoop, this);
+    control_thread_ = std::thread(&AgentSession::runControlLoop, this);
     setStatus(SessionState::RUNNING, "Mirroring active");
     if (options_.audio) setAudioForwarding(true);
+}
+
+void AgentSession::sendControl(const std::vector<uint8_t>& msg) {
+    if (!control_socket_.isValid()) return;
+    std::lock_guard<std::mutex> lock(control_mutex_);
+    control_socket_.writeAll(msg.data(), msg.size());
+}
+
+void AgentSession::pushEvent(AgentEvent ev) {
+    std::lock_guard<std::mutex> lock(events_mutex_);
+    events_.push_back(std::move(ev));
+    if (events_.size() > 256) events_.erase(events_.begin(), events_.begin() + 128);
+}
+
+std::vector<AgentSession::AgentEvent> AgentSession::takeEvents() {
+    std::lock_guard<std::mutex> lock(events_mutex_);
+    std::vector<AgentEvent> out;
+    out.swap(events_);
+    return out;
+}
+
+// The agent's side of the control channel. Nothing is length-prefixed, so every message type
+// the agent can send unprompted is decoded field by field; after an unknown type the stream
+// can no longer be framed, so the loop drains and discards, which keeps the agent's writer
+// unblocked. Message layouts: refs/studio/.../control_messages.cc.
+void AgentSession::runControlLoop() {
+    auto read_varint = [&](uint32_t& out) -> bool {
+        out = 0;
+        for (int shift = 0; shift < 35; shift += 7) {
+            uint8_t b;
+            if (!control_socket_.readFully(&b, 1)) return false;
+            out |= static_cast<uint32_t>(b & 0x7F) << shift;
+            if ((b & 0x80) == 0) return true;
+        }
+        return false;
+    };
+    auto read_i32 = [&](int32_t& out) -> bool {
+        uint32_t u;
+        if (!read_varint(u)) return false;
+        out = static_cast<int32_t>(u);
+        return true;
+    };
+    auto read_bytes = [&](std::string& out) -> bool {
+        uint32_t len;
+        if (!read_varint(len) || len > (1u << 24)) return false;
+        out.resize(len);
+        return len == 0 || control_socket_.readFully(out.data(), len);
+    };
+
+    while (!stopping_.load()) {
+        uint32_t type;
+        if (!read_varint(type)) {
+            if (!stopping_.load()) addLog("[Agent] control channel closed");
+            break;
+        }
+        if (verbose_) std::cerr << "control: message type " << type << "\n";
+        bool ok = true;
+        switch (type) {
+        case 21: {   // ErrorResponse: request id, message
+            int32_t req; std::string msg;
+            ok = read_i32(req) && read_bytes(msg);
+            if (ok) {
+                addLog("[Agent] error response: " + msg);
+                AgentEvent ev; ev.kind = AgentEvent::ERROR_RESPONSE; ev.text = msg;
+                pushEvent(std::move(ev));
+            }
+            break;
+        }
+        case 22: {   // DisplayConfigurationResponse: request id, count, (id, w, h, rotation, type)*
+            int32_t req, count;
+            ok = read_i32(req) && read_i32(count);
+            AgentEvent ev; ev.kind = AgentEvent::DISPLAYS;
+            for (int32_t i = 0; ok && i < std::min(count, 64); ++i) {
+                DisplayDescriptor d;
+                ok = read_i32(d.id) && read_i32(d.width) && read_i32(d.height) && read_i32(d.rotation) && read_i32(d.type);
+                if (ok) ev.displays.push_back(d);
+            }
+            if (ok) pushEvent(std::move(ev));
+            break;
+        }
+        case 23: {   // ClipboardChangedNotification: text
+            AgentEvent ev; ev.kind = AgentEvent::CLIPBOARD_CHANGED;
+            ok = read_bytes(ev.text);
+            if (ok) pushEvent(std::move(ev));
+            break;
+        }
+        case 24: {   // SupportedDeviceStatesNotification
+            uint32_t count;
+            ok = read_varint(count);
+            for (uint32_t i = 0; ok && i < count && i < 64; ++i) {
+                int32_t id, sys, phys; std::string name;
+                ok = read_i32(id) && read_bytes(name) && read_i32(sys) && read_i32(phys);
+            }
+            int32_t current;
+            ok = ok && read_i32(current);
+            break;
+        }
+        case 25: { int32_t state; ok = read_i32(state); break; }   // DeviceStateNotification
+        case 26: {   // DisplayAddedOrChangedNotification: id, w, h, rotation, type, env w, env h
+            AgentEvent ev; ev.kind = AgentEvent::DISPLAY_ADDED_OR_CHANGED;
+            int32_t env_w, env_h;
+            ok = read_i32(ev.display.id) && read_i32(ev.display.width) && read_i32(ev.display.height) &&
+                 read_i32(ev.display.rotation) && read_i32(ev.display.type) && read_i32(env_w) && read_i32(env_h);
+            if (ok) pushEvent(std::move(ev));
+            break;
+        }
+        case 27: {   // DisplayRemovedNotification: id
+            AgentEvent ev; ev.kind = AgentEvent::DISPLAY_REMOVED;
+            ok = read_i32(ev.display.id);
+            if (ok) pushEvent(std::move(ev));
+            break;
+        }
+        case 28: { uint8_t f[4]; ok = control_socket_.readFully(f, 4); break; }   // XrPassthroughCoefficientChanged (fixed32)
+        case 29: case 30: { int32_t v; ok = read_i32(v); break; }                // XrEnvironmentChanged / XrInputUnavailable
+        default:
+            addLog("[Agent] control channel: unknown message type " + std::to_string(type) + "; draining");
+            ok = false;
+            break;
+        }
+        if (!ok) {
+            if (!stopping_.load()) addLog("[Agent] control channel: could not parse message type " + std::to_string(type) + "; draining");
+            char sink[4096];
+            while (!stopping_.load() && control_socket_.read(sink, sizeof(sink)) > 0) {}
+            break;
+        }
+    }
+}
+
+void AgentSession::syncClipboard(const std::string& host_text) {
+    sendControl(ControlMessages::startClipboardSync(262144, host_text));
+}
+
+void AgentSession::stopClipboardSync() {
+    sendControl(ControlMessages::stopClipboardSync());
+}
+
+void AgentSession::setDisplayPaused(bool paused) {
+    if (paused) sendControl(ControlMessages::stopVideoStream(0));
+    else sendControl(ControlMessages::startVideoStream(0, options_.max_w, options_.max_h));
+    display_paused_.store(paused);
+}
+
+void AgentSession::requestDisplayConfiguration() {
+    sendControl(ControlMessages::displayConfigurationRequest(1));
 }
 
 void AgentSession::setAudioForwarding(bool enabled) {
@@ -319,6 +474,29 @@ void AgentSession::runVideoLoop() {
 
     if (!stopping_.load()) {
         setStatus(SessionState::STOPPED, "Video stream ended");
+    }
+}
+
+void AgentSession::runLogcatLoop() {
+    char buf[4096];
+    std::string line_accum;
+    while (!stopping_.load() && logcat_socket_) {
+        ssize_t n = logcat_socket_->read(buf, sizeof(buf) - 1);
+        if (n <= 0) break;
+        line_accum.append(buf, n);
+        size_t pos = 0;
+        while ((pos = line_accum.find('\n')) != std::string::npos) {
+            std::string line = line_accum.substr(0, pos);
+            line_accum.erase(0, pos + 1);
+            while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
+            // brief format: "D/studio.screen.sharing( 1234): message" -> "D: message"
+            size_t tag = line.find("studio.screen.sharing(");
+            size_t colon = tag == std::string::npos ? std::string::npos : line.find("): ", tag);
+            if (tag != std::string::npos && colon != std::string::npos && tag >= 2) {
+                line = line.substr(0, 1) + ": " + line.substr(colon + 3);
+            }
+            if (!line.empty() && line.rfind("--------- beginning", 0) != 0) addLog("[Agent] " + line);
+        }
     }
 }
 
