@@ -4,9 +4,11 @@
 #include "adb/adb_client.h"
 #include "session/agent_session.h"
 #include "session/app_catalog.h"
+#include "session/emulator_launcher.h"
 #include "util/async_jobs.h"
 #include "ui/display_window.h"
 #include <deque>
+#include <set>
 #include "imgui.h"
 
 #include <SDL2/SDL.h>
@@ -63,6 +65,7 @@ private:
     FrameFormat tex_format_ = FrameFormat::NONE;
     DecodedFrame live_frame_;          // newest decoded frame, refreshed only when the decoder has a new one
     bool texture_dirty_ = false;
+    uint64_t frames_shown_ = 0;          // texture uploads, for the Info tab
 
     // Font hierarchy
     ImFont* font_regular_ = nullptr;
@@ -115,6 +118,15 @@ private:
     bool startup_pop_out_ = false;
     bool startup_requests_sent_ = false;
     bool main_pinned_ = false;
+
+    // Emulators (AVDs) in the sidebar
+    std::vector<Avd> avds_;
+    std::map<std::string, std::string> avds_running_;   // name -> serial
+    std::chrono::steady_clock::time_point last_avd_poll_;
+    bool avd_poll_inflight_ = false;
+    std::string selected_avd_;
+    std::set<std::string> avd_starting_;                // names launched, not yet listed by adb
+    std::map<std::string, std::string> emulator_names_; // adb serial -> AVD name, asked once per serial
 
     // Clipboard sync (both ways, on by default): device changes land on the host clipboard,
     // host changes are pushed on a one-second poll (SDL has no reliable clipboard event on X11).
@@ -187,6 +199,10 @@ private:
     void restartSession();
     void maintainSession();
     void takeScreenshot();
+    void pollEmulators();
+    void startEmulator(const Avd& avd);
+    void shutdownEmulator(const std::string& serial);
+    void renderEmulatorRows(float width);
     void pumpAgentEvents();
     void openDesktopMode();
     void openAppOnVirtualDisplay(const std::string& package);

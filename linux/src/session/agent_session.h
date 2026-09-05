@@ -84,6 +84,12 @@ public:
     const AudioPlayer* getAudioPlayer() const { return audio_player_.get(); }
     // Codec the agent reported in the channel header ("h264", "hevc"); empty until RUNNING.
     std::string getCodecName() const;
+    struct StreamStats {
+        uint64_t packets = 0;
+        uint64_t bytes = 0;
+        int display_width = 0, display_height = 0, rotation = 0, bit_rate = 0;
+    };
+    StreamStats getStreamStats() const;
 
     // Input injection
     void sendTouch(int x, int y, int action, int32_t display_id = 0);
@@ -126,6 +132,8 @@ private:
     std::map<int32_t, std::unique_ptr<VideoDecoder>> display_decoders_;
     StreamRecorder recorder_;
     std::string codec_name_;
+    std::atomic<uint64_t> stat_packets_{0}, stat_bytes_{0};
+    std::atomic<int> stat_w_{0}, stat_h_{0}, stat_rot_{0}, stat_bitrate_{0};
 
     TCPSocket video_socket_;
     TCPSocket control_socket_;
