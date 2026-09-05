@@ -12,6 +12,7 @@
 #include <iomanip>
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <csignal>
 #include <atomic>
 #include <unistd.h>
@@ -494,21 +495,35 @@ void GuiApp::refreshFiles(const std::string& serial) {
     int gen = ++files_gen_;
     files_loading_ = true;
     std::string path = current_remote_path_;
-    jobs_.run<std::vector<std::string>>(
-        [this, serial, path] {
-            std::vector<std::string> files;
-            std::istringstream stream(adb_.shell(serial, "ls -1 " + path));
-            std::string line;
-            while (std::getline(stream, line)) {
-                while (!line.empty() && (line.back() == '\r' || line.back() == '\n')) line.pop_back();
-                if (!line.empty()) files.push_back(line);
-            }
-            return files;
-        },
-        [this, serial, gen](std::vector<std::string> files) {
+    struct Result { bool ok = false; std::vector<DirEntry> entries; };
+    jobs_.run<Result>(
+        [this, serial, path] { Result r; r.ok = adb_.listDirectory(serial, path, r.entries); return r; },
+        [this, serial, gen](Result r) {
             if (gen != files_gen_) return;
             files_loading_ = false;
-            if (serial == selected_serial_) remote_files_ = std::move(files);
+            if (serial != selected_serial_) return;
+            files_error_ = !r.ok;
+            remote_entries_ = std::move(r.entries);
+        });
+}
+
+void GuiApp::navigateTo(const std::string& serial, const std::string& path) {
+    std::string p = path.empty() ? "/" : path;
+    while (p.size() > 1 && p.back() == '/') p.pop_back();
+    current_remote_path_ = p;
+    remote_entries_.clear();
+    refreshFiles(serial);
+}
+
+void GuiApp::pullToDownloads(const std::string& serial, const std::string& remote_path) {
+    std::string name = remote_path.substr(remote_path.rfind('/') + 1);
+    std::string dest = downloadsDir() + "/" + name;
+    showToast("Pulling " + name + "...", 30);
+    struct Result { bool ok = false; std::string err; };
+    jobs_.run<Result>(
+        [this, serial, remote_path, dest] { Result r; r.ok = adb_.pullFile(serial, remote_path, dest, &r.err); return r; },
+        [this, dest, name](Result r) {
+            showToast(r.ok ? "Saved to " + dest : "Pull failed: " + name + " (" + r.err + ")", 6);
         });
 }
 
@@ -1666,51 +1681,143 @@ void GuiApp::renderRightInspector(float width, float height) {
         if (current_serial.empty()) {
             ImGui::TextColored(Theme::ColorTextSecondary, "No device selected");
         } else {
-            ImGui::TextColored(Theme::ColorTextSecondary, "%s", current_remote_path_.c_str());
-            ImGui::SameLine(width - 55.0f * scale_);
-            if (IconButton("##RefFiles", Icons::drawRefresh, ImVec2(26.0f * scale_, 24.0f * scale_), "Refresh directory")) {
+            // Path bar: up, path, refresh
+            ImVec2 btn_sz(26.0f * scale_, 24.0f * scale_);
+            bool at_root = (current_remote_path_ == "/");
+            if (at_root) ImGui::BeginDisabled();
+            if (IconButton("##DirUp", Icons::drawBack, btn_sz, "Up one folder")) {
+                std::string parent = current_remote_path_.substr(0, current_remote_path_.rfind('/'));
+                navigateTo(current_serial, parent.empty() ? "/" : parent);
+            }
+            if (at_root) ImGui::EndDisabled();
+            ImGui::SameLine();
+            {
+                // Show the tail of a long path; the full one is in the tooltip.
+                float avail = width - 24.0f * scale_ - btn_sz.x * 2 - 24.0f * scale_;
+                std::string shown = current_remote_path_;
+                while (ImGui::CalcTextSize(shown.c_str()).x > avail && shown.size() > 4) shown = "..." + shown.substr(4);
+                ImGui::AlignTextToFramePadding();
+                ImGui::TextColored(Theme::ColorTextSecondary, "%s", shown.c_str());
+                if (ImGui::IsItemHovered() && shown != current_remote_path_) ImGui::SetTooltip("%s", current_remote_path_.c_str());
+            }
+            ImGui::SameLine(width - 12.0f * scale_ - btn_sz.x);
+            if (IconButton("##RefFiles", Icons::drawRefresh, btn_sz, "Refresh")) {
                 refreshFiles(current_serial);
             }
 
-            float list_h = height - 160.0f * scale_;
+            float list_h = height - 128.0f * scale_;
             ImGui::BeginChild("##FileList", ImVec2(width - 24.0f * scale_, list_h), false);
-            for (size_t i = 0; i < remote_files_.size(); ++i) {
-                const auto& file = remote_files_[i];
+            float row_w = width - 24.0f * scale_;
+            for (size_t i = 0; i < remote_entries_.size(); ++i) {
+                const DirEntry& e = remote_entries_[i];
                 ImGui::PushID(static_cast<int>(i));
                 ImVec2 row_pos = ImGui::GetCursorScreenPos();
                 float row_h = 26.0f * scale_;
+                std::string full = (current_remote_path_ == "/" ? "" : current_remote_path_) + "/" + e.name;
 
-                ImGui::Selectable(("##file_" + std::to_string(i)).c_str(), false, 0, ImVec2(width - 24.0f * scale_, row_h));
-
-                bool is_apk = (file.rfind(".apk") != std::string::npos);
-                bool is_img = (file.rfind(".png") != std::string::npos || file.rfind(".jpg") != std::string::npos);
-                bool is_dir = (file.find('.') == std::string::npos);
-
-                float icon_sz = 18.0f * scale_;
-                if (is_apk) {
-                    draw_list->AddRectFilled(ImVec2(row_pos.x + 2.0f * scale_, row_pos.y + 2.0f * scale_),
-                                            ImVec2(row_pos.x + 2.0f * scale_ + icon_sz, row_pos.y + 2.0f * scale_ + icon_sz),
-                                            IM_COL32(52, 199, 89, 255), 4.0f * scale_);
-                    draw_list->AddText(ImVec2(row_pos.x + 5.0f * scale_, row_pos.y + 2.0f * scale_),
-                                      IM_COL32(255, 255, 255, 255), "A");
-                } else if (is_dir) {
-                    Icons::drawFolder(draw_list, ImVec2(row_pos.x + 2.0f * scale_, row_pos.y + 2.0f * scale_), icon_sz, IM_COL32(0, 122, 255, 255));
-                } else if (is_img) {
-                    Icons::drawCamera(draw_list, ImVec2(row_pos.x + 2.0f * scale_, row_pos.y + 2.0f * scale_), icon_sz, IM_COL32(175, 82, 222, 255));
-                } else {
-                    Icons::drawFile(draw_list, ImVec2(row_pos.x + 2.0f * scale_, row_pos.y + 2.0f * scale_), icon_sz, IM_COL32(140, 140, 145, 255));
+                if (ImGui::Selectable("##file", false, ImGuiSelectableFlags_AllowDoubleClick, ImVec2(row_w, row_h))) {
+                    if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+                        if (e.isDirectory || e.isLink) navigateTo(current_serial, full);
+                        else pullToDownloads(current_serial, full);
+                    }
                 }
 
-                draw_list->AddText(ImVec2(row_pos.x + 28.0f * scale_, row_pos.y + 4.0f * scale_),
-                                   IM_COL32(30, 30, 34, 255), file.c_str());
+                std::string lower = e.name;
+                std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+                auto ends = [&](const char* ext) {
+                    size_t n = strlen(ext);
+                    return lower.size() > n && lower.compare(lower.size() - n, n, ext) == 0;
+                };
+                bool is_apk = ends(".apk");
+                bool is_img = ends(".png") || ends(".jpg") || ends(".jpeg") || ends(".webp") || ends(".gif") || ends(".heic");
 
+                float icon_sz = 18.0f * scale_;
+                ImVec2 icon_tl(row_pos.x + 2.0f * scale_, row_pos.y + (row_h - icon_sz) * 0.5f);
+                if (e.isDirectory || e.isLink) {
+                    Icons::drawFolder(draw_list, icon_tl, icon_sz, IM_COL32(0, 122, 255, 255));
+                } else if (is_apk) {
+                    draw_list->AddRectFilled(icon_tl, ImVec2(icon_tl.x + icon_sz, icon_tl.y + icon_sz), IM_COL32(52, 199, 89, 255), 4.0f * scale_);
+                    draw_list->AddText(ImVec2(icon_tl.x + 4.0f * scale_, icon_tl.y + 1.0f * scale_), IM_COL32(255, 255, 255, 255), "A");
+                } else if (is_img) {
+                    Icons::drawCamera(draw_list, icon_tl, icon_sz, IM_COL32(175, 82, 222, 255));
+                } else {
+                    Icons::drawFile(draw_list, icon_tl, icon_sz, IM_COL32(140, 140, 145, 255));
+                }
+
+                // Name, then size right-aligned for files
+                draw_list->AddText(ImVec2(row_pos.x + 28.0f * scale_, row_pos.y + 4.0f * scale_),
+                                   IM_COL32(30, 30, 34, 255), e.name.c_str());
+                if (!e.isDirectory && font_caption_) {
+                    char size_buf[32];
+                    if (e.size >= 1024LL * 1024 * 1024) snprintf(size_buf, sizeof(size_buf), "%.1f GB", e.size / 1073741824.0);
+                    else if (e.size >= 1024 * 1024) snprintf(size_buf, sizeof(size_buf), "%.1f MB", e.size / 1048576.0);
+                    else if (e.size >= 1024) snprintf(size_buf, sizeof(size_buf), "%lld KB", e.size / 1024);
+                    else snprintf(size_buf, sizeof(size_buf), "%lld B", e.size);
+                    float tw = font_caption_->CalcTextSizeA(12.0f * scale_, FLT_MAX, 0.0f, size_buf).x;
+                    draw_list->AddText(font_caption_, 12.0f * scale_,
+                                       ImVec2(row_pos.x + row_w - tw - 6.0f * scale_, row_pos.y + 6.0f * scale_),
+                                       IM_COL32(142, 142, 147, 255), size_buf);
+                }
+                if (ImGui::IsItemHovered() && !e.modified.empty()) ImGui::SetTooltip("%s  %s", e.permissions.c_str(), e.modified.c_str());
+
+                if (ImGui::BeginPopupContextItem()) {
+                    if (e.isDirectory || e.isLink) {
+                        if (MenuItemWithIcon("Open", nullptr, Icons::drawFolder, scale_)) navigateTo(current_serial, full);
+                    } else {
+                        if (MenuItemWithIcon("Save to Downloads", nullptr, Icons::drawFile, scale_)) pullToDownloads(current_serial, full);
+                        if (is_apk && MenuItemWithIcon("Install", nullptr, Icons::drawScreen, scale_)) {
+                            runShellAsync(current_serial, "pm install -r -t " + AdbClient::shellQuote(full), "Installing " + e.name + "...");
+                        }
+                    }
+                    if (MenuItemWithIcon("Copy Path", nullptr, Icons::drawCopy, scale_)) {
+                        ImGui::SetClipboardText(full.c_str());
+                        showToast("Copied " + full);
+                    }
+                    ImGui::Separator();
+                    if (MenuItemWithIcon("Delete...", nullptr, Icons::drawDisconnect, scale_)) {
+                        pending_delete_ = full;
+                        open_delete_popup_ = true;
+                    }
+                    ImGui::EndPopup();
+                }
                 ImGui::PopID();
+            }
+            if (remote_entries_.empty()) {
+                ImGui::TextColored(Theme::ColorTextSecondary, files_loading_ ? "Loading..." :
+                                   files_error_ ? "Not readable as the shell user" : "Empty folder");
             }
             ImGui::EndChild();
 
-            if (ImGui::Button("Refresh Files", ImVec2(width - 24.0f * scale_, 26.0f * scale_))) {
-                refreshFiles(current_serial);
+            if (open_delete_popup_) {
+                ImGui::OpenPopup("Delete?");
+                open_delete_popup_ = false;
             }
+            if (ImGui::BeginPopupModal("Delete?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+                ImGui::Text("Delete %s from the device?", pending_delete_.c_str());
+                ImGui::Spacing();
+                if (ImGui::Button("Delete", ImVec2(100 * scale_, 0))) {
+                    std::string serial = current_serial, target = pending_delete_;
+                    jobs_.run<std::string>(
+                        [this, serial, target] { return adb_.shell(serial, "rm -r " + AdbClient::shellQuote(target) + " 2>&1"); },
+                        [this, serial, target](std::string out) {
+                            while (!out.empty() && (out.back() == '\n' || out.back() == '\r')) out.pop_back();
+                            showToast(out.empty() ? "Deleted " + target : "Delete failed: " + out, 6);
+                            if (serial == selected_serial_) refreshFiles(serial);
+                        });
+                    pending_delete_.clear();
+                    ImGui::CloseCurrentPopup();
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Cancel", ImVec2(90 * scale_, 0))) {
+                    pending_delete_.clear();
+                    ImGui::CloseCurrentPopup();
+                }
+                ImGui::EndPopup();
+            }
+
+            if (font_caption_) ImGui::PushFont(font_caption_);
+            ImGui::TextColored(Theme::ColorTextTertiary, "Double-click a folder to open it, a file to save it. Drop a file here to send it.");
+            if (font_caption_) ImGui::PopFont();
         }
     }
     // TAB 3: LOGCAT

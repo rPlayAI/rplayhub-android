@@ -118,10 +118,13 @@ private:
     bool open_uninstall_popup_ = false;
 
     // Files tab state
-    std::vector<std::string> remote_files_;
+    std::vector<DirEntry> remote_entries_;
     std::string current_remote_path_ = "/sdcard/Download";
     int files_gen_ = 0;
     bool files_loading_ = false;
+    bool files_error_ = false;
+    std::string pending_delete_;         // remote path awaiting confirmation
+    bool open_delete_popup_ = false;
 
     // Touch & input tracking
     bool is_touch_active_ = false;
@@ -140,6 +143,8 @@ private:
     void refreshPackages(const std::string& serial);
     void fetchAppLabels(const std::string& serial, std::vector<std::string> ids, int gen);
     void refreshFiles(const std::string& serial);
+    void navigateTo(const std::string& serial, const std::string& path);
+    void pullToDownloads(const std::string& serial, const std::string& remote_path);
     void runShellAsync(const std::string& serial, const std::string& command, const std::string& toast);
     void installApk(const std::string& serial, const std::string& local_path);
     void pickAndInstallApk(const std::string& serial);

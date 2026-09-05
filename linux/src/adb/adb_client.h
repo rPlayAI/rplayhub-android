@@ -21,6 +21,16 @@ struct AdbDevice {
     std::string displayName() const;
 };
 
+// One line of toybox `ls -la`, parsed.
+struct DirEntry {
+    std::string name;
+    std::string permissions;   // "drwxrwx--x"
+    std::string modified;      // "2026-08-29 11:16"
+    long long size = 0;
+    bool isDirectory = false;
+    bool isLink = false;
+};
+
 class AdbClient {
 public:
     explicit AdbClient(std::string host = "127.0.0.1", uint16_t port = 5037);
@@ -48,6 +58,13 @@ public:
     bool pushFile(const std::string& serial, const std::string& local_path, const std::string& remote_path, mode_t mode = 0644);
     bool pushBytes(const std::string& serial, const std::vector<uint8_t>& data, const std::string& remote_path, mode_t mode = 0644);
     bool pullFile(const std::string& serial, const std::string& remote_path, const std::string& local_path, std::string* out_err = nullptr);
+
+    // Directory listing via `ls -la`; "." and ".." are dropped. False when the
+    // path is unreadable as the shell user.
+    bool listDirectory(const std::string& serial, const std::string& path, std::vector<DirEntry>& out);
+
+    // Single-quote for the device shell.
+    static std::string shellQuote(const std::string& s);
 
     // Get list of installed packages
     std::vector<std::string> getPackages(const std::string& serial, bool third_party_only = true);
