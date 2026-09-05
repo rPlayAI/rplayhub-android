@@ -7,7 +7,7 @@ namespace rplayhub {
 namespace Theme {
     // macOS Palette
     inline ImVec4 ColorBgWindow        = ImVec4(0.97f, 0.97f, 0.98f, 1.00f); // #F7F7FA
-    inline ImVec4 ColorBgSidebar       = ImVec4(0.94f, 0.94f, 0.96f, 1.00f); // #F0F0F5
+    inline ImVec4 ColorBgSidebar       = ImVec4(0.98f, 0.98f, 0.98f, 1.00f); // #FAFAFA, the Mac's pane
     inline ImVec4 ColorBgStage         = ImVec4(1.00f, 1.00f, 1.00f, 1.00f); // #FFFFFF
     inline ImVec4 ColorBgInspector     = ImVec4(0.96f, 0.96f, 0.97f, 1.00f); // #F5F5F8
     inline ImVec4 ColorBgCard          = ImVec4(1.00f, 1.00f, 1.00f, 1.00f);

@@ -32,7 +32,7 @@ public:
     // Print decoded/rendered frame rates to stderr every few seconds.
     void setStats(bool on) { stats_ = on; }
     // Inspector tab to open with: 0=Info, 1=Apps, 2=Files, 3=Logcat.
-    void setInspectorTab(int tab) { inspector_tab_ = tab; }
+    void setInspectorTab(int tab) { selectInspectorTab(tab); }
     // Agent / decoder settings used for every mirror session started from the UI.
     void setSessionOptions(const AgentSession::Options& o) { session_options_ = o; }
     void setClipboardSyncDefault(bool on) { clipboard_sync_ = on; }
@@ -166,7 +166,28 @@ private:
 
     // UI state
     char search_filter_[128] = {0};
-    int inspector_tab_ = 1; // 0=Info, 1=Apps, 2=Files, 3=Logcat
+    // The inspector as the Mac's: three icon groups in the title bar, each with text sub-tabs.
+    //   Settings -> Settings | Logs -> Logcat, Crashes | Info -> Info, Apps, Files
+    int inspector_tab_ = 1;   // 0=Info, 1=Apps, 2=Files, 3=Logcat, 4=Crashes, 5=Settings
+    int inspector_group_ = 2; // 0=Settings, 1=Logs, 2=Info
+    int group_tab_[3] = { 5, 3, 1 };   // the sub-tab each group last showed
+    void selectInspectorTab(int tab);
+    void selectInspectorGroup(int group) { inspector_group_ = group; inspector_tab_ = group_tab_[group]; }
+
+    // Settings tab: developer toggles applied with `settings put`, as the Mac's SettingsPanel
+    struct DevToggle { const char* ns; const char* key; const char* label; const char* on; const char* off; bool default_on; };
+    static const DevToggle kDevToggles[7];
+    std::vector<int> dev_toggle_state_;   // per toggle: -1 unknown, 0 off, 1 on
+    std::string dev_toggles_serial_;
+    bool dev_toggles_loading_ = false;
+    void loadDevToggles(const std::string& serial);
+    void setDevToggle(const std::string& serial, int idx, bool on);
+
+    // Crashes tab: the crash log buffer or DropBox (tombstones, ANRs)
+    int crash_source_ = 0;
+    std::string crash_text_, crash_serial_;
+    bool crash_loading_ = false;
+    void refreshCrashes(const std::string& serial);
     char connect_ip_buf_[128] = "192.168.1.100:5555";
     bool show_connect_popup_ = false;
     std::string connect_status_msg_;
@@ -236,6 +257,13 @@ private:
     void renderEmulatorRows(float width);
     void fetchDeviceRelease(const std::string& serial);
     // One flat sidebar row: status dot, icon, title over subtitle, something at the right.
+    // Which pane last took a click: the Mac's first responder. The sidebar's selected row and
+    // the View Screen button light in the accent colour only while their pane is focused and
+    // the window is key.
+    enum class Pane { Sidebar, Stage, Inspector };
+    Pane focused_pane_ = Pane::Stage;
+    void takeFocusOnClick(Pane pane);
+    bool paneLit(Pane pane) const;
     bool sidebarRow(const char* id, float width, bool selected, ImU32 dot, bool phone_icon,
                     const std::string& title, const std::string& sub, const std::string& right);
     void pumpAgentEvents();

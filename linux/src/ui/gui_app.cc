@@ -394,6 +394,76 @@ void GuiApp::fetchDeviceRelease(const std::string& serial) {
         });
 }
 
+void GuiApp::selectInspectorTab(int tab) {
+    inspector_tab_ = tab;
+    inspector_group_ = tab == 5 ? 0 : (tab == 3 || tab == 4) ? 1 : 2;
+    group_tab_[inspector_group_] = tab;
+}
+
+const GuiApp::DevToggle GuiApp::kDevToggles[7] = {
+    { "system", "show_touches", "Show taps", "1", "0", false },
+    { "system", "pointer_location", "Pointer location", "1", "0", false },
+    { "global", "show_refresh_rate", "Show refresh rate", "1", "0", false },
+    { "global", "stay_on_while_plugged_in", "Stay awake while charging", "7", "0", false },
+    { "global", "window_animation_scale", "Window animations", "1", "0", true },
+    { "global", "transition_animation_scale", "Transition animations", "1", "0", true },
+    { "global", "animator_duration_scale", "Animator duration", "1", "0", true },
+};
+
+void GuiApp::loadDevToggles(const std::string& serial) {
+    dev_toggles_serial_ = serial;
+    dev_toggles_loading_ = true;
+    dev_toggle_state_.assign(7, -1);
+    std::string cmd;
+    for (int i = 0; i < 7; ++i) cmd += std::string(i ? "; " : "") + "settings get " + kDevToggles[i].ns + " " + kDevToggles[i].key;
+    jobs_.run<std::string>(
+        [this, serial, cmd] { return adb_.shell(serial, cmd); },
+        [this, serial](std::string out) {
+            dev_toggles_loading_ = false;
+            if (serial != dev_toggles_serial_) return;
+            std::vector<std::string> lines;
+            std::istringstream in(out);
+            for (std::string l; std::getline(in, l);) { while (!l.empty() && (l.back() == '\r' || l.back() == ' ')) l.pop_back(); lines.push_back(l); }
+            for (int i = 0; i < 7 && i < static_cast<int>(lines.size()); ++i) {
+                const std::string& v = lines[i];
+                if (v == "null" || v.empty()) dev_toggle_state_[i] = kDevToggles[i].default_on ? 1 : 0;
+                else dev_toggle_state_[i] = (v != kDevToggles[i].off && v != "0" && v != "0.0") ? 1 : 0;
+            }
+        });
+}
+
+void GuiApp::setDevToggle(const std::string& serial, int idx, bool on) {
+    const DevToggle& t = kDevToggles[idx];
+    if (idx < static_cast<int>(dev_toggle_state_.size())) dev_toggle_state_[idx] = on ? 1 : 0;
+    std::string cmd = std::string("settings put ") + t.ns + " " + t.key + " " + (on ? t.on : t.off);
+    runShellAsync(serial, cmd, std::string(t.label) + (on ? " on" : " off"));
+}
+
+void GuiApp::refreshCrashes(const std::string& serial) {
+    crash_serial_ = serial;
+    crash_loading_ = true;
+    const std::string cmd = crash_source_ == 1 ? "dumpsys dropbox --print | tail -400" : "logcat -b crash -d -v brief -t 400";
+    jobs_.run<std::string>(
+        [this, serial, cmd] { return adb_.shell(serial, cmd); },
+        [this, serial](std::string out) {
+            crash_loading_ = false;
+            if (serial != crash_serial_) return;
+            while (!out.empty() && (out.back() == '\n' || out.back() == '\r')) out.pop_back();
+            crash_text_ = out;
+        });
+}
+
+void GuiApp::takeFocusOnClick(Pane pane) {
+    if (ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows | ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) &&
+        (ImGui::IsMouseClicked(ImGuiMouseButton_Left) || ImGui::IsMouseClicked(ImGuiMouseButton_Right))) {
+        focused_pane_ = pane;
+    }
+}
+
+bool GuiApp::paneLit(Pane pane) const {
+    return focused_pane_ == pane && (SDL_GetWindowFlags(window_) & SDL_WINDOW_INPUT_FOCUS);
+}
+
 // A flat sidebar row like the Mac's: no box, a rounded highlight when selected, the status
 // dot and icon at the left, title over subtitle, a caption (the Android version) at the right.
 bool GuiApp::sidebarRow(const char* id, float width, bool selected, ImU32 dot, bool phone_icon,
@@ -404,13 +474,18 @@ bool GuiApp::sidebarRow(const char* id, float width, bool selected, ImU32 dot, b
     ImGui::InvisibleButton(id, ImVec2(row_w, row_h));
     const bool hovered = ImGui::IsItemHovered();
     const bool clicked = ImGui::IsItemClicked(ImGuiMouseButton_Left);
+    const bool lit = selected && paneLit(Pane::Sidebar);
     if (selected) {
-        draw_list->AddRectFilled(pos, ImVec2(pos.x + row_w, pos.y + row_h), IM_COL32(222, 222, 228, 255), 7.0f * scale_);
+        draw_list->AddRectFilled(pos, ImVec2(pos.x + row_w, pos.y + row_h),
+                                 lit ? IM_COL32(0, 122, 255, 255) : IM_COL32(220, 220, 220, 255), 7.0f * scale_);
     } else if (hovered) {
-        draw_list->AddRectFilled(pos, ImVec2(pos.x + row_w, pos.y + row_h), IM_COL32(232, 232, 237, 255), 7.0f * scale_);
+        draw_list->AddRectFilled(pos, ImVec2(pos.x + row_w, pos.y + row_h), IM_COL32(236, 236, 238, 255), 7.0f * scale_);
     }
     draw_list->AddCircleFilled(ImVec2(pos.x + 13.0f * scale_, pos.y + row_h * 0.5f), 4.5f * scale_, dot);
-    const ImU32 icon_col = IM_COL32(110, 110, 116, 255);
+    const ImU32 icon_col = lit ? IM_COL32(255, 255, 255, 255) : IM_COL32(110, 110, 116, 255);
+    const ImU32 title_col = lit ? IM_COL32(255, 255, 255, 255) : IM_COL32(28, 28, 30, 255);
+    const ImU32 sub_col = lit ? IM_COL32(235, 240, 255, 255) : IM_COL32(142, 142, 147, 255);
+    const ImU32 right_col = lit ? IM_COL32(235, 240, 255, 255) : IM_COL32(128, 128, 134, 255);
     if (phone_icon) {
         Icons::drawPhone(draw_list, ImVec2(pos.x + 25.0f * scale_, pos.y + (row_h - 20.0f * scale_) * 0.5f), 20.0f * scale_, icon_col);
     } else {
@@ -423,17 +498,17 @@ bool GuiApp::sidebarRow(const char* id, float width, bool selected, ImU32 dot, b
         right_w = rs.x + 12.0f * scale_;
         if (font_caption_) {
             draw_list->AddText(font_caption_, 12.5f * scale_, ImVec2(pos.x + row_w - rs.x - 10.0f * scale_, pos.y + (row_h - rs.y) * 0.5f),
-                               IM_COL32(128, 128, 134, 255), right.c_str());
+                               right_col, right.c_str());
         } else {
-            draw_list->AddText(ImVec2(pos.x + row_w - rs.x - 10.0f * scale_, pos.y + (row_h - rs.y) * 0.5f), IM_COL32(128, 128, 134, 255), right.c_str());
+            draw_list->AddText(ImVec2(pos.x + row_w - rs.x - 10.0f * scale_, pos.y + (row_h - rs.y) * 0.5f), right_col, right.c_str());
         }
     }
     const float text_x = pos.x + 50.0f * scale_;
     const ImVec4 clip(text_x, pos.y, pos.x + row_w - right_w, pos.y + row_h);
-    if (font_medium_) draw_list->AddText(font_medium_, font_medium_->FontSize, ImVec2(text_x, pos.y + 6.0f * scale_), IM_COL32(28, 28, 30, 255), title.c_str(), nullptr, 0.0f, &clip);
-    else draw_list->AddText(ImVec2(text_x, pos.y + 6.0f * scale_), IM_COL32(28, 28, 30, 255), title.c_str());
-    if (font_caption_) draw_list->AddText(font_caption_, 12.0f * scale_, ImVec2(text_x, pos.y + 25.0f * scale_), IM_COL32(142, 142, 147, 255), sub.c_str(), nullptr, 0.0f, &clip);
-    else draw_list->AddText(ImVec2(text_x, pos.y + 25.0f * scale_), IM_COL32(142, 142, 147, 255), sub.c_str());
+    if (font_medium_) draw_list->AddText(font_medium_, font_medium_->FontSize, ImVec2(text_x, pos.y + 6.0f * scale_), title_col, title.c_str(), nullptr, 0.0f, &clip);
+    else draw_list->AddText(ImVec2(text_x, pos.y + 6.0f * scale_), title_col, title.c_str());
+    if (font_caption_) draw_list->AddText(font_caption_, 12.0f * scale_, ImVec2(text_x, pos.y + 25.0f * scale_), sub_col, sub.c_str(), nullptr, 0.0f, &clip);
+    else draw_list->AddText(ImVec2(text_x, pos.y + 25.0f * scale_), sub_col, sub.c_str());
     return clicked;
 }
 
@@ -1045,13 +1120,13 @@ void GuiApp::renderMenuBar() {
         bar_dl->AddRectFilled(ImVec2(g0.x - 4 * scale_, g0.y - 3 * scale_), ImVec2(g0.x + group_w + 4 * scale_, g0.y + tb.y + 3 * scale_), IM_COL32(255, 255, 255, 255), 7.0f * scale_);
         bar_dl->AddRect(ImVec2(g0.x - 4 * scale_, g0.y - 3 * scale_), ImVec2(g0.x + group_w + 4 * scale_, g0.y + tb.y + 3 * scale_), IM_COL32(222, 222, 228, 255), 7.0f * scale_);
         ImGui::SetCursorScreenPos(g0);
-        if (IconButton("##TbSettings", Icons::drawSettings, tb, "Apps", inspector_tab_ == 1)) inspector_tab_ = 1;
+        if (IconButton("##TbSettings", Icons::drawSettings, tb, "Settings", inspector_group_ == 0)) selectInspectorGroup(0);
         noteNoDrag();
         ImGui::SameLine(0, 2.0f * scale_);
-        if (IconButton("##TbLogcat", Icons::drawLogcat, tb, "Logcat", inspector_tab_ == 3)) inspector_tab_ = 3;
+        if (IconButton("##TbLogcat", Icons::drawLogcat, tb, "Logs", inspector_group_ == 1)) selectInspectorGroup(1);
         noteNoDrag();
         ImGui::SameLine(0, 2.0f * scale_);
-        if (IconButton("##TbInfo", Icons::drawInfo, tb, "Info", inspector_tab_ == 0)) inspector_tab_ = 0;
+        if (IconButton("##TbInfo", Icons::drawInfo, tb, "Info", inspector_group_ == 2)) selectInspectorGroup(2);
         noteNoDrag();
 
             menu_h_ = menu_h_saved;
@@ -1101,77 +1176,98 @@ void GuiApp::renderMenuBar() {
 
     // Keyboard shortcuts for the menu
     ImGuiIO& io = ImGui::GetIO();
-    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_D) && session_ && session_->getState() == SessionState::RUNNING) openDesktopMode();
+    const bool live_now = session_ && session_->getState() == SessionState::RUNNING;
+    if (io.KeyCtrl && !io.WantTextInput) {
+        if (ImGui::IsKeyPressed(ImGuiKey_D) && live_now) openDesktopMode();
+        if (ImGui::IsKeyPressed(ImGuiKey_M)) { if (session_active_) stopMirroring(); else if (selected_device_idx_ >= 0) startMirroring(selected_device_idx_); }
+        if (ImGui::IsKeyPressed(ImGuiKey_N) && live_now) openPhoneWindow();
+        if (ImGui::IsKeyPressed(ImGuiKey_P)) togglePinOnTop();
+        if (ImGui::IsKeyPressed(ImGuiKey_R)) { pollDevices(); pollEmulators(); }
+        if (ImGui::IsKeyPressed(ImGuiKey_3) && live_now) twin_mode_ = !twin_mode_;
+        if (io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_F) && live_now) openFrontAppOnVirtualDisplay();
+        if (io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_E)) { std::string c = "xdg-open '" + mediaDir("Pictures") + "' >/dev/null 2>&1 &"; if (std::system(c.c_str()) != 0) {} }
+    }
+    if (ImGui::IsKeyPressed(ImGuiKey_F1)) { if (std::system("xdg-open 'https://rplayai.github.io/rplayhub-android/help.html' >/dev/null 2>&1 &") != 0) {} }
 }
 
 // The primary menu's items: one flat list in sections, like Chrome's, with the Android keys in
 // a submenu. Shared by the three-dots popup and (with --system-titlebar) a classic menu bar.
 void GuiApp::renderPrimaryMenuItems() {
+    // The Mac client's menu bar, as sub-entries: Device, View, Window, Help, then the app
+    // menu's About and Quit (app/rPlayHubAndroid/AppDelegate.swift, installMenu).
+    const bool have_device = selected_device_idx_ >= 0;
     const bool live = session_ && session_->getState() == SessionState::RUNNING;
-    const bool have_device = selected_device_idx_ >= 0 && selected_device_idx_ < static_cast<int>(devices_.size());
-    const bool mirroring_selected = have_device && session_active_ && session_ && session_serial_ == devices_[selected_device_idx_].serial;
-    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8.0f * scale_, 6.0f * scale_));
-
-    if (mirroring_selected) {
-        if (ImGui::MenuItem("Stop Screen Mirroring")) stopMirroring();
-    } else if (ImGui::MenuItem("Start Screen Mirroring", nullptr, false, have_device)) {
-        startMirroring(selected_device_idx_);
-    }
-    if (ImGui::MenuItem("Reconnect", nullptr, false, have_device)) startMirroring(selected_device_idx_);
-    ImGui::Separator();
-    if (ImGui::MenuItem("Desktop Mode", "Ctrl+D", false, live)) openDesktopMode();
-    if (ImGui::MenuItem("Open Front App on Virtual Display", nullptr, false, live)) openFrontAppOnVirtualDisplay();
-    if (ImGui::MenuItem("Open Screen in New Window", nullptr, false, live)) openPhoneWindow();
-    if (ImGui::MenuItem("Pin Window on Top", nullptr, display_windows_.empty() ? main_pinned_ : display_windows_.back()->pinned())) togglePinOnTop();
-    if (ImGui::MenuItem("Close Virtual Displays", nullptr, false, !display_windows_.empty())) closeDisplayWindows();
-    ImGui::Separator();
-    if (ImGui::MenuItem("Take Screenshot", nullptr, false, have_device)) takeScreenshot();
-    bool recording = session_ && session_->getRecorder().isRecording();
-    if (ImGui::MenuItem(recording ? "Stop Recording" : "Record Screen", nullptr, false, live)) toggleRecording();
-    ImGui::Separator();
-    if (ImGui::MenuItem("View Screen in 3D", nullptr, twin_mode_)) {
-        twin_mode_ = !twin_mode_;
-        if (twin_mode_ && live && !session_->hasSensorChannel()) showToast("This agent offers no orientation channel; the twin will not turn", 6);
-    }
-    if (ImGui::MenuItem("Set Facing Me", "R", false, twin_mode_)) twin_.recenter();
-    ImGui::Separator();
-    bool paused = live && session_->isDisplayPaused();
-    if (ImGui::MenuItem(paused ? "Resume Display" : "Pause Display", nullptr, false, live)) session_->setDisplayPaused(!paused);
-    if (ImGui::MenuItem("Rotate", nullptr, false, live)) rotateDevice();
-    if (ImGui::MenuItem("Follow Device Rotation", nullptr, false, live)) session_->setOrientation(-1);
-    if (ImGui::MenuItem("Turn Screen Off While Mirroring", nullptr, session_options_.turn_screen_off)) {
-        session_options_.turn_screen_off = !session_options_.turn_screen_off;
-        if (live) showToast("Applies when mirroring is restarted (Reconnect)", 5);
-    }
-    bool audio_on = live ? session_->isAudioForwarding() : session_options_.audio;
-    if (ImGui::MenuItem("Forward Audio", nullptr, audio_on)) {
-        session_options_.audio = !audio_on;
-        if (live) session_->setAudioForwarding(session_options_.audio);
-    }
-    if (ImGui::MenuItem("Synchronize Clipboard", nullptr, clipboard_sync_)) setClipboardSync(!clipboard_sync_);
-    ImGui::Separator();
-    if (ImGui::BeginMenu("Android Keys", live)) {
-        if (ImGui::MenuItem("Back")) session_->sendKey(AndroidKey::BACK);
-        if (ImGui::MenuItem("Home")) session_->sendKey(AndroidKey::HOME);
-        if (ImGui::MenuItem("Recents")) session_->sendKey(AndroidKey::APP_SWITCH);
-        if (ImGui::MenuItem("Volume Up")) session_->sendKey(AndroidKey::VOLUME_UP);
-        if (ImGui::MenuItem("Volume Down")) session_->sendKey(AndroidKey::VOLUME_DOWN);
-        if (ImGui::MenuItem("Wake")) session_->wakeOrPower(false);
-        if (ImGui::MenuItem("Power Button")) session_->wakeOrPower(true);
+    auto open_url = [](const char* url) {
+        std::string cmd = std::string("xdg-open '") + url + "' >/dev/null 2>&1 &";
+        if (std::system(cmd.c_str()) != 0) {}
+    };
+    if (ImGui::BeginMenu("Device")) {
+        if (session_active_) {
+            if (ImGui::MenuItem("Stop Screen Mirroring", "Ctrl+M")) stopMirroring();
+        } else if (ImGui::MenuItem("Start Screen Mirroring", "Ctrl+M", false, have_device)) {
+            startMirroring(selected_device_idx_);
+        }
+        if (ImGui::MenuItem("Follow Device Rotation", nullptr, false, live)) session_->setOrientation(-1);
+        ImGui::Separator();
+        if (ImGui::MenuItem("Turn Screen Off While Mirroring", nullptr, session_options_.turn_screen_off)) {
+            session_options_.turn_screen_off = !session_options_.turn_screen_off;
+            if (live) showToast("Applies when mirroring is restarted (Reconnect)", 5);
+        }
+        if (ImGui::MenuItem("Synchronize Clipboard", nullptr, clipboard_sync_)) setClipboardSync(!clipboard_sync_);
+        const bool audio_on = live ? session_->isAudioForwarding() : session_options_.audio;
+        if (ImGui::MenuItem("Forward Audio", nullptr, audio_on)) {
+            session_options_.audio = !audio_on;
+            showToast(session_options_.audio ? "Audio will be forwarded from the next session" : "Audio forwarding off from the next session");
+        }
+        ImGui::Separator();
+        const bool paused = live && session_->isDisplayPaused();
+        if (ImGui::MenuItem(paused ? "Resume Display" : "Pause Display", nullptr, false, live)) session_->setDisplayPaused(!paused);
+        if (ImGui::MenuItem("Desktop Mode", "Ctrl+D", false, live)) openDesktopMode();
+        if (ImGui::MenuItem("Open Front App on Virtual Display", "Ctrl+Shift+F", false, live)) openFrontAppOnVirtualDisplay();
+        if (ImGui::MenuItem("Close Virtual Displays", nullptr, false, !display_windows_.empty())) closeDisplayWindows(true);
+        ImGui::Separator();
+        if (ImGui::MenuItem("Show Files in File Manager", "Ctrl+Shift+E")) open_url(mediaDir("Pictures").c_str());
+        ImGui::Separator();
+        if (ImGui::MenuItem("Refresh Devices", "Ctrl+R")) { pollDevices(); pollEmulators(); }
         ImGui::EndMenu();
     }
-    if (ImGui::BeginMenu("Inspector")) {
-        const char* tabs[] = { "Info", "Apps", "Files", "Logcat" };
-        for (int t = 0; t < 4; ++t) if (ImGui::MenuItem(tabs[t], nullptr, inspector_tab_ == t)) inspector_tab_ = t;
+    if (ImGui::BeginMenu("View")) {
+        if (ImGui::MenuItem("Open Screen in New Window", "Ctrl+N", false, live)) openPhoneWindow();
+        ImGui::MenuItem("Open Screen in New Tab", "Ctrl+T", false, false);
+        ImGui::Separator();
+        if (ImGui::MenuItem("Pin Window on Top", "Ctrl+P", display_windows_.empty() ? main_pinned_ : display_windows_.back()->pinned())) togglePinOnTop();
+        ImGui::Separator();
+        if (ImGui::MenuItem("View Screen in 3D", "Ctrl+3", twin_mode_, live)) {
+            twin_mode_ = !twin_mode_;
+            if (twin_mode_) showToast("3D twin: turns with the phone; R sets facing me", 4);
+        }
+        if (ImGui::MenuItem("Set Facing Me", "R", false, twin_mode_)) twin_.recenter();
+        ImGui::MenuItem("Show 3D Demo", nullptr, false, false);
+        ImGui::MenuItem("Set 3D Back Image...", nullptr, false, false);
         ImGui::EndMenu();
     }
-    ImGui::Separator();
-    if (ImGui::MenuItem("Connect to Device over Network...")) show_connect_popup_ = true;
-    if (ImGui::MenuItem("Refresh Devices")) { pollDevices(); pollEmulators(); }
+    if (ImGui::BeginMenu("Window")) {
+        if (ImGui::MenuItem("Minimize")) SDL_MinimizeWindow(window_);
+        if (ImGui::MenuItem("Zoom")) {
+            if (SDL_GetWindowFlags(window_) & SDL_WINDOW_MAXIMIZED) SDL_RestoreWindow(window_); else SDL_MaximizeWindow(window_);
+        }
+        ImGui::Separator();
+        if (ImGui::MenuItem("Bring All to Front")) {
+            SDL_RaiseWindow(window_);
+            for (auto& dw : display_windows_) SDL_RaiseWindow(SDL_GetWindowFromID(dw->windowId()));
+        }
+        ImGui::EndMenu();
+    }
+    if (ImGui::BeginMenu("Help")) {
+        if (ImGui::MenuItem("rPlayHub Android Help", "F1")) open_url("https://rplayai.github.io/rplayhub-android/help.html");
+        ImGui::Separator();
+        if (ImGui::MenuItem("rPlayHub Android on GitHub")) open_url("https://github.com/rPlayAI/rplayhub-android");
+        if (ImGui::MenuItem("rPlayHub Android SDK on GitHub")) open_url("https://github.com/rPlayAI/rplayhub-android-sdk");
+        ImGui::EndMenu();
+    }
     ImGui::Separator();
     if (ImGui::MenuItem("About rPlayHub Android")) showToast("rPlayHub Android for Linux: SDL2 + FFmpeg + Dear ImGui. github.com/rPlayAI/rplayhub-android", 8);
     if (ImGui::MenuItem("Quit", "Ctrl+Q")) g_quit_requested.store(true);
-    ImGui::PopStyleVar();
 }
 
 // ---- emulators ----
@@ -1771,6 +1867,7 @@ void GuiApp::renderLeftSidebar(float width, float height) {
     ImGui::PushStyleColor(ImGuiCol_WindowBg, Theme::ColorBgSidebar);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12.0f * scale_, 14.0f * scale_));
     ImGui::Begin("##Sidebar", nullptr, flags);
+    takeFocusOnClick(Pane::Sidebar);
 
     ImDrawList* draw_list = ImGui::GetWindowDrawList();
     if (system_titlebar_) {
@@ -2029,6 +2126,7 @@ void GuiApp::renderCenterStage(float start_x, float width, float height) {
     ImGui::PushStyleColor(ImGuiCol_WindowBg, Theme::ColorBgStage);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(16.0f * scale_, 12.0f * scale_));
     ImGui::Begin("##CenterStage", nullptr, flags);
+    takeFocusOnClick(Pane::Stage);
 
     ImDrawList* draw_list = ImGui::GetWindowDrawList();
     if (system_titlebar_) {
@@ -2173,12 +2271,13 @@ void GuiApp::renderPhoneMockup(ImVec2 center, ImVec2 max_size, bool popped_out) 
     bool hovered = ImGui::IsItemHovered();
     bool active = ImGui::IsItemActive();
 
-    // Default vs Focused styling (exact match to gui-default.png and gui-focused.png)
-    // Focused/Hovered: vibrant purple-blue #5B6EF5
-    // Default: light gray #E3E3E8
-    ImU32 btn_bg = (hovered || active) ? IM_COL32(91, 110, 245, 255) : IM_COL32(227, 227, 232, 255);
-    ImU32 fg_col = (hovered || active) ? IM_COL32(255, 255, 255, 255) : IM_COL32(28, 28, 30, 255);
-    if (active) btn_bg = IM_COL32(75, 95, 230, 255);
+    // The Mac's HoverButton: lit (97,85,245) while the stage is the focused pane and the window
+    // is key, or while pressed (with an 18 % dip); resting #DCDCDC. The pointer plays no part.
+    (void)hovered;
+    const bool lit = paneLit(Pane::Stage) || active;
+    ImU32 btn_bg = lit ? IM_COL32(97, 85, 245, 255) : IM_COL32(220, 220, 220, 255);
+    ImU32 fg_col = lit ? IM_COL32(255, 255, 255, 255) : IM_COL32(28, 28, 30, 255);
+    if (active) btn_bg = IM_COL32(80, 70, 201, 255);
 
     draw_list->AddRectFilled(ImVec2(btn_x, btn_y), ImVec2(btn_x + btn_w, btn_y + btn_h),
                              btn_bg, btn_h * 0.5f);
@@ -2566,21 +2665,27 @@ void GuiApp::renderRightInspector(float width, float height) {
     ImGui::PushStyleColor(ImGuiCol_WindowBg, Theme::ColorBgInspector);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12.0f * scale_, 14.0f * scale_));
     ImGui::Begin("##Inspector", nullptr, flags);
+    takeFocusOnClick(Pane::Inspector);
 
     if (system_titlebar_) {
         ImVec2 top_btn_sz(26.0f * scale_, 24.0f * scale_);
         ImGui::SetCursorPosX(width - 96.0f * scale_);
-        if (IconButton("##Settings", Icons::drawSettings, top_btn_sz, "Apps", inspector_tab_ == 1)) inspector_tab_ = 1;
+        if (IconButton("##Settings", Icons::drawSettings, top_btn_sz, "Settings", inspector_group_ == 0)) selectInspectorGroup(0);
         ImGui::SameLine();
-        if (IconButton("##Logcat", Icons::drawLogcat, top_btn_sz, "Logcat", inspector_tab_ == 3)) inspector_tab_ = 3;
+        if (IconButton("##Logcat", Icons::drawLogcat, top_btn_sz, "Logs", inspector_group_ == 1)) selectInspectorGroup(1);
         ImGui::SameLine();
-        if (IconButton("##Info", Icons::drawInfo, top_btn_sz, "Info", inspector_tab_ == 0)) inspector_tab_ = 0;
+        if (IconButton("##Info", Icons::drawInfo, top_btn_sz, "Info", inspector_group_ == 2)) selectInspectorGroup(2);
         ImGui::Spacing();
     }
 
-    // Segmented Pill Tabs: Info | Apps | Files
-    const char* tabs[] = { "Info", "Apps", "Files" };
-    float tab_w = (width - 24.0f * scale_) / 3.0f;
+    // Segmented pill tabs of the current group (the Mac's text tabs under the icon tabs)
+    static const char* const kGroupTabNames[3][3] = { { "Settings", nullptr, nullptr }, { "Logcat", "Crashes", nullptr }, { "Info", "Apps", "Files" } };
+    static const int kGroupTabIds[3][3] = { { 5, -1, -1 }, { 3, 4, -1 }, { 0, 1, 2 } };
+    const char* const* tabs = kGroupTabNames[inspector_group_];
+    const int* tab_ids = kGroupTabIds[inspector_group_];
+    int ntabs = 0;
+    while (ntabs < 3 && tabs[ntabs]) ++ntabs;
+    float tab_w = (width - 24.0f * scale_) / static_cast<float>(ntabs);
 
     ImDrawList* draw_list = ImGui::GetWindowDrawList();
     ImVec2 tab_bar_pos = ImGui::GetCursorScreenPos();
@@ -2588,8 +2693,8 @@ void GuiApp::renderRightInspector(float width, float height) {
                              IM_COL32(230, 230, 235, 255), 16.0f * scale_);
 
     ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 14.0f * scale_);
-    for (int i = 0; i < 3; ++i) {
-        bool active = (inspector_tab_ == i);
+    for (int i = 0; i < ntabs; ++i) {
+        bool active = (inspector_tab_ == tab_ids[i]);
         if (active) {
             ImGui::PushStyleColor(ImGuiCol_Button, Theme::ColorAccent);
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
@@ -2603,7 +2708,7 @@ void GuiApp::renderRightInspector(float width, float height) {
 
         if (font_medium_) ImGui::PushFont(font_medium_);
         if (ImGui::Button(tabs[i], ImVec2(tab_w - 2.0f, 30.0f * scale_))) {
-            inspector_tab_ = i;
+            selectInspectorTab(tab_ids[i]);
         }
         if (font_medium_) ImGui::PopFont();
 
@@ -3001,6 +3106,46 @@ void GuiApp::renderRightInspector(float width, float height) {
             ImGui::TextColored(Theme::ColorTextSecondary, "No active session");
         }
         ImGui::EndChild();
+    }
+    // TAB 4: CRASHES (the Mac's CrashesPanel: crash buffer or DropBox)
+    else if (inspector_tab_ == 4) {
+        if (current_serial.empty()) {
+            ImGui::TextColored(Theme::ColorTextSecondary, "No device selected");
+        } else {
+            if (crash_serial_ != current_serial && !crash_loading_) refreshCrashes(current_serial);
+            const char* sources[] = { "Crash buffer", "DropBox (tombstones, ANRs)" };
+            ImGui::PushItemWidth(220.0f * scale_);
+            if (ImGui::Combo("##CrashSource", &crash_source_, sources, 2)) refreshCrashes(current_serial);
+            ImGui::PopItemWidth();
+            ImGui::SameLine();
+            if (ImGui::Button(crash_loading_ ? "Loading..." : "Refresh") && !crash_loading_) refreshCrashes(current_serial);
+            float list_h = height - 100.0f * scale_;
+            ImGui::BeginChild("##CrashList", ImVec2(width - 24.0f * scale_, list_h), true, ImGuiWindowFlags_HorizontalScrollbar);
+            if (crash_text_.empty()) ImGui::TextColored(Theme::ColorTextSecondary, crash_loading_ ? "Reading..." : "No crashes recorded");
+            else ImGui::TextUnformatted(crash_text_.c_str());
+            ImGui::EndChild();
+        }
+    }
+    // TAB 5: SETTINGS (the Mac's SettingsPanel: developer toggles through `settings put`)
+    else if (inspector_tab_ == 5) {
+        if (current_serial.empty()) {
+            ImGui::TextColored(Theme::ColorTextSecondary, "No device selected");
+        } else {
+            if (dev_toggles_serial_ != current_serial && !dev_toggles_loading_) loadDevToggles(current_serial);
+            if (font_caption_) ImGui::PushFont(font_caption_);
+            ImGui::TextColored(Theme::ColorTextSecondary, "Developer options on the device");
+            if (font_caption_) ImGui::PopFont();
+            ImGui::Spacing();
+            for (int i = 0; i < 7; ++i) {
+                const DevToggle& t = kDevToggles[i];
+                const int st = i < static_cast<int>(dev_toggle_state_.size()) ? dev_toggle_state_[i] : -1;
+                bool on = st < 0 ? t.default_on : st == 1;
+                ImGui::PushID(i);
+                if (ImGui::Checkbox(t.label, &on)) setDevToggle(current_serial, i, on);
+                ImGui::PopID();
+            }
+            if (dev_toggles_loading_) ImGui::TextColored(Theme::ColorTextTertiary, "Reading current values...");
+        }
     }
 
     ImGui::End();
