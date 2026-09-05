@@ -5,9 +5,9 @@ Raspberry Pi. It was written on the Mac; nothing below has been built on Linux y
 `linux/README.md` already documents. Read `linux/README.md` first for the architecture and the
 feature list, then this file for what to do next.
 
-## Where things stand
+## Where things stand (updated 2026-09-04, on the Linux host)
 
-`linux/` is a self-contained C++17 client: SDL2 + FFmpeg + Dear ImGui, ~3.9k lines, landed as
+`linux/` is a self-contained C++17 client: SDL2 + FFmpeg + Dear ImGui, ~4k lines, landed as
 c68909b and verified mirroring a Pixel 8a with touch, keys, Apps / Files / Info / Logcat panes.
 It reimplements the agent protocol (`linux/src/protocol`, `linux/src/net`, `linux/src/adb`) and
 does **not** share the Swift core, so any protocol change must be made in both places.
@@ -15,16 +15,22 @@ does **not** share the Swift core, so any protocol change must be made in both p
 There is no architecture-specific code anywhere in `linux/src`. Dependencies are found through
 pkg-config; Dear ImGui is fetched by CMake at configure time (needs network once).
 
-What is portable but slow today (this is the whole Pi problem):
+Done on an Ubuntu 22.04 x86_64 host, each verified against a live mirror (Pixel 9 / 9a):
 
-- `linux/src/video/video_decoder.cc` picks the generic decoder with `avcodec_find_decoder(id)`
-  (line ~46), so H.264 is decoded on the CPU.
-- After every decoded frame it runs `sws_scale` YUV → RGBA into `DecodedFrame::rgba`
-  (line ~133), and `GuiApp::renderLiveMirror` (`linux/src/ui/gui_app.cc` ~743) uploads that as an
-  `SDL_PIXELFORMAT_RGBA32` streaming texture. That is a full-frame colour conversion on the CPU
-  plus a 4 byte/pixel upload, per frame.
-- The agent is launched with a hard-coded `--codec=avc` and `--max_size=1080,2400`
-  (`agent_session.cc` ~172, `gui_app.cc` ~232). No CLI or env override yet.
+- **Step 0**: builds; CMake now links the FFmpeg/SDL2 whose headers it compiled against
+  (pkg-config imported targets). `--serial` / `RPLAYHUB_SERIAL` picks the device `--mirror`
+  starts on, `--stats` prints decoded / rendered fps, fonts are found relative to the executable.
+- **Step 1**: the decoder hands SDL its yuv420p / nv12 planes (`SDL_UpdateYUVTexture` /
+  `SDL_UpdateNVTexture`); swscale → RGBA remains only for other pixel formats. The GUI pulls and
+  uploads a frame only when the decoder has a new one. 1080p, ~100 decoded fps, screen in
+  motion: 134% → 85% CPU on the host.
+- **Step 2**: `--decoder <ffmpeg name>` / `RPLAYHUB_DECODER` (falls back to the generic decoder
+  with a stderr line if the named one is missing or fails to open), `--codec avc|hevc|vp8|vp9|av1`,
+  `--max-size WxH`. HEVC from a Pixel 9a decodes with the stock `hevc` decoder.
+
+The client logs the SDL renderer (`SDL renderer: opengl (accelerated), video driver x11`) and,
+on the first frame, the decoder and pixel format
+(`VideoDecoder: h264 -> yuv420p 1072x2406 (planes uploaded to SDL)`); check both on the Pi.
 
 Not in the Linux client at all (not Pi-specific, listed so nobody looks for them): audio playback
 (the audio channel is accepted and parked), the 3D device twin, Finder mount, emulator host, AOA
@@ -60,7 +66,7 @@ Fonts: `linux/fonts/Inter-*.ttf` are looked up relative to cwd with a Roboto fal
 
 Fix whatever the README got wrong for the distro, then commit that before touching code.
 
-## Step 1 — upload YUV, drop swscale (do this on the host, helps every Linux machine)
+## Step 1 — upload YUV, drop swscale — DONE (0c84604)
 
 Goal: the decoder hands SDL the planes it already has; the GPU does the colour conversion.
 
@@ -79,7 +85,7 @@ Goal: the decoder hands SDL the planes it already has; the GPU does the colour c
 Verify: `top` CPU for the client at 1080p before/after, and that the picture is not colour-shifted
 (check a known red/blue UI element). Commit as its own change.
 
-## Step 2 — make decoder and codec selectable (host, no Pi needed)
+## Step 2 — make decoder and codec selectable — DONE (10a798e)
 
 Add, in `main.cc` → `GuiApp` → `AgentSession`:
 
@@ -116,6 +122,10 @@ Checks and traps:
   generic decoder.
 - Measure at 720p and 1080p (`--max-size 720x1600` vs `1080x2400`) and pick the default cap for
   the Pi. Expect 1080p to be fine in hardware and marginal in software on the A72.
+- How the host numbers were taken, so the Pi numbers compare: `--mirror --stats` with the
+  phone's screen kept in motion (`adb shell input swipe` up and down in a loop), 15 one-second
+  `top -p <pid>` samples of the whole process after the mirror has settled. Numbers without
+  motion are meaningless: the agent sends no frames for a static screen.
 
 ## Step 4 — Raspberry Pi 5 (no H.264 hardware; use HEVC)
 
