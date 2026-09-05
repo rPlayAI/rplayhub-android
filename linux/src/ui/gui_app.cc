@@ -76,7 +76,10 @@ bool GuiApp::init() {
         win_h = std::min(win_h, dm.h - 80);
     }
 
-    SDL_WindowFlags window_flags = (SDL_WindowFlags)(SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
+    // Borderless: the window draws its own macOS-style title bar (traffic lights, toolbar,
+    // menus); SDL's hit test makes the bar drag the window and the edges resize it.
+    SDL_WindowFlags window_flags = (SDL_WindowFlags)(SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI |
+                                                     (system_titlebar_ ? 0 : SDL_WINDOW_BORDERLESS));
     window_ = SDL_CreateWindow(
         "rPlayHub Android",
         SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
@@ -87,6 +90,11 @@ bool GuiApp::init() {
     if (!window_) {
         std::cerr << "Error: SDL_CreateWindow: " << SDL_GetError() << "\n";
         return false;
+    }
+    if (!system_titlebar_ && SDL_SetWindowHitTest(window_, &GuiApp::hitTest, this) != 0) {
+        std::cerr << "Window hit testing unavailable (" << SDL_GetError() << "); using the system title bar\n";
+        SDL_SetWindowBordered(window_, SDL_TRUE);
+        system_titlebar_ = true;
     }
 
     renderer_ = SDL_CreateRenderer(window_, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
@@ -185,6 +193,8 @@ void GuiApp::buildFonts() {
         "/usr/share/fonts/truetype/roboto/unhinted/RobotoTTF/Roboto-Bold.ttf",
         "/usr/share/fonts/truetype/noto/NotoSans-SemiBold.ttf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"});
+    font_regular_path_ = regular_path;
+    font_bold_path_ = bold_path.empty() ? regular_path : bold_path;
     if (regular_path.empty()) {
         std::cerr << "Warning: no TrueType font found (looked for linux/fonts/Inter-*.ttf next to the "
                      "executable and in the working directory); using ImGui's bitmap font\n";
@@ -219,6 +229,8 @@ void GuiApp::buildFonts() {
              {"/usr/share/fonts/truetype/wqy/wqy-microhei.ttc", 0}}) {
         if (::access(path.c_str(), R_OK) == 0) { cjk_path = path; cjk_face = face; break; }
     }
+    cjk_font_path_ = cjk_path;
+    cjk_font_face_ = cjk_face;
     static ImVector<ImWchar> cjk_ranges;
     cjk_ranges.clear();
     if (!cjk_path.empty()) {
@@ -638,7 +650,7 @@ void GuiApp::stopMirroring() {
 
 // Bring the same device back after the stream died; the last frame stays on screen meanwhile.
 void GuiApp::restartSession() {
-    closeDisplayWindows();   // virtual displays die with the previous agent
+    closeDisplayWindows(/*virtual_only=*/true);   // virtual displays die with the previous agent
     if (session_) session_->stop();
     session_ = std::make_unique<AgentSession>(session_serial_);
     session_->start(session_options_);
@@ -758,6 +770,7 @@ void GuiApp::pumpAgentEvents() {
         case AgentSession::AgentEvent::DISPLAY_REMOVED:
             for (auto it = display_windows_.begin(); it != display_windows_.end(); ++it) {
                 if ((*it)->displayId() == ev.display.id) {
+                    std::cerr << "display " << ev.display.id << " removed by the agent; closing its window\n";
                     session_->forgetDisplay(ev.display.id);
                     display_windows_.erase(it);
                     break;
@@ -823,95 +836,277 @@ void GuiApp::ensureGlyphs(const std::string& utf8) {
     }
 }
 
-// ---- menu bar: the Mac client's Device / View / Window menus ----
+// ---- title bar: traffic lights, toolbar, the Mac client's Device / View / Window menus ----
+
+SDL_HitTestResult GuiApp::hitTest(SDL_Window* win, const SDL_Point* pt, void* data) {
+    GuiApp* app = static_cast<GuiApp*>(data);
+    int w = 0, h = 0;
+    SDL_GetWindowSize(win, &w, &h);
+    const bool maximized = SDL_GetWindowFlags(win) & SDL_WINDOW_MAXIMIZED;
+    const int edge = 6;
+    if (!maximized) {
+        bool l = pt->x < edge, r = pt->x >= w - edge, t = pt->y < edge, b = pt->y >= h - edge;
+        if (t && l) return SDL_HITTEST_RESIZE_TOPLEFT;
+        if (t && r) return SDL_HITTEST_RESIZE_TOPRIGHT;
+        if (b && l) return SDL_HITTEST_RESIZE_BOTTOMLEFT;
+        if (b && r) return SDL_HITTEST_RESIZE_BOTTOMRIGHT;
+        if (t) return SDL_HITTEST_RESIZE_TOP;
+        if (b) return SDL_HITTEST_RESIZE_BOTTOM;
+        if (l) return SDL_HITTEST_RESIZE_LEFT;
+        if (r) return SDL_HITTEST_RESIZE_RIGHT;
+    }
+    SDL_HitTestResult result = SDL_HITTEST_NORMAL;
+    if (pt->y < app->menu_h_) {
+        result = SDL_HITTEST_DRAGGABLE;
+        for (const ImVec4& r : app->no_drag_rects_) {
+            if (pt->x >= r.x && pt->x < r.z && pt->y >= r.y && pt->y < r.w) { result = SDL_HITTEST_NORMAL; break; }
+        }
+    }
+    if (std::getenv("RPLAYHUB_INPUT_DEBUG")) {
+        std::cerr << "hit test (" << pt->x << "," << pt->y << ") -> " << (result == SDL_HITTEST_DRAGGABLE ? "drag" : "normal")
+                  << " (" << app->no_drag_rects_.size() << " widget rects, bar " << app->menu_h_ << ")\n";
+    }
+    return result;
+}
+
+// Close, minimise, zoom: drawn like macOS, with the glyphs on hover.
+void GuiApp::renderTrafficLights(ImVec2 pos) {
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const float r = 6.0f * scale_, gap = 20.0f * scale_;
+    const ImU32 cols[3] = { IM_COL32(255, 95, 87, 255), IM_COL32(254, 188, 46, 255), IM_COL32(40, 200, 64, 255) };
+    const ImU32 rims[3] = { IM_COL32(225, 70, 62, 255), IM_COL32(222, 160, 30, 255), IM_COL32(30, 170, 50, 255) };
+    ImGui::SetCursorScreenPos(ImVec2(pos.x - r - 4 * scale_, pos.y - r - 4 * scale_));
+    ImGui::InvisibleButton("##lights", ImVec2(gap * 2 + r * 2 + 8 * scale_, r * 2 + 8 * scale_));
+    noteNoDrag();
+    bool group_hover = ImGui::IsItemHovered();
+    ImVec2 mouse = ImGui::GetMousePos();
+    for (int i = 0; i < 3; ++i) {
+        ImVec2 c(pos.x + i * gap, pos.y);
+        dl->AddCircleFilled(c, r, cols[i], 24);
+        dl->AddCircle(c, r, rims[i], 24, 1.0f);
+        if (group_hover) {
+            ImU32 g = IM_COL32(70, 20, 15, 200);
+            float k = r * 0.42f;
+            if (i == 0) {          // x
+                dl->AddLine(ImVec2(c.x - k, c.y - k), ImVec2(c.x + k, c.y + k), g, 1.3f * scale_);
+                dl->AddLine(ImVec2(c.x - k, c.y + k), ImVec2(c.x + k, c.y - k), g, 1.3f * scale_);
+            } else if (i == 1) {   // minus
+                dl->AddLine(ImVec2(c.x - k, c.y), ImVec2(c.x + k, c.y), IM_COL32(120, 80, 10, 220), 1.3f * scale_);
+            } else {               // zoom arrows
+                ImU32 gg = IM_COL32(10, 80, 20, 220);
+                dl->AddTriangleFilled(ImVec2(c.x - k, c.y + k * 0.2f), ImVec2(c.x - k, c.y - k), ImVec2(c.x + k * 0.2f, c.y - k), gg);
+                dl->AddTriangleFilled(ImVec2(c.x + k, c.y - k * 0.2f), ImVec2(c.x + k, c.y + k), ImVec2(c.x - k * 0.2f, c.y + k), gg);
+            }
+        }
+        bool over = std::fabs(mouse.x - c.x) <= r + 2 && std::fabs(mouse.y - c.y) <= r + 2;
+        if (over && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+            if (i == 0) g_quit_requested.store(true);
+            else if (i == 1) SDL_MinimizeWindow(window_);
+            else if (SDL_GetWindowFlags(window_) & SDL_WINDOW_MAXIMIZED) SDL_RestoreWindow(window_);
+            else SDL_MaximizeWindow(window_);
+        }
+    }
+}
 
 void GuiApp::renderMenuBar() {
     menu_h_ = 0.0f;
-    if (!ImGui::BeginMainMenuBar()) return;
-    menu_h_ = ImGui::GetFrameHeight();
+    no_drag_rects_.clear();
+    const float win_w = ImGui::GetIO().DisplaySize.x;
+    float title_h = 0.0f;
 
-    const bool have_device = selected_device_idx_ >= 0 && selected_device_idx_ < static_cast<int>(devices_.size());
-    const bool live = session_ && session_->getState() == SessionState::RUNNING;
-    const bool mirroring_selected = have_device && session_active_ && session_ && session_serial_ == devices_[selected_device_idx_].serial;
-
-    if (ImGui::BeginMenu("Device")) {
-        if (mirroring_selected) {
-            if (ImGui::MenuItem("Stop Screen Mirroring")) stopMirroring();
-        } else if (ImGui::MenuItem("Start Screen Mirroring", nullptr, false, have_device)) {
-            startMirroring(selected_device_idx_);
-        }
-        if (ImGui::MenuItem("Reconnect", nullptr, false, have_device)) startMirroring(selected_device_idx_);
-        ImGui::Separator();
-        if (ImGui::MenuItem("Desktop Mode", "Ctrl+D", false, live)) openDesktopMode();
-        if (ImGui::MenuItem("Open Front App on Virtual Display", nullptr, false, live)) openFrontAppOnVirtualDisplay();
-        ImGui::Separator();
-        if (ImGui::MenuItem("Take Screenshot", nullptr, false, have_device)) takeScreenshot();
-        bool recording = session_ && session_->getRecorder().isRecording();
-        if (ImGui::MenuItem(recording ? "Stop Recording" : "Record Screen", nullptr, false, live)) toggleRecording();
-        ImGui::Separator();
-        if (ImGui::MenuItem("Back", nullptr, false, live)) session_->sendKey(AndroidKey::BACK);
-        if (ImGui::MenuItem("Home", nullptr, false, live)) session_->sendKey(AndroidKey::HOME);
-        if (ImGui::MenuItem("Recents", nullptr, false, live)) session_->sendKey(AndroidKey::APP_SWITCH);
-        if (ImGui::MenuItem("Rotate", nullptr, false, live)) rotateDevice();
-        if (ImGui::MenuItem("Follow Device Rotation", nullptr, false, live)) session_->setOrientation(-1);
-        if (ImGui::MenuItem("Wake", nullptr, false, live)) session_->wakeOrPower(false);
-        if (ImGui::MenuItem("Power Button", nullptr, false, live)) session_->wakeOrPower(true);
-        ImGui::Separator();
-        bool paused = live && session_->isDisplayPaused();
-        if (ImGui::MenuItem(paused ? "Resume Display" : "Pause Display", nullptr, false, live)) session_->setDisplayPaused(!paused);
-        if (ImGui::MenuItem("Turn Screen Off While Mirroring", nullptr, session_options_.turn_screen_off)) {
-            session_options_.turn_screen_off = !session_options_.turn_screen_off;
-            if (live) showToast("Applies when mirroring is restarted (Reconnect)", 5);
-        }
-        bool audio_on = live ? session_->isAudioForwarding() : session_options_.audio;
-        if (ImGui::MenuItem("Forward Audio", nullptr, audio_on)) {
-            session_options_.audio = !audio_on;
-            if (live) session_->setAudioForwarding(session_options_.audio);
-        }
-        if (ImGui::MenuItem("Synchronize Clipboard", nullptr, clipboard_sync_)) setClipboardSync(!clipboard_sync_);
-        ImGui::Separator();
-        if (ImGui::MenuItem("Connect to Device over Network...")) show_connect_popup_ = true;
-        if (ImGui::MenuItem("Refresh Devices")) { pollDevices(); pollEmulators(); }
-        ImGui::Separator();
-        if (ImGui::MenuItem("Quit", "Ctrl+Q")) g_quit_requested.store(true);
-        ImGui::EndMenu();
-    }
-
-    if (ImGui::BeginMenu("View")) {
-        if (ImGui::MenuItem("View Screen in 3D", nullptr, twin_mode_, true)) {
-            twin_mode_ = !twin_mode_;
-            if (twin_mode_ && live && !session_->hasSensorChannel()) {
-                showToast("This agent offers no orientation channel; the twin will not turn", 6);
+    // Row 1, the title bar (unless the desktop's own is in use): traffic lights, the toolbar,
+    // the device pill and status, the inspector icons. It is the main menu bar with a tall
+    // frame, which puts it at the top of the viewport.
+    if (!system_titlebar_) {
+        const float bar_h = 40.0f * scale_;
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10.0f * scale_, (bar_h - ImGui::GetFontSize()) * 0.5f));
+        ImGui::PushStyleColor(ImGuiCol_MenuBarBg, IM_COL32(247, 247, 250, 255));
+        if (ImGui::BeginMainMenuBar()) {
+            title_h = ImGui::GetFrameHeight();
+            menu_h_ = title_h;   // for hit testing during this row
+            ImDrawList* bar_dl = ImGui::GetWindowDrawList();
+            renderTrafficLights(ImVec2(18.0f * scale_, title_h * 0.5f));
+            ImVec2 tb(28.0f * scale_, 26.0f * scale_);
+            ImGui::SetCursorScreenPos(ImVec2(84.0f * scale_, (title_h - tb.y) * 0.5f));
+            const bool live = session_ && session_->getState() == SessionState::RUNNING;
+            {
+                ImVec2 g0 = ImGui::GetCursorScreenPos();
+                bar_dl->AddRectFilled(ImVec2(g0.x - 4 * scale_, g0.y - 3 * scale_), ImVec2(g0.x + tb.x * 3 + 8 * scale_, g0.y + tb.y + 3 * scale_),
+                                      IM_COL32(255, 255, 255, 255), 7.0f * scale_);
+                bar_dl->AddRect(ImVec2(g0.x - 4 * scale_, g0.y - 3 * scale_), ImVec2(g0.x + tb.x * 3 + 8 * scale_, g0.y + tb.y + 3 * scale_),
+                                IM_COL32(222, 222, 228, 255), 7.0f * scale_);
             }
+            if (IconButton("##AddIp", Icons::drawPlus, tb, "Connect to Device over Network")) show_connect_popup_ = true;
+            noteNoDrag();
+            ImGui::SameLine(0, 2.0f * scale_);
+            if (IconButton("##Refresh", Icons::drawListMenu, tb, "Refresh devices")) {
+                pollDevices(); pollEmulators();
+                for (auto& [serial, info] : device_info_) info.loaded = false;
+                if (!selected_serial_.empty()) { loadDeviceInfo(selected_serial_); refreshPackages(selected_serial_); refreshFiles(selected_serial_); }
+            }
+            noteNoDrag();
+            ImGui::SameLine(0, 2.0f * scale_);
+            if (IconButton("##SidebarToggle", Icons::drawSidebarToggle, tb, "Toggle sidebar")) sidebar_hidden_ = !sidebar_hidden_;
+            noteNoDrag();
+            ImGui::SetCursorScreenPos(ImVec2(84.0f * scale_ + tb.x * 3 + 26.0f * scale_, 0));
+            const bool have_device = selected_device_idx_ >= 0 && selected_device_idx_ < static_cast<int>(devices_.size());
+            const float menu_h_saved = menu_h_;
+            menu_h_ = title_h;
+        // The device pill: name over serial, like the Mac's toolbar
+        ImVec2 pill_pos(ImGui::GetCursorScreenPos().x + 10.0f * scale_, 5.0f * scale_);
+        std::string name = have_device ? devices_[selected_device_idx_].displayName() : "No device";
+        std::string serial = have_device ? devices_[selected_device_idx_].serial : "";
+        float name_w = font_medium_ ? font_medium_->CalcTextSizeA(14.0f * scale_, FLT_MAX, 0, name.c_str()).x : ImGui::CalcTextSize(name.c_str()).x;
+        float serial_w = font_caption_ ? font_caption_->CalcTextSizeA(11.5f * scale_, FLT_MAX, 0, serial.c_str()).x : 0;
+        float pill_w = std::max(name_w, serial_w) + 24.0f * scale_;
+        float pill_h = title_h - 10.0f * scale_;
+        bar_dl->AddRectFilled(pill_pos, ImVec2(pill_pos.x + pill_w, pill_pos.y + pill_h), IM_COL32(255, 255, 255, 255), 8.0f * scale_);
+        bar_dl->AddRect(pill_pos, ImVec2(pill_pos.x + pill_w, pill_pos.y + pill_h), IM_COL32(222, 222, 228, 255), 8.0f * scale_);
+        if (font_medium_) bar_dl->AddText(font_medium_, 14.0f * scale_, ImVec2(pill_pos.x + 12.0f * scale_, pill_pos.y + 3.0f * scale_), IM_COL32(28, 28, 30, 255), name.c_str());
+        if (font_caption_ && !serial.empty()) bar_dl->AddText(font_caption_, 11.5f * scale_, ImVec2(pill_pos.x + 12.0f * scale_, pill_pos.y + pill_h - 15.0f * scale_), IM_COL32(142, 142, 147, 255), serial.c_str());
+        // Session status next to it
+        if (session_ && font_caption_) {
+            std::string status = session_->getStatusMessage();
+            if (reconnect_pending_) status += " (reconnecting)";
+            if (session_->isDisplayPaused()) status += " (paused)";
+            SessionState st = session_->getState();
+            ImU32 col = (st == SessionState::RUNNING) ? IM_COL32(52, 160, 90, 255) : (st == SessionState::FAILED) ? IM_COL32(200, 60, 60, 255) : IM_COL32(120, 120, 128, 255);
+            bar_dl->AddText(font_caption_, 12.5f * scale_, ImVec2(pill_pos.x + pill_w + 10.0f * scale_, pill_pos.y + (pill_h - 12.5f * scale_) * 0.5f), col, status.c_str());
         }
-        if (ImGui::MenuItem("Set Facing Me", "R", false, twin_mode_)) twin_.recenter();
-        ImGui::Separator();
-        const char* tabs[] = { "Info", "Apps", "Files", "Logcat" };
-        for (int t = 0; t < 4; ++t) {
-            if (ImGui::MenuItem(tabs[t], nullptr, inspector_tab_ == t)) inspector_tab_ = t;
+
+        // Inspector icons at the right, in a group like the Mac's, and the primary menu (three dots)
+        float group_w = tb.x * 3 + 4 * scale_;
+        ImVec2 g0(win_w - group_w - tb.x - 22.0f * scale_, (title_h - tb.y) * 0.5f);
+        bar_dl->AddRectFilled(ImVec2(g0.x - 4 * scale_, g0.y - 3 * scale_), ImVec2(g0.x + group_w + 4 * scale_, g0.y + tb.y + 3 * scale_), IM_COL32(255, 255, 255, 255), 7.0f * scale_);
+        bar_dl->AddRect(ImVec2(g0.x - 4 * scale_, g0.y - 3 * scale_), ImVec2(g0.x + group_w + 4 * scale_, g0.y + tb.y + 3 * scale_), IM_COL32(222, 222, 228, 255), 7.0f * scale_);
+        ImGui::SetCursorScreenPos(g0);
+        if (IconButton("##TbSettings", Icons::drawSettings, tb, "Apps", inspector_tab_ == 1)) inspector_tab_ = 1;
+        noteNoDrag();
+        ImGui::SameLine(0, 2.0f * scale_);
+        if (IconButton("##TbLogcat", Icons::drawLogcat, tb, "Logcat", inspector_tab_ == 3)) inspector_tab_ = 3;
+        noteNoDrag();
+        ImGui::SameLine(0, 2.0f * scale_);
+        if (IconButton("##TbInfo", Icons::drawInfo, tb, "Info", inspector_tab_ == 0)) inspector_tab_ = 0;
+        noteNoDrag();
+
+            menu_h_ = menu_h_saved;
+            // Primary menu: three dots at the far right, like Chrome, opening the commands
+            {
+                ImGui::SetCursorScreenPos(ImVec2(win_w - tb.x - 6.0f * scale_, (title_h - tb.y) * 0.5f));
+                auto dots = [](ImDrawList* dl, ImVec2 p, float sz, ImU32 col) {
+                    float r = sz * 0.075f;
+                    for (int i = -1; i <= 1; ++i) dl->AddCircleFilled(ImVec2(p.x + sz * 0.5f, p.y + sz * 0.5f + i * sz * 0.28f), r, col);
+                };
+                if (IconButton("##PrimaryMenu", dots, tb, "Menu")) {
+                    ImGui::OpenPopup("##MainMenu");
+                    if (std::getenv("RPLAYHUB_INPUT_DEBUG")) std::cerr << "primary menu: opened\n";
+                }
+                noteNoDrag();
+                ImGui::SetNextWindowPos(ImVec2(win_w - 8.0f * scale_, title_h), ImGuiCond_Always, ImVec2(1.0f, 0.0f));
+                if (ImGui::BeginPopup("##MainMenu")) {
+                    if (std::getenv("RPLAYHUB_INPUT_DEBUG")) std::cerr << "primary menu: drawing\n";
+                    renderPrimaryMenuItems();
+                    ImGui::EndPopup();
+                }
+            }
+
+            // Double-click on the bar zooms, like macOS
+            ImVec2 m = ImGui::GetMousePos();
+            if (m.y < title_h && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && !ImGui::IsAnyItemHovered()) {
+                if (SDL_GetWindowFlags(window_) & SDL_WINDOW_MAXIMIZED) SDL_RestoreWindow(window_); else SDL_MaximizeWindow(window_);
+            }
+            ImGui::EndMainMenuBar();
         }
-        ImGui::EndMenu();
+        ImGui::PopStyleColor();
+        ImGui::PopStyleVar();
     }
 
-    if (ImGui::BeginMenu("Window")) {
-        if (ImGui::MenuItem("Open Screen in New Window", nullptr, false, live)) openPhoneWindow();
-        if (ImGui::MenuItem("Pin Window on Top", nullptr, display_windows_.empty() ? main_pinned_ : display_windows_.back()->pinned())) togglePinOnTop();
-        if (ImGui::MenuItem("Close Virtual Displays", nullptr, false, !display_windows_.empty())) closeDisplayWindows();
-        ImGui::EndMenu();
-    }
-
-    if (ImGui::BeginMenu("Help")) {
-        if (ImGui::MenuItem("About rPlayHub Android")) {
-            showToast("rPlayHub Android for Linux: SDL2 + FFmpeg + Dear ImGui. github.com/rPlayAI/rplayhub-android", 8);
+    // With the desktop's title bar the same items hang off a plain menu bar row.
+    if (system_titlebar_) {
+        ImGui::PushStyleColor(ImGuiCol_MenuBarBg, IM_COL32(247, 247, 250, 255));
+        if (ImGui::BeginMainMenuBar()) {
+            if (ImGui::BeginMenu("Menu")) { renderPrimaryMenuItems(); ImGui::EndMenu(); }
+            menu_h_ = ImGui::GetFrameHeight();
+            ImGui::EndMainMenuBar();
         }
-        ImGui::EndMenu();
+        ImGui::PopStyleColor();
+    } else {
+        menu_h_ = title_h;
     }
 
     // Keyboard shortcuts for the menu
     ImGuiIO& io = ImGui::GetIO();
-    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_D) && live) openDesktopMode();
+    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_D) && session_ && session_->getState() == SessionState::RUNNING) openDesktopMode();
+}
 
-    ImGui::EndMainMenuBar();
+// The primary menu's items: one flat list in sections, like Chrome's, with the Android keys in
+// a submenu. Shared by the three-dots popup and (with --system-titlebar) a classic menu bar.
+void GuiApp::renderPrimaryMenuItems() {
+    const bool live = session_ && session_->getState() == SessionState::RUNNING;
+    const bool have_device = selected_device_idx_ >= 0 && selected_device_idx_ < static_cast<int>(devices_.size());
+    const bool mirroring_selected = have_device && session_active_ && session_ && session_serial_ == devices_[selected_device_idx_].serial;
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8.0f * scale_, 6.0f * scale_));
+
+    if (mirroring_selected) {
+        if (ImGui::MenuItem("Stop Screen Mirroring")) stopMirroring();
+    } else if (ImGui::MenuItem("Start Screen Mirroring", nullptr, false, have_device)) {
+        startMirroring(selected_device_idx_);
+    }
+    if (ImGui::MenuItem("Reconnect", nullptr, false, have_device)) startMirroring(selected_device_idx_);
+    ImGui::Separator();
+    if (ImGui::MenuItem("Desktop Mode", "Ctrl+D", false, live)) openDesktopMode();
+    if (ImGui::MenuItem("Open Front App on Virtual Display", nullptr, false, live)) openFrontAppOnVirtualDisplay();
+    if (ImGui::MenuItem("Open Screen in New Window", nullptr, false, live)) openPhoneWindow();
+    if (ImGui::MenuItem("Pin Window on Top", nullptr, display_windows_.empty() ? main_pinned_ : display_windows_.back()->pinned())) togglePinOnTop();
+    if (ImGui::MenuItem("Close Virtual Displays", nullptr, false, !display_windows_.empty())) closeDisplayWindows();
+    ImGui::Separator();
+    if (ImGui::MenuItem("Take Screenshot", nullptr, false, have_device)) takeScreenshot();
+    bool recording = session_ && session_->getRecorder().isRecording();
+    if (ImGui::MenuItem(recording ? "Stop Recording" : "Record Screen", nullptr, false, live)) toggleRecording();
+    ImGui::Separator();
+    if (ImGui::MenuItem("View Screen in 3D", nullptr, twin_mode_)) {
+        twin_mode_ = !twin_mode_;
+        if (twin_mode_ && live && !session_->hasSensorChannel()) showToast("This agent offers no orientation channel; the twin will not turn", 6);
+    }
+    if (ImGui::MenuItem("Set Facing Me", "R", false, twin_mode_)) twin_.recenter();
+    ImGui::Separator();
+    bool paused = live && session_->isDisplayPaused();
+    if (ImGui::MenuItem(paused ? "Resume Display" : "Pause Display", nullptr, false, live)) session_->setDisplayPaused(!paused);
+    if (ImGui::MenuItem("Rotate", nullptr, false, live)) rotateDevice();
+    if (ImGui::MenuItem("Follow Device Rotation", nullptr, false, live)) session_->setOrientation(-1);
+    if (ImGui::MenuItem("Turn Screen Off While Mirroring", nullptr, session_options_.turn_screen_off)) {
+        session_options_.turn_screen_off = !session_options_.turn_screen_off;
+        if (live) showToast("Applies when mirroring is restarted (Reconnect)", 5);
+    }
+    bool audio_on = live ? session_->isAudioForwarding() : session_options_.audio;
+    if (ImGui::MenuItem("Forward Audio", nullptr, audio_on)) {
+        session_options_.audio = !audio_on;
+        if (live) session_->setAudioForwarding(session_options_.audio);
+    }
+    if (ImGui::MenuItem("Synchronize Clipboard", nullptr, clipboard_sync_)) setClipboardSync(!clipboard_sync_);
+    ImGui::Separator();
+    if (ImGui::BeginMenu("Android Keys", live)) {
+        if (ImGui::MenuItem("Back")) session_->sendKey(AndroidKey::BACK);
+        if (ImGui::MenuItem("Home")) session_->sendKey(AndroidKey::HOME);
+        if (ImGui::MenuItem("Recents")) session_->sendKey(AndroidKey::APP_SWITCH);
+        if (ImGui::MenuItem("Volume Up")) session_->sendKey(AndroidKey::VOLUME_UP);
+        if (ImGui::MenuItem("Volume Down")) session_->sendKey(AndroidKey::VOLUME_DOWN);
+        if (ImGui::MenuItem("Wake")) session_->wakeOrPower(false);
+        if (ImGui::MenuItem("Power Button")) session_->wakeOrPower(true);
+        ImGui::EndMenu();
+    }
+    if (ImGui::BeginMenu("Inspector")) {
+        const char* tabs[] = { "Info", "Apps", "Files", "Logcat" };
+        for (int t = 0; t < 4; ++t) if (ImGui::MenuItem(tabs[t], nullptr, inspector_tab_ == t)) inspector_tab_ = t;
+        ImGui::EndMenu();
+    }
+    ImGui::Separator();
+    if (ImGui::MenuItem("Connect to Device over Network...")) show_connect_popup_ = true;
+    if (ImGui::MenuItem("Refresh Devices")) { pollDevices(); pollEmulators(); }
+    ImGui::Separator();
+    if (ImGui::MenuItem("About rPlayHub Android")) showToast("rPlayHub Android for Linux: SDL2 + FFmpeg + Dear ImGui. github.com/rPlayAI/rplayhub-android", 8);
+    if (ImGui::MenuItem("Quit", "Ctrl+Q")) g_quit_requested.store(true);
+    ImGui::PopStyleVar();
 }
 
 // ---- emulators ----
@@ -1180,6 +1375,7 @@ void GuiApp::openDisplayWindow(const AgentSession::DisplayDescriptor& d, const P
     SDL_GetWindowPosition(SDL_GetWindowFromID(win->windowId()), &wx, &wy);
     SDL_SetWindowPosition(SDL_GetWindowFromID(win->windowId()), wx + step, wy + step);
     win->setPackage(req.package);
+    win->setChrome(makeChrome());
     display_windows_.push_back(std::move(win));
 
     if (d.id != 0) {
@@ -1200,13 +1396,48 @@ void GuiApp::openDisplayWindow(const AgentSession::DisplayDescriptor& d, const P
     }
 }
 
-void GuiApp::closeDisplayWindows() {
-    for (auto& dw : display_windows_) {
-        if (session_ && dw->displayId() != 0) session_->destroyDisplay(dw->displayId());
+void GuiApp::closeDisplayWindows(bool virtual_only) {
+    if (!display_windows_.empty()) std::cerr << "closing " << (virtual_only ? "virtual display" : "all display") << " windows\n";
+    for (auto it = display_windows_.begin(); it != display_windows_.end();) {
+        DisplayWindow& dw = **it;
+        if (virtual_only && dw.displayId() == 0) { ++it; continue; }   // the popped-out phone survives
+        if (session_ && dw.displayId() != 0) session_->destroyDisplay(dw.displayId());
+        it = display_windows_.erase(it);
     }
-    display_windows_.clear();
     display_frames_.clear();
     pending_displays_.clear();
+}
+
+// What a bare window's hover chrome needs: fonts, scale, and the same actions as the
+// main window's control strip.
+DisplayChrome GuiApp::makeChrome() {
+    DisplayChrome c;
+    c.regular_font = font_regular_path_;
+    c.bold_font = font_bold_path_;
+    c.cjk_font = cjk_font_path_;
+    c.cjk_face = cjk_font_face_;
+    c.scale = scale_;
+    c.on_action = [this](ChromeAction a) {
+        auto key = [this](int k) { if (session_) session_->sendKey(k); };
+        switch (a) {
+            case ChromeAction::Back: key(AndroidKey::BACK); break;
+            case ChromeAction::Home: key(AndroidKey::HOME); break;
+            case ChromeAction::Recents: key(AndroidKey::APP_SWITCH); break;
+            case ChromeAction::VolumeDown: key(AndroidKey::VOLUME_DOWN); break;
+            case ChromeAction::VolumeUp: key(AndroidKey::VOLUME_UP); break;
+            case ChromeAction::Power: key(AndroidKey::POWER); break;
+            case ChromeAction::Rotate: rotateDevice(); break;
+            case ChromeAction::Screenshot: takeScreenshot(); break;
+            case ChromeAction::Record: toggleRecording(); break;
+        }
+    };
+    c.recording = [this] { return session_ && session_->getRecorder().isRecording(); };
+    return c;
+}
+
+bool GuiApp::phonePoppedOut() const {
+    for (const auto& dw : display_windows_) if (dw->displayId() == 0) return true;
+    return false;
 }
 
 bool GuiApp::routeEventToDisplayWindows(const SDL_Event& e) {
@@ -1224,6 +1455,7 @@ void GuiApp::renderDisplayWindows() {
         DisplayWindow& dw = **it;
         if (dw.closeRequested()) {
             // Closing the window closes the display; nothing is left running on the phone.
+            std::cerr << "display window " << dw.displayId() << " closed (" << dw.closeReason() << ")\n";
             if (session_ && dw.displayId() != 0) session_->destroyDisplay(dw.displayId());
             display_frames_.erase(dw.displayId());
             it = display_windows_.erase(it);
@@ -1364,7 +1596,7 @@ void GuiApp::run() {
         if (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Q)) done = true;
 
         // Scaled sizes matching macOS GUI
-        float sidebar_w = 260.0f * scale_;
+        float sidebar_w = sidebar_hidden_ ? 0.0f : 260.0f * scale_;
         float inspector_w = 320.0f * scale_;
         float stage_w = static_cast<float>(win_w) - sidebar_w - inspector_w;
         if (stage_w < 360.0f * scale_) stage_w = 360.0f * scale_;
@@ -1372,7 +1604,7 @@ void GuiApp::run() {
 
         // Menu bar, then the three panels below it
         renderMenuBar();
-        renderLeftSidebar(sidebar_w, main_h);
+        if (!sidebar_hidden_) renderLeftSidebar(sidebar_w, main_h);
         renderCenterStage(sidebar_w, stage_w, main_h);
         renderRightInspector(inspector_w, main_h);
 
@@ -1472,37 +1704,19 @@ void GuiApp::renderLeftSidebar(float width, float height) {
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12.0f * scale_, 14.0f * scale_));
     ImGui::Begin("##Sidebar", nullptr, flags);
 
-    // Header: Traffic Light Dots + Action Buttons (+ and reload)
     ImDrawList* draw_list = ImGui::GetWindowDrawList();
-    ImVec2 cursor = ImGui::GetCursorScreenPos();
-    float dot_radius = 5.5f * scale_;
-    float dot_spacing = 16.0f * scale_;
-    draw_list->AddCircleFilled(ImVec2(cursor.x + 8.0f * scale_, cursor.y + 11.0f * scale_), dot_radius, IM_COL32(255, 95, 87, 255));
-    draw_list->AddCircleFilled(ImVec2(cursor.x + 8.0f * scale_ + dot_spacing, cursor.y + 11.0f * scale_), dot_radius, IM_COL32(254, 188, 46, 255));
-    draw_list->AddCircleFilled(ImVec2(cursor.x + 8.0f * scale_ + dot_spacing * 2, cursor.y + 11.0f * scale_), dot_radius, IM_COL32(40, 200, 64, 255));
-
-    ImGui::SetCursorPosX(width - 98.0f * scale_);
-    ImVec2 top_btn_sz(24.0f * scale_, 22.0f * scale_);
-    if (IconButton("##AddIp", Icons::drawPlus, top_btn_sz, "Connect to Device via IP")) {
-        show_connect_popup_ = true;
-    }
-    ImGui::SameLine();
-    if (IconButton("##Refresh", Icons::drawListMenu, top_btn_sz, "Refresh device list")) {
-        pollDevices();
-        for (auto& [serial, info] : device_info_) info.loaded = false;   // re-read props too
-        if (!selected_serial_.empty()) {
-            loadDeviceInfo(selected_serial_);
-            refreshPackages(selected_serial_);
-            refreshFiles(selected_serial_);
+    if (system_titlebar_) {
+        // With the desktop's title bar the toolbar lives here instead
+        ImVec2 top_btn_sz(24.0f * scale_, 22.0f * scale_);
+        if (IconButton("##AddIp", Icons::drawPlus, top_btn_sz, "Connect to Device over Network")) show_connect_popup_ = true;
+        ImGui::SameLine();
+        if (IconButton("##Refresh", Icons::drawListMenu, top_btn_sz, "Refresh devices")) {
+            pollDevices(); pollEmulators();
+            for (auto& [serial, info] : device_info_) info.loaded = false;
+            if (!selected_serial_.empty()) { loadDeviceInfo(selected_serial_); refreshPackages(selected_serial_); refreshFiles(selected_serial_); }
         }
-        showToast("Refreshing device list");
+        ImGui::Spacing();
     }
-    ImGui::SameLine();
-    if (IconButton("##SidebarToggle", Icons::drawSidebarToggle, top_btn_sz, "Toggle Sidebar")) {
-        showToast("Sidebar toggled");
-    }
-
-    ImGui::Spacing();
     ImGui::Spacing();
 
     // Connect IP Popup Modal
@@ -1776,12 +1990,13 @@ void GuiApp::renderCenterStage(float start_x, float width, float height) {
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(16.0f * scale_, 12.0f * scale_));
     ImGui::Begin("##CenterStage", nullptr, flags);
 
+    ImDrawList* draw_list = ImGui::GetWindowDrawList();
+    if (system_titlebar_) {
     // Top Header Pill: "No device" or selected device name (matches macOS screenshot top bar)
     std::string header_title = "No device";
     if (selected_device_idx_ >= 0 && selected_device_idx_ < static_cast<int>(devices_.size())) {
         header_title = devices_[selected_device_idx_].displayName();
     }
-    ImDrawList* draw_list = ImGui::GetWindowDrawList();
     ImVec2 pill_pos = ImGui::GetCursorScreenPos();
     pill_pos.x += 12.0f * scale_;
     pill_pos.y += 2.0f * scale_;
@@ -1818,9 +2033,11 @@ void GuiApp::renderCenterStage(float start_x, float width, float height) {
                            ImVec2(pill_pos.x + pill_w + 12.0f * scale_, pill_pos.y + 6.0f * scale_),
                            col, status.c_str());
     }
+    }   // system_titlebar_
 
     // Phone & Stage Area
-    float available_h = height - 90.0f * scale_;
+    const float stage_top = system_titlebar_ ? 42.0f * scale_ : 14.0f * scale_;
+    float available_h = height - stage_top - 52.0f * scale_;   // down to the control strip's hairline
     float available_w = width - 30.0f * scale_;
 
     // Pull a frame only when the decoder has a new one; the copy is a few MB.
@@ -1829,13 +2046,15 @@ void GuiApp::renderCenterStage(float start_x, float width, float height) {
     }
     bool has_frame = session_ && !live_frame_.empty();
 
-    const float top = menu_h_ + 42.0f * scale_;
-    if (session_active_ && has_frame && twin_mode_) {
+    const float top = menu_h_ + stage_top;
+    // While the phone is shown in its own window the stage does not show it a second time.
+    const bool popped_out = has_frame && phonePoppedOut();
+    if (session_active_ && has_frame && !popped_out && twin_mode_) {
         renderTwin(ImVec2(start_x + 15.0f * scale_, top), ImVec2(available_w, available_h), live_frame_);
-    } else if (session_active_ && has_frame) {
+    } else if (session_active_ && has_frame && !popped_out) {
         renderLiveMirror(ImVec2(start_x + 15.0f * scale_, top), ImVec2(available_w, available_h), live_frame_);
     } else {
-        renderPhoneMockup(ImVec2(start_x + width * 0.5f, top + available_h * 0.44f), ImVec2(available_w, available_h));
+        renderPhoneMockup(ImVec2(start_x + width * 0.5f, top + available_h * 0.44f), ImVec2(available_w, available_h), popped_out);
     }
 
     // Bottom Navigation Control Strip
@@ -1847,7 +2066,7 @@ void GuiApp::renderCenterStage(float start_x, float width, float height) {
 }
 
 // Phone Mockup when idle (matches macOS gui-default.png and gui-focused.png)
-void GuiApp::renderPhoneMockup(ImVec2 center, ImVec2 max_size) {
+void GuiApp::renderPhoneMockup(ImVec2 center, ImVec2 max_size, bool popped_out) {
     ImDrawList* draw_list = ImGui::GetWindowDrawList();
 
     // Phone dimensions matching macOS ratio (approx 120pt x 289pt)
@@ -1893,6 +2112,15 @@ void GuiApp::renderPhoneMockup(ImVec2 center, ImVec2 max_size) {
         draw_list->AddText(ImVec2(center.x - text_sz.x * 0.5f, text_y),
                            IM_COL32(28, 28, 30, 255), device_label.c_str());
     }
+    if (popped_out) {
+        const char* note = "Showing in its own window";
+        ImVec2 nsz = font_caption_ ? font_caption_->CalcTextSizeA(13.0f * scale_, FLT_MAX, 0.0f, note)
+                                   : ImGui::CalcTextSize(note);
+        float ny = text_y + text_sz.y + 4.0f * scale_;
+        if (font_caption_) draw_list->AddText(font_caption_, 13.0f * scale_, ImVec2(center.x - nsz.x * 0.5f, ny), IM_COL32(120, 120, 128, 255), note);
+        else draw_list->AddText(ImVec2(center.x - nsz.x * 0.5f, ny), IM_COL32(120, 120, 128, 255), note);
+        text_sz.y += nsz.y + 4.0f * scale_;
+    }
 
     // Below text: "View Screen" Pill Button with Screen Sharing Icon
     float btn_w = 146.0f * scale_;
@@ -1917,7 +2145,7 @@ void GuiApp::renderPhoneMockup(ImVec2 center, ImVec2 max_size) {
 
     float icon_sz = 17.0f * scale_;
     float gap = 8.0f * scale_;
-    const char* label = "View Screen";
+    const char* label = popped_out ? "Bring Back" : "View Screen";
     ImVec2 label_sz = font_medium_ ? font_medium_->CalcTextSizeA(14.5f * scale_, FLT_MAX, 0.0f, label)
                                    : ImGui::CalcTextSize(label);
     float total_content_w = icon_sz + gap + label_sz.x;
@@ -1937,7 +2165,9 @@ void GuiApp::renderPhoneMockup(ImVec2 center, ImVec2 max_size) {
     }
 
     if (clicked) {
-        if (selected_device_idx_ >= 0) {
+        if (popped_out) {
+            for (auto& dw : display_windows_) if (dw->displayId() == 0) dw->requestClose("Bring Back");
+        } else if (selected_device_idx_ >= 0) {
             startMirroring(selected_device_idx_);
         } else {
             showToast("Please select a device first");
@@ -2005,11 +2235,14 @@ void GuiApp::renderLiveMirror(ImVec2 origin, ImVec2 size, const DecodedFrame& fr
     }
 
     float aspect = static_cast<float>(rot_w) / static_cast<float>(rot_h);
-    float target_h = size.y - 20.0f * scale_;
+    // The bezel around the picture must stay inside the stage too, with some air around it.
+    const float bezel = 12.0f * scale_;
+    const float margin = bezel + 8.0f * scale_;
+    float target_h = size.y - 2.0f * margin;
     float target_w = target_h * aspect;
 
-    if (target_w > size.x - 20.0f * scale_) {
-        target_w = size.x - 20.0f * scale_;
+    if (target_w > size.x - 2.0f * margin) {
+        target_w = size.x - 2.0f * margin;
         target_h = target_w / aspect;
     }
 
@@ -2019,7 +2252,6 @@ void GuiApp::renderLiveMirror(ImVec2 origin, ImVec2 size, const DecodedFrame& fr
     ImDrawList* draw_list = ImGui::GetWindowDrawList();
 
     // Black Phone Bezel Surround (~12px margin scaled)
-    float bezel = 12.0f * scale_;
     ImVec2 bezel_tl(pos_x - bezel, pos_y - bezel);
     ImVec2 bezel_br(pos_x + target_w + bezel, pos_y + target_h + bezel);
     draw_list->AddRectFilled(bezel_tl, bezel_br, IM_COL32(18, 18, 22, 255), 28.0f * scale_);
@@ -2295,24 +2527,16 @@ void GuiApp::renderRightInspector(float width, float height) {
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12.0f * scale_, 14.0f * scale_));
     ImGui::Begin("##Inspector", nullptr, flags);
 
-    // Top Tool Icons
-    ImVec2 top_btn_sz(26.0f * scale_, 24.0f * scale_);
-    ImGui::SetCursorPosX(width - 96.0f * scale_);
-    if (IconButton("##Settings", Icons::drawSettings, top_btn_sz, "Device Settings", inspector_tab_ == 0)) {
-        inspector_tab_ = 0;
+    if (system_titlebar_) {
+        ImVec2 top_btn_sz(26.0f * scale_, 24.0f * scale_);
+        ImGui::SetCursorPosX(width - 96.0f * scale_);
+        if (IconButton("##Settings", Icons::drawSettings, top_btn_sz, "Apps", inspector_tab_ == 1)) inspector_tab_ = 1;
+        ImGui::SameLine();
+        if (IconButton("##Logcat", Icons::drawLogcat, top_btn_sz, "Logcat", inspector_tab_ == 3)) inspector_tab_ = 3;
+        ImGui::SameLine();
+        if (IconButton("##Info", Icons::drawInfo, top_btn_sz, "Info", inspector_tab_ == 0)) inspector_tab_ = 0;
+        ImGui::Spacing();
     }
-
-    ImGui::SameLine();
-    if (IconButton("##Logcat", Icons::drawLogcat, top_btn_sz, "Agent Logcat", inspector_tab_ == 3)) {
-        inspector_tab_ = 3;
-    }
-
-    ImGui::SameLine();
-    if (IconButton("##Info", Icons::drawInfo, top_btn_sz, "Device Info", inspector_tab_ == 0)) {
-        inspector_tab_ = 0;
-    }
-
-    ImGui::Spacing();
 
     // Segmented Pill Tabs: Info | Apps | Files
     const char* tabs[] = { "Info", "Apps", "Files" };

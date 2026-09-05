@@ -16,6 +16,10 @@ pkg_check_modules(AVFORMAT REQUIRED IMPORTED_TARGET libavformat)
 pkg_check_modules(SWSCALE REQUIRED IMPORTED_TARGET libswscale)
 pkg_check_modules(AVUTIL REQUIRED IMPORTED_TARGET libavutil)
 
+# Xlib + GLX, so the frameless pop-out windows can pick an ARGB visual for their rounded
+# corners (optional; without it the corners are square)
+pkg_check_modules(X11GL IMPORTED_TARGET x11 gl)
+
 # Fetch Dear ImGui automatically at configure time
 include(FetchContent)
 FetchContent_Declare(
@@ -66,6 +70,11 @@ set(SOURCES
 )
 
 add_executable(rplayhub-android-linux ${SOURCES})
+
+if(X11GL_FOUND)
+    target_compile_definitions(rplayhub-android-linux PRIVATE RPLAYHUB_HAVE_X11=1)
+    target_link_libraries(rplayhub-android-linux PRIVATE PkgConfig::X11GL)
+endif()
 
 target_link_libraries(rplayhub-android-linux PRIVATE
     imgui
