@@ -88,6 +88,7 @@ DisplayWindow::DisplayWindow(int32_t display_id, const std::string& title, int w
         argb_ = argb;
     }
     if (!window_) return;
+    if (const char* fixed = std::getenv("RPLAYHUB_POPOUT_FIXED")) grow_mode_ = std::atoi(fixed) == 0;
     SDL_SetWindowHitTest(window_, &DisplayWindow::hitTest, this);
 }
 
@@ -119,7 +120,8 @@ void DisplayWindow::cutCorners(int out_w, int out_h, float px_per_unit) {
     if (isPhone()) {
         if (tex_w_ > 0 && tex_h_ > 0) {
             float bx, by, bw, bh;
-            barePicture(static_cast<float>(win_w), static_cast<float>(win_h), bx, by, bw, bh);
+            const bool grown_now = grownSizeReached(win_w, win_h);
+            barePicture(static_cast<float>(grown_now ? bare_w_ : win_w), static_cast<float>(grown_now ? bare_h_ : win_h), bx, by, bw, bh);
             bare_r = 0.16f * bw;   // the chassis's own outer corner
         } else {
             bare_r = std::min(win_w, win_h) * 0.14f;
@@ -244,6 +246,21 @@ void DisplayWindow::buildChromeFonts() {
     io.FontDefault = ui_font_;
     font_title_ = title_;
     ImGui::SetCurrentContext(prev);
+}
+
+void DisplayWindow::moveResize(int w, int h, int x, int y) {
+    if (std::getenv("RPLAYHUB_INPUT_DEBUG")) std::cerr << "display window " << display_id_ << ": resize to " << w << "x" << h << " at " << x << "," << y << "\n";
+#ifdef RPLAYHUB_HAVE_X11
+    SDL_SysWMinfo info;
+    SDL_VERSION(&info.version);
+    if (SDL_GetWindowWMInfo(window_, &info) && info.subsystem == SDL_SYSWM_X11) {
+        XMoveResizeWindow(info.info.x11.display, info.info.x11.window, x, y, static_cast<unsigned>(w), static_cast<unsigned>(h));
+        XFlush(info.info.x11.display);
+        return;
+    }
+#endif
+    SDL_SetWindowSize(window_, w, h);
+    SDL_SetWindowPosition(window_, x, y);
 }
 
 int DisplayWindow::bareHeightForWidth(int width, float screen_aspect) {
@@ -512,6 +529,28 @@ float DisplayWindow::updateChromeAlpha(int win_w, int win_h) {
                       << " " << win_w << "x" << win_h << " -> " << (near ? "near" : "away") << "\n";
         }
     }
+    const bool maximized = SDL_GetWindowFlags(window_) & SDL_WINDOW_MAXIMIZED;
+    if (grow_mode_ && have_frame_ && !maximized) {
+        // The raw view keeps its size and place on screen; the window grows around it, up
+        // and left by the bars and margins that appear, in one request. The bars fade in
+        // only once the window manager has applied the new size, and the window shrinks
+        // back once they have faded out.
+        if (target > 0.5f && !grown_) {
+            bare_w_ = win_w;
+            bare_h_ = win_h;
+            const float gap = isPhone() ? kChassisGap * chrome_.scale : 0.0f;
+            grown_w_ = isPhone() ? static_cast<int>(std::lround(win_w / kChassisSpan)) : win_w;
+            grown_h_ = static_cast<int>(std::lround(titleBarHeight() + gap + win_h + gap + toolbarHeight()));
+            grow_dx_ = (grown_w_ - win_w) / 2;
+            grow_dy_ = static_cast<int>(std::lround(titleBarHeight() + gap));
+            moveResize(grown_w_, grown_h_, wx - grow_dx_, wy - grow_dy_);
+            grown_ = true;
+        } else if (target < 0.5f && grown_ && chrome_alpha_ == 0.0f) {
+            moveResize(bare_w_, bare_h_, wx + grow_dx_, wy + grow_dy_);
+            grown_ = false;
+        }
+        if (target > 0.5f && !grownSizeReached(win_w, win_h)) return chrome_alpha_;   // wait for the size
+    }
     chrome_alpha_ += (target - chrome_alpha_) * std::min(1.0f, dt * 12.0f);
     if (chrome_alpha_ < 0.01f) chrome_alpha_ = 0.0f;
     if (chrome_alpha_ > 0.99f) chrome_alpha_ = 1.0f;
@@ -607,12 +646,22 @@ void DisplayWindow::renderChrome(int win_w, int win_h, int out_w, int out_h) {
     // 12 % inside, a camera hole 4 % wide, spanning 90 % of the window between the bars.
     // Desktop Mode / app windows just fit under the title bar.
     if (texture_ && have_frame_) {
-        float bx, by, bw, bh;                       // bare: the chassis fills the window
-        barePicture(W, H, bx, by, bw, bh);
-        float cx, cy, cw, ch;                       // window mode: between the bars
-        chassisPicture(W, H, cx, cy, cw, ch);
-        const float px = bx + (cx - bx) * e, py = by + (cy - by) * e;
-        const float pw = bw + (cw - bw) * e, ph = bh + (ch - bh) * e;
+        float px, py, pw, ph;
+        if (grow_mode_) {
+            // The raw view, unchanged: the chassis fills the bare size, placed where the bare
+            // window was (offset by the margins once the window has grown around it).
+            const bool grown_now = grownSizeReached(win_w, win_h);
+            const float bW = grown_now ? static_cast<float>(bare_w_) : W, bH = grown_now ? static_cast<float>(bare_h_) : H;
+            barePicture(bW, bH, px, py, pw, ph);
+            if (grown_now) { px += grow_dx_; py += grow_dy_; }
+        } else {
+            float bx, by, bw, bh;                       // bare: the chassis fills the window
+            barePicture(W, H, bx, by, bw, bh);
+            float cx, cy, cw, ch;                       // window mode: between the bars
+            chassisPicture(W, H, cx, cy, cw, ch);
+            px = bx + (cx - bx) * e; py = by + (cy - by) * e;
+            pw = bw + (cw - bw) * e; ph = bh + (ch - bh) * e;
+        }
         if (isPhone()) {
             // The chassis is there in both modes, like the Mac's (doc/mirror-and-youtube.png)
             const float bezel = kBezel * pw;

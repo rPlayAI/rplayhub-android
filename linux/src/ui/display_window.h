@@ -101,6 +101,16 @@ private:
     float chrome_alpha_ = 0.0f;       // 0 = hidden, 1 = fully shown
 
     std::chrono::steady_clock::time_point chrome_clock_{};
+    // Default: the window grows around the unchanged raw view to append the bars and
+    // borders (macOS). RPLAYHUB_POPOUT_FIXED=1 keeps the window as it is and fits the
+    // bars inside instead.
+    bool grow_mode_ = true;
+    bool grown_ = false;              // asked the window manager for the grown size
+    int bare_w_ = 0, bare_h_ = 0;     // the raw view's size, which the picture keeps
+    int grown_w_ = 0, grown_h_ = 0;   // the size asked for
+    int grow_dx_ = 0, grow_dy_ = 0;   // margins added left of / above the raw view
+    bool grownSizeReached(int win_w, int win_h) const { return grown_ && win_w == grown_w_ && win_h == grown_h_; }
+    void moveResize(int w, int h, int x, int y);   // one X request, so the window does not hop
 
     int32_t display_id_;
     bool decorated_;
