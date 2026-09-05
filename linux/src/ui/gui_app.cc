@@ -294,7 +294,7 @@ void GuiApp::startMirroring(int device_idx) {
     stopMirroring();
 
     session_ = std::make_unique<AgentSession>(dev.serial);
-    session_->start(1080, 2400);
+    session_->start(session_options_);
     session_active_ = true;
     showToast("Connecting to " + dev.displayName() + "...");
 }

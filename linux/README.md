@@ -33,7 +33,7 @@ When designing the Linux client to match the macOS UI (see the macOS screenshot)
   - **Center Stage**:
     - Device title and OS status header (`Pixel 8a - Android 17 - Mirroring active`).
     - Realistic phone chassis with rounded black bezel surround and front punch-hole camera cutout.
-    - Ultra-low latency H.264 video decoding (Annex-B stream directly to FFmpeg `libavcodec` -> `swscale` -> `SDL_Texture`).
+    - Ultra-low latency H.264 / HEVC video decoding: Annex-B stream to FFmpeg `libavcodec`, decoded YUV planes uploaded straight to an `SDL_Texture` (the GPU does the colour conversion; `swscale` only for pixel formats SDL cannot take). Hardware decoders are selectable with `--decoder`.
     - Sub-pixel mouse touch mapping: click = touch down, drag = swipe, release = touch up, wheel = scroll.
     - Right-click acts as Android Back button.
     - Keyboard input forwarding (Enter, Backspace, Tab, Escape, and text input).
@@ -111,6 +111,9 @@ Options:
 | `-s`, `--scale <f>` | `RPLAYHUB_SCALE` | UI scale factor (auto-detected from the display size) |
 | `--dump-frame <path>` | | Save a BMP of the window once the mirror is showing video, then keep running |
 | `--stats` | | Print decoded / rendered frames per second to stderr every 5 s |
+| `--codec <c>` | | Video codec the agent encodes: `avc` (default), `hevc`, `vp8`, `vp9`, `av1` |
+| `--decoder <name>` | `RPLAYHUB_DECODER` | FFmpeg decoder to use, e.g. `h264_v4l2m2m` on a Raspberry Pi 4; default is the generic software decoder. A decoder that is missing or fails to open falls back to the generic one (see stderr) |
+| `--max-size WxH` | | Frame size cap passed to the agent (default `1080x2400`); `720x1600` halves the decode work |
 | | `RPLAYHUB_AGENT_DIR` | Directory holding the device agent (see above) |
 
 Run from the repository root so the agent and `linux/fonts/` are found (Roboto is the fallback).

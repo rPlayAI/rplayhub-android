@@ -27,7 +27,15 @@ public:
     explicit AgentSession(std::string serial);
     ~AgentSession();
 
-    bool start(int max_w = 1080, int max_h = 2400);
+    struct Options {
+        int max_w = 1080;           // agent --max_size
+        int max_h = 2400;
+        std::string codec = "avc";  // agent --codec: avc, hevc, vp8, vp9, av1
+        std::string decoder;        // FFmpeg decoder name; empty = generic
+    };
+
+    bool start(const Options& options);
+    bool start() { return start(Options()); }
     void stop();
 
     SessionState getState() const { return state_.load(); }
@@ -75,7 +83,9 @@ private:
     void setStatus(SessionState state, const std::string& msg);
     void addLog(const std::string& line);
 
-    void runBringup(int max_w, int max_h);
+    Options options_;
+
+    void runBringup();
     void runVideoLoop();
     void runLogLoop();
 };
