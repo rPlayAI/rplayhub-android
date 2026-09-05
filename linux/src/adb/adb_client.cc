@@ -312,6 +312,85 @@ bool AdbClient::execOut(const std::string& serial, const std::string& command, s
     return true;
 }
 
+std::string AdbClient::shellQuote(const std::string& in) {
+    std::string out = "'";
+    for (char c : in) {
+        if (c == '\'') out += "'\\''";
+        else out.push_back(c);
+    }
+    out += "'";
+    return out;
+}
+
+namespace {
+// toybox escapes spaces and other specials in names: "a\ b.txt"
+std::string lsUnescape(const std::string& in) {
+    std::string out;
+    for (size_t i = 0; i < in.size(); ++i) {
+        if (in[i] == '\\' && i + 1 < in.size()) { out.push_back(in[++i]); continue; }
+        out.push_back(in[i]);
+    }
+    return out;
+}
+
+// -rw-r--r-- 1 root root 1234 2026-08-29 11:16 name with spaces [-> target]
+bool parseLsLine(const std::string& line, DirEntry& e) {
+    std::vector<std::string> f;
+    size_t i = 0, n = line.size();
+    while (i < n && f.size() < 7) {
+        while (i < n && line[i] == ' ') ++i;
+        size_t j = i;
+        while (j < n && line[j] != ' ') ++j;
+        if (j == i) break;
+        f.push_back(line.substr(i, j - i));
+        i = j;
+    }
+    while (i < n && line[i] == ' ') ++i;
+    if (f.size() < 7 || i >= n) return false;
+    if (f[0].size() < 10 || !(f[0][0] == '-' || f[0][0] == 'd' || f[0][0] == 'l' || f[0][0] == 'c' || f[0][0] == 'b' || f[0][0] == 'p' || f[0][0] == 's')) return false;
+    std::string name = line.substr(i);
+    e.isLink = f[0][0] == 'l';
+    if (e.isLink) {
+        size_t arrow = name.find(" -> ");
+        if (arrow != std::string::npos) name = name.substr(0, arrow);
+    }
+    e.name = lsUnescape(name);
+    e.permissions = f[0];
+    e.isDirectory = f[0][0] == 'd';
+    // Character devices print "major, minor" instead of a size: field count shifts; be lenient.
+    e.size = std::atoll(f[4].c_str());
+    e.modified = f[5] + " " + f[6];
+    return !e.name.empty();
+}
+} // namespace
+
+bool AdbClient::listDirectory(const std::string& serial, const std::string& path, std::vector<DirEntry>& out) {
+    out.clear();
+    // Trailing slash so a symlink like /sdcard lists its target instead of itself.
+    std::string dir = path;
+    if (dir.empty() || dir.back() != '/') dir += '/';
+    std::string raw = shell(serial, "ls -la " + shellQuote(dir) + " 2>&1 && echo __rplayhub_ok__");
+    if (raw.find("__rplayhub_ok__") == std::string::npos) return false;
+    std::istringstream stream(raw);
+    std::string line;
+    while (std::getline(stream, line)) {
+        while (!line.empty() && (line.back() == '\r' || line.back() == '\n')) line.pop_back();
+        DirEntry e;
+        if (!parseLsLine(line, e)) continue;
+        if (e.name == "." || e.name == "..") continue;
+        out.push_back(std::move(e));
+    }
+    // Folders first, then names, case-insensitively.
+    std::sort(out.begin(), out.end(), [](const DirEntry& a, const DirEntry& b) {
+        if (a.isDirectory != b.isDirectory) return a.isDirectory;
+        std::string la = a.name, lb = b.name;
+        std::transform(la.begin(), la.end(), la.begin(), ::tolower);
+        std::transform(lb.begin(), lb.end(), lb.begin(), ::tolower);
+        return la < lb;
+    });
+    return true;
+}
+
 std::vector<std::string> AdbClient::getPackages(const std::string& serial, bool third_party_only) {
     std::string cmd = third_party_only ? "pm list packages -3" : "pm list packages";
     std::string raw = shell(serial, cmd);
