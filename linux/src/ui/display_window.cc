@@ -115,7 +115,7 @@ void DisplayWindow::cutCorners(int out_w, int out_h, float px_per_unit) {
     SDL_GetWindowSize(window_, &win_w, &win_h);
     // Bare: a big arc that follows the window. Normal window: a macOS window's ~10 pt corner.
     const float normal_r = 11.0f * chrome_.scale;
-    const float bare_r = isPhone() ? std::clamp(std::min(win_w, win_h) * 0.1f, 12.0f, 96.0f) : normal_r;
+    const float bare_r = isPhone() ? std::clamp(std::min(win_w, win_h) * 0.16f, 12.0f, 180.0f) : normal_r;
     const float r = (bare_r + (normal_r - bare_r) * chrome_alpha_) * px_per_unit;
     const int ri = static_cast<int>(std::ceil(r));
     if (ri <= 0) return;
