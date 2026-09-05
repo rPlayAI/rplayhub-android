@@ -80,8 +80,14 @@ private:
     float updateChromeAlpha(int win_w, int win_h);   // fade toward shown/hidden; returns the alpha
     void renderChrome(int win_w, int win_h, int out_w, int out_h);
     bool overChrome(int x, int y) const;
-    float titleBarHeight() const { return 40.0f * chrome_.scale; }
-    float toolbarHeight() const { return 52.0f * chrome_.scale; }
+    // Where the picture sits inside the chassis of the normal window, in window units.
+    void chassisPicture(float W, float H, float& px, float& py, float& pw, float& ph) const;
+    void moveResize(int w, int h, int x, int y);   // one request, so the window does not hop
+    // The phone's own window gets the chassis and the control strip; Desktop Mode and app
+    // windows are plain rectangles (doc/mirror-and-youtube.png) with just a title bar.
+    bool isPhone() const { return display_id_ == 0; }
+    float titleBarHeight() const { return 52.0f * chrome_.scale; }   // macOS unified-toolbar height
+    float toolbarHeight() const { return isPhone() ? 64.0f * chrome_.scale : 0.0f; }
     DisplayChrome chrome_;
     ImGuiContext* ui_ = nullptr;
     ImFont* ui_font_ = nullptr;
