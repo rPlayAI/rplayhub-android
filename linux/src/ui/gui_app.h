@@ -44,6 +44,9 @@ private:
     SDL_Texture* video_texture_ = nullptr;
     int tex_w_ = 0;
     int tex_h_ = 0;
+    FrameFormat tex_format_ = FrameFormat::NONE;
+    DecodedFrame live_frame_;          // newest decoded frame, refreshed only when the decoder has a new one
+    bool texture_dirty_ = false;
 
     // Font hierarchy
     ImFont* font_regular_ = nullptr;
