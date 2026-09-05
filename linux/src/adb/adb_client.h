@@ -4,6 +4,8 @@
 #include <string>
 #include <vector>
 #include <memory>
+#include <functional>
+#include <sys/types.h>
 
 namespace rplayhub {
 
@@ -39,8 +41,13 @@ public:
     // Open a persistent socket streaming shell stdout (e.g. for agent process)
     std::unique_ptr<TCPSocket> shellStream(const std::string& serial, const std::string& command);
 
-    // Push a file to the device
+    // Raw stdout of a command with no pty (adb exec-out); binary safe.
+    bool execOut(const std::string& serial, const std::string& command, std::vector<uint8_t>& out);
+
+    // File transfer over the adb sync service (no adb binary involved).
     bool pushFile(const std::string& serial, const std::string& local_path, const std::string& remote_path, mode_t mode = 0644);
+    bool pushBytes(const std::string& serial, const std::vector<uint8_t>& data, const std::string& remote_path, mode_t mode = 0644);
+    bool pullFile(const std::string& serial, const std::string& remote_path, const std::string& local_path, std::string* out_err = nullptr);
 
     // Get list of installed packages
     std::vector<std::string> getPackages(const std::string& serial, bool third_party_only = true);
@@ -55,7 +62,7 @@ public:
     // Take screenshot to local PNG
     bool takeScreenshot(const std::string& serial, const std::string& local_png_path);
 
-    // Install APK
+    // Install an APK: pushed to /data/local/tmp, `pm install -r`, removed again.
     bool installApk(const std::string& serial, const std::string& apk_path, std::string& out_err);
 
 private:
@@ -66,6 +73,9 @@ private:
     bool sendRequest(TCPSocket& socket, const std::string& request);
     bool expectOkay(TCPSocket& socket, std::string* out_err = nullptr);
     std::unique_ptr<TCPSocket> openTransport(const std::string& serial);
+    std::unique_ptr<TCPSocket> openSync(const std::string& serial);
+    bool syncSend(TCPSocket& sock, const std::string& remote_path, mode_t mode,
+                  const std::function<ssize_t(uint8_t*, size_t)>& read_chunk, std::string* out_err);
 };
 
 } // namespace rplayhub

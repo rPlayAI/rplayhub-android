@@ -15,6 +15,7 @@
 #include <csignal>
 #include <atomic>
 #include <unistd.h>
+#include <sys/wait.h>
 
 namespace {
 std::atomic<bool> g_quit_requested{false};
@@ -209,6 +210,10 @@ void GuiApp::cleanup() {
         SDL_DestroyTexture(video_texture_);
         video_texture_ = nullptr;
     }
+    for (auto& [key, tex] : app_icons_) {
+        if (tex) SDL_DestroyTexture(tex);
+    }
+    app_icons_.clear();
 
     ImGui_ImplSDLRenderer2_Shutdown();
     ImGui_ImplSDL2_Shutdown();
@@ -330,7 +335,158 @@ void GuiApp::refreshPackages(const std::string& serial) {
         [this, serial, gen](std::vector<std::string> pkgs) {
             if (gen != packages_gen_) return;      // a newer request superseded this one
             packages_loading_ = false;
-            if (serial == selected_serial_) packages_ = std::move(pkgs);
+            if (serial != selected_serial_) return;
+            apps_.clear();
+            for (const auto& id : pkgs) {
+                AppRow row;
+                row.id = id;
+                auto it = app_icons_.find(serial + "|" + id);
+                if (it != app_icons_.end()) row.icon = it->second;
+                apps_.push_back(std::move(row));
+            }
+            fetchAppLabels(serial, std::move(pkgs), gen);
+        });
+}
+
+// Labels and icons arrive a beat after the list: one AppLabel round trip on a worker,
+// PNGs decoded there, textures created here.
+void GuiApp::fetchAppLabels(const std::string& serial, std::vector<std::string> ids, int gen) {
+    if (ids.empty()) return;
+    app_labels_loading_ = true;
+    jobs_.run<std::vector<AppEntry>>(
+        [this, serial, ids] { return AppCatalog::fetch(adb_, serial, ids); },
+        [this, serial, gen](std::vector<AppEntry> entries) {
+            app_labels_loading_ = false;
+            if (gen != packages_gen_ || serial != selected_serial_) return;
+            std::map<std::string, const AppEntry*> by_id;
+            for (const auto& e : entries) by_id[e.id] = &e;
+            for (auto& row : apps_) {
+                auto it = by_id.find(row.id);
+                if (it == by_id.end()) continue;
+                const AppEntry& e = *it->second;
+                row.label = e.label;
+                if (!row.icon && e.icon.valid()) {
+                    SDL_Texture* tex = SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_RGBA32,
+                                                         SDL_TEXTUREACCESS_STATIC, e.icon.width, e.icon.height);
+                    if (tex) {
+                        SDL_UpdateTexture(tex, nullptr, e.icon.rgba.data(), e.icon.width * 4);
+                        SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
+                        SDL_SetTextureScaleMode(tex, SDL_ScaleModeLinear);
+                        app_icons_[serial + "|" + row.id] = tex;
+                        row.icon = tex;
+                    }
+                }
+            }
+        });
+}
+
+void GuiApp::runShellAsync(const std::string& serial, const std::string& command, const std::string& toast) {
+    jobs_.run([this, serial, command] { adb_.shell(serial, command); },
+              [this, toast] { if (!toast.empty()) showToast(toast); });
+}
+
+std::string GuiApp::downloadsDir() {
+    const char* home = std::getenv("HOME");
+    std::string dir = std::string(home ? home : ".") + "/Downloads";
+    if (::access(dir.c_str(), W_OK) != 0) dir = home ? home : ".";
+    return dir;
+}
+
+void GuiApp::installApk(const std::string& serial, const std::string& local_path) {
+    std::string name = local_path.substr(local_path.rfind('/') + 1);
+    apps_status_ = "Installing " + name + "...";
+    showToast(apps_status_, 30);
+    struct Result { bool ok = false; std::string err; };
+    jobs_.run<Result>(
+        [this, serial, local_path] { Result r; r.ok = adb_.installApk(serial, local_path, r.err); return r; },
+        [this, serial, name](Result r) {
+            apps_status_.clear();
+            if (r.ok) {
+                showToast("Installed " + name);
+                if (serial == selected_serial_) refreshPackages(serial);
+            } else {
+                showToast("Install failed: " + r.err, 8);
+                std::cerr << "install " << name << ": " << r.err << "\n";
+            }
+        });
+}
+
+// No file dialog in ImGui: use the desktop's (zenity on GNOME, kdialog on KDE), on a worker so
+// the UI keeps running. Without either, dropping an APK on the window still works.
+void GuiApp::pickAndInstallApk(const std::string& serial) {
+    jobs_.run<std::string>(
+        [] {
+            const char* cmds[] = {
+                "zenity --file-selection --title='Install APK' --file-filter='APK | *.apk' 2>/dev/null",
+                "kdialog --getopenfilename . '*.apk' 2>/dev/null",
+            };
+            for (const char* cmd : cmds) {
+                FILE* fp = popen(cmd, "r");
+                if (!fp) continue;
+                char buf[4096] = {0};
+                std::string out;
+                while (fgets(buf, sizeof(buf), fp)) out += buf;
+                int rc = pclose(fp);
+                if (rc == 0) {
+                    while (!out.empty() && (out.back() == '\n' || out.back() == '\r')) out.pop_back();
+                    return out;
+                }
+                if (WIFEXITED(rc) && WEXITSTATUS(rc) == 1) return std::string();   // cancelled
+            }
+            return std::string("!nodialog");
+        },
+        [this, serial](std::string path) {
+            if (path == "!nodialog") showToast("No file dialog available: drop an .apk onto the window", 6);
+            else if (!path.empty()) installApk(serial, path);
+        });
+}
+
+void GuiApp::exportApk(const std::string& serial, const std::string& package) {
+    std::string dest = downloadsDir() + "/" + package + ".apk";
+    showToast("Exporting " + package + "...", 30);
+    struct Result { bool ok = false; std::string err; };
+    jobs_.run<Result>(
+        [this, serial, package, dest] {
+            Result r;
+            std::string paths = adb_.shell(serial, "pm path " + package);
+            std::string base;
+            std::istringstream stream(paths);
+            std::string line;
+            while (std::getline(stream, line)) {
+                if (line.rfind("package:", 0) == 0) { base = line.substr(8); break; }
+            }
+            while (!base.empty() && (base.back() == '\r' || base.back() == '\n')) base.pop_back();
+            if (base.empty()) { r.err = "pm path returned nothing"; return r; }
+            r.ok = adb_.pullFile(serial, base, dest, &r.err);
+            return r;
+        },
+        [this, dest](Result r) {
+            if (r.ok) showToast("Saved " + dest, 6);
+            else showToast("Export failed: " + r.err, 8);
+        });
+}
+
+// A file dropped on the window: an APK installs, anything else is pushed to the Files tab's folder.
+void GuiApp::handleDroppedFile(const std::string& path) {
+    if (selected_serial_.empty()) {
+        showToast("Select a device first");
+        return;
+    }
+    std::string name = path.substr(path.rfind('/') + 1);
+    std::string lower = name;
+    std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+    if (lower.size() > 4 && lower.compare(lower.size() - 4, 4, ".apk") == 0) {
+        installApk(selected_serial_, path);
+        return;
+    }
+    std::string serial = selected_serial_;
+    std::string remote = current_remote_path_ + "/" + name;
+    showToast("Sending " + name + "...", 30);
+    jobs_.run<bool>(
+        [this, serial, path, remote] { return adb_.pushFile(serial, path, remote, 0644); },
+        [this, serial, name, remote](bool ok) {
+            showToast(ok ? "Sent " + name + " to " + remote : "Send failed: " + name, 6);
+            if (ok && serial == selected_serial_) refreshFiles(serial);
         });
 }
 
@@ -474,6 +630,11 @@ void GuiApp::run() {
                 && event.window.windowID == SDL_GetWindowID(window_)) {
                 done = true;
             }
+            if (event.type == SDL_DROPFILE && event.drop.file) {
+                std::string path = event.drop.file;
+                SDL_free(event.drop.file);
+                handleDroppedFile(path);
+            }
         }
 
         // Periodic ADB poll (off the UI thread)
@@ -530,7 +691,11 @@ void GuiApp::run() {
         // first video frame has been shown (or the session gave up).
         bool mirror_settled = !session_ || session_->getDecoder().hasFrame() ||
                               session_->getState() == SessionState::FAILED;
-        if (!dump_frame_path_.empty() && frame_count_ >= 30 && mirror_settled) {
+        if (!dump_frame_path_.empty() && mirror_settled && dump_settled_at_.time_since_epoch().count() == 0) {
+            dump_settled_at_ = std::chrono::steady_clock::now();
+        }
+        if (!dump_frame_path_.empty() && frame_count_ >= 30 && mirror_settled &&
+            std::chrono::steady_clock::now() - dump_settled_at_ > std::chrono::seconds(4)) {
             SDL_Surface* sshot = SDL_CreateRGBSurfaceWithFormat(0, win_w, win_h, 32, SDL_PIXELFORMAT_ARGB8888);
             if (sshot) {
                 if (SDL_RenderReadPixels(renderer_, NULL, SDL_PIXELFORMAT_ARGB8888, sshot->pixels, sshot->pitch) == 0) {
@@ -1342,30 +1507,33 @@ void GuiApp::renderRightInspector(float width, float height) {
         if (current_serial.empty()) {
             ImGui::TextColored(Theme::ColorTextSecondary, "No device selected");
         } else {
-            // Scrollable Packages List
-            float list_h = height - 170.0f;
-            ImGui::BeginChild("##AppList", ImVec2(width - 24.0f, list_h), false);
+            // Scrollable app list: icon, launcher label, (package)
+            float list_h = height - 175.0f * scale_;
+            ImGui::BeginChild("##AppList", ImVec2(width - 24.0f * scale_, list_h), false);
 
             std::string q = app_filter_;
             std::transform(q.begin(), q.end(), q.begin(), ::tolower);
 
             int matched_count = 0;
-            for (size_t i = 0; i < packages_.size(); ++i) {
-                const auto& pkg = packages_[i];
-                std::string lower_pkg = pkg;
-                std::transform(lower_pkg.begin(), lower_pkg.end(), lower_pkg.begin(), ::tolower);
-                if (!q.empty() && lower_pkg.find(q) == std::string::npos) continue;
+            for (size_t i = 0; i < apps_.size(); ++i) {
+                const AppRow& app = apps_[i];
+                const std::string& pkg = app.id;
+                std::string haystack = pkg + " " + app.label;
+                std::transform(haystack.begin(), haystack.end(), haystack.begin(), ::tolower);
+                if (!q.empty() && haystack.find(q) == std::string::npos) continue;
 
                 matched_count++;
-                // Derive human readable name (e.g. com.google.android.apps.bard -> Bard / Gemini)
-                std::string short_name = pkg;
-                size_t last_dot = pkg.rfind('.');
-                if (last_dot != std::string::npos && last_dot + 1 < pkg.size()) {
-                    short_name = pkg.substr(last_dot + 1);
-                    if (!short_name.empty()) short_name[0] = std::toupper(short_name[0]);
+                // Title: the launcher label; until it arrives, the last package segment.
+                std::string title = app.label;
+                if (title.empty()) {
+                    title = pkg;
+                    size_t last_dot = pkg.rfind('.');
+                    if (last_dot != std::string::npos && last_dot + 1 < pkg.size()) {
+                        title = pkg.substr(last_dot + 1);
+                        if (!title.empty()) title[0] = std::toupper(title[0]);
+                    }
                 }
 
-                // App item row: squircle icon badge + App name + (com.package.name)
                 ImGui::PushID(static_cast<int>(i));
                 ImVec2 row_pos = ImGui::GetCursorScreenPos();
                 float row_w = width - 24.0f * scale_;
@@ -1374,29 +1542,34 @@ void GuiApp::renderRightInspector(float width, float height) {
                 std::string selectable_id = "##app_row_" + std::to_string(i);
                 if (ImGui::Selectable(selectable_id.c_str(), false, ImGuiSelectableFlags_AllowDoubleClick, ImVec2(row_w, row_h))) {
                     if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
-                        // Launch app via monkey
-                        adb_.shell(current_serial, "monkey -p " + pkg + " -c android.intent.category.LAUNCHER 1");
-                        showToast("Launched " + short_name);
+                        runShellAsync(current_serial, "monkey -p " + pkg + " -c android.intent.category.LAUNCHER 1",
+                                      "Launched " + title);
                     }
                 }
 
-                // Draw App Icon Badge (squircle tile with letter/color)
+                // Icon: the real launcher icon when the device gave us one, else a lettered tile.
                 float badge_size = 22.0f * scale_;
-                Icons::drawAppBadge(draw_list, ImVec2(row_pos.x + 2.0f * scale_, row_pos.y + (row_h - badge_size) * 0.5f),
-                                   badge_size, short_name, pkg, font_bold_);
+                ImVec2 icon_tl(row_pos.x + 2.0f * scale_, row_pos.y + (row_h - badge_size) * 0.5f);
+                if (app.icon) {
+                    draw_list->AddImageRounded((ImTextureID)app.icon, icon_tl,
+                                               ImVec2(icon_tl.x + badge_size, icon_tl.y + badge_size),
+                                               ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE, 5.0f * scale_);
+                } else {
+                    Icons::drawAppBadge(draw_list, icon_tl, badge_size, title, pkg, font_bold_);
+                }
 
-                // Draw App Title & Package Name with Font Hierarchy
+                // Title & package name
                 float font_bold_size = 15.5f * scale_;
                 float font_cap_size = 12.5f * scale_;
                 float title_w = 0.0f;
                 if (font_bold_) {
                     draw_list->AddText(font_bold_, font_bold_size, ImVec2(row_pos.x + 30.0f * scale_, row_pos.y + 3.5f * scale_),
-                                       IM_COL32(28, 28, 30, 255), short_name.c_str());
-                    title_w = font_bold_->CalcTextSizeA(font_bold_size, FLT_MAX, 0.0f, short_name.c_str()).x;
+                                       IM_COL32(28, 28, 30, 255), title.c_str());
+                    title_w = font_bold_->CalcTextSizeA(font_bold_size, FLT_MAX, 0.0f, title.c_str()).x;
                 } else {
                     draw_list->AddText(ImVec2(row_pos.x + 30.0f * scale_, row_pos.y + 3.5f * scale_),
-                                       IM_COL32(28, 28, 30, 255), short_name.c_str());
-                    title_w = ImGui::CalcTextSize(short_name.c_str()).x;
+                                       IM_COL32(28, 28, 30, 255), title.c_str());
+                    title_w = ImGui::CalcTextSize(title.c_str()).x;
                 }
 
                 std::string pkg_paren = " (" + pkg + ")";
@@ -1408,32 +1581,66 @@ void GuiApp::renderRightInspector(float width, float height) {
                                        IM_COL32(142, 142, 147, 255), pkg_paren.c_str());
                 }
 
-                // Context Menu with Icons
                 if (ImGui::BeginPopupContextItem()) {
-                    if (MenuItemWithIcon("Launch App", nullptr, Icons::drawScreen, scale_)) {
-                        adb_.shell(current_serial, "monkey -p " + pkg + " -c android.intent.category.LAUNCHER 1");
-                        showToast("Launched " + short_name);
+                    if (MenuItemWithIcon("Launch", nullptr, Icons::drawScreen, scale_)) {
+                        runShellAsync(current_serial, "monkey -p " + pkg + " -c android.intent.category.LAUNCHER 1",
+                                      "Launched " + title);
                     }
-                    if (MenuItemWithIcon("Force Stop", nullptr, Icons::drawDisconnect, scale_)) {
-                        adb_.shell(current_serial, "am force-stop " + pkg);
-                        showToast("Stopped " + short_name);
+                    if (MenuItemWithIcon("Force Stop", nullptr, Icons::drawPower, scale_)) {
+                        runShellAsync(current_serial, "am force-stop " + pkg, "Stopped " + title);
                     }
-                    if (MenuItemWithIcon("Uninstall", nullptr, Icons::drawDisconnect, scale_)) {
-                        adb_.shell(current_serial, "pm uninstall " + pkg);
-                        refreshPackages(current_serial);
+                    ImGui::Separator();
+                    if (MenuItemWithIcon("Export APK...", nullptr, Icons::drawFile, scale_)) {
+                        exportApk(current_serial, pkg);
+                    }
+                    if (MenuItemWithIcon("Uninstall...", nullptr, Icons::drawDisconnect, scale_)) {
+                        pending_uninstall_ = pkg;
+                        open_uninstall_popup_ = true;
                     }
                     ImGui::EndPopup();
                 }
 
                 ImGui::PopID();
             }
+            if (apps_.empty()) {
+                ImGui::TextColored(Theme::ColorTextSecondary, packages_loading_ ? "Loading apps..." : "No apps");
+            }
 
             ImGui::EndChild();
+
+            // Uninstall confirmation
+            if (open_uninstall_popup_) {
+                ImGui::OpenPopup("Uninstall app?");
+                open_uninstall_popup_ = false;
+            }
+            if (ImGui::BeginPopupModal("Uninstall app?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+                ImGui::Text("Uninstall %s from the device?", pending_uninstall_.c_str());
+                ImGui::Spacing();
+                if (ImGui::Button("Uninstall", ImVec2(110 * scale_, 0))) {
+                    std::string serial = current_serial, pkg = pending_uninstall_;
+                    jobs_.run<std::string>(
+                        [this, serial, pkg] { return adb_.shell(serial, "pm uninstall " + pkg); },
+                        [this, serial, pkg](std::string out) {
+                            bool ok = out.find("Success") != std::string::npos;
+                            showToast(ok ? "Uninstalled " + pkg : "Uninstall failed: " + out, 6);
+                            if (serial == selected_serial_) refreshPackages(serial);
+                        });
+                    pending_uninstall_.clear();
+                    ImGui::CloseCurrentPopup();
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Cancel", ImVec2(90 * scale_, 0))) {
+                    pending_uninstall_.clear();
+                    ImGui::CloseCurrentPopup();
+                }
+                ImGui::EndPopup();
+            }
 
             // Bottom Apps Controls
             ImGui::SetCursorPosY(height - 80.0f * scale_);
             std::ostringstream pkg_cnt;
-            pkg_cnt << matched_count << " packages";
+            if (!apps_status_.empty()) pkg_cnt << apps_status_;
+            else pkg_cnt << matched_count << " packages" << (app_labels_loading_ ? ", loading icons..." : "");
             if (font_caption_) ImGui::PushFont(font_caption_);
             ImGui::TextColored(Theme::ColorTextSecondary, "%s", pkg_cnt.str().c_str());
             if (font_caption_) ImGui::PopFont();
@@ -1443,7 +1650,7 @@ void GuiApp::renderRightInspector(float width, float height) {
             }
             ImGui::SameLine(width - 135.0f * scale_);
             if (ImGui::Button("Install APK...", ImVec2(110.0f * scale_, 24.0f * scale_))) {
-                showToast("Drop APK file or use terminal");
+                pickAndInstallApk(current_serial);
             }
 
             // Bottom filter bar with Search Icon

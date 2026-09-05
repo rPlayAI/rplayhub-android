@@ -1,4 +1,7 @@
 #include "adb_client.h"
+#include <iostream>
+#include <ctime>
+#include <cstring>
 
 #include <cstdio>
 #include <cstdlib>
@@ -177,26 +180,136 @@ std::unique_ptr<TCPSocket> AdbClient::shellStream(const std::string& serial, con
     return sock;
 }
 
-bool AdbClient::pushFile(const std::string& serial, const std::string& local_path, const std::string& remote_path, mode_t mode) {
-    // We execute adb push via fork/exec
-    pid_t pid = fork();
-    if (pid == 0) {
-        execlp("adb", "adb", "-s", serial.c_str(), "push", local_path.c_str(), remote_path.c_str(), (char*)nullptr);
-        _exit(127);
-    }
-    if (pid < 0) return false;
+// ---- sync service: SEND / RECV, little-endian ids and lengths ----
 
-    int status = 0;
-    waitpid(pid, &status, 0);
-    if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
-        if (mode != 0644) {
-            char mode_str[32];
-            std::snprintf(mode_str, sizeof(mode_str), "%o", static_cast<unsigned>(mode));
-            shell(serial, "chmod " + std::string(mode_str) + " " + remote_path);
-        }
-        return true;
+namespace {
+void putU32(std::vector<uint8_t>& v, uint32_t x) {
+    v.push_back(x & 0xFF); v.push_back((x >> 8) & 0xFF); v.push_back((x >> 16) & 0xFF); v.push_back((x >> 24) & 0xFF);
+}
+uint32_t getU32(const uint8_t* p) {
+    return p[0] | (p[1] << 8) | (p[2] << 16) | (static_cast<uint32_t>(p[3]) << 24);
+}
+} // namespace
+
+std::unique_ptr<TCPSocket> AdbClient::openSync(const std::string& serial) {
+    auto sock = openTransport(serial);
+    if (!sock) return nullptr;
+    if (!sendRequest(*sock, "sync:") || !expectOkay(*sock)) return nullptr;
+    return sock;
+}
+
+bool AdbClient::syncSend(TCPSocket& sock, const std::string& remote_path, mode_t mode,
+                         const std::function<ssize_t(uint8_t*, size_t)>& read_chunk, std::string* out_err) {
+    std::string spec = remote_path + "," + std::to_string(static_cast<unsigned>(mode));
+    std::vector<uint8_t> msg = {'S', 'E', 'N', 'D'};
+    putU32(msg, static_cast<uint32_t>(spec.size()));
+    msg.insert(msg.end(), spec.begin(), spec.end());
+    if (!sock.writeAll(msg.data(), msg.size())) return false;
+
+    std::vector<uint8_t> chunk(64 * 1024 + 8);
+    while (true) {
+        ssize_t n = read_chunk(chunk.data() + 8, 64 * 1024);
+        if (n < 0) return false;
+        if (n == 0) break;
+        chunk[0] = 'D'; chunk[1] = 'A'; chunk[2] = 'T'; chunk[3] = 'A';
+        uint32_t len = static_cast<uint32_t>(n);
+        chunk[4] = len & 0xFF; chunk[5] = (len >> 8) & 0xFF; chunk[6] = (len >> 16) & 0xFF; chunk[7] = (len >> 24) & 0xFF;
+        if (!sock.writeAll(chunk.data(), 8 + n)) return false;
+    }
+    std::vector<uint8_t> done = {'D', 'O', 'N', 'E'};
+    putU32(done, static_cast<uint32_t>(time(nullptr)));
+    if (!sock.writeAll(done.data(), done.size())) return false;
+
+    uint8_t reply[8];
+    if (!sock.readFully(reply, 8)) return false;
+    if (memcmp(reply, "OKAY", 4) == 0) return true;
+    if (memcmp(reply, "FAIL", 4) == 0 && out_err) {
+        uint32_t len = getU32(reply + 4);
+        std::string err(len, '\0');
+        if (len && sock.readFully(err.data(), len)) *out_err = err;
     }
     return false;
+}
+
+bool AdbClient::pushFile(const std::string& serial, const std::string& local_path, const std::string& remote_path, mode_t mode) {
+    FILE* fp = fopen(local_path.c_str(), "rb");
+    if (!fp) return false;
+    auto sock = openSync(serial);
+    if (!sock) { fclose(fp); return false; }
+    std::string err;
+    bool ok = syncSend(*sock, remote_path, mode, [fp](uint8_t* buf, size_t max) -> ssize_t {
+        size_t n = fread(buf, 1, max, fp);
+        if (n == 0 && ferror(fp)) return -1;
+        return static_cast<ssize_t>(n);
+    }, &err);
+    fclose(fp);
+    if (!ok && !err.empty()) std::cerr << "adb push " << remote_path << ": " << err << "\n";
+    return ok;
+}
+
+bool AdbClient::pushBytes(const std::string& serial, const std::vector<uint8_t>& data, const std::string& remote_path, mode_t mode) {
+    auto sock = openSync(serial);
+    if (!sock) return false;
+    size_t offset = 0;
+    std::string err;
+    bool ok = syncSend(*sock, remote_path, mode, [&](uint8_t* buf, size_t max) -> ssize_t {
+        size_t n = std::min(max, data.size() - offset);
+        memcpy(buf, data.data() + offset, n);
+        offset += n;
+        return static_cast<ssize_t>(n);
+    }, &err);
+    if (!ok && !err.empty()) std::cerr << "adb push " << remote_path << ": " << err << "\n";
+    return ok;
+}
+
+bool AdbClient::pullFile(const std::string& serial, const std::string& remote_path, const std::string& local_path, std::string* out_err) {
+    auto sock = openSync(serial);
+    if (!sock) { if (out_err) *out_err = "adb server not reachable"; return false; }
+    std::vector<uint8_t> msg = {'R', 'E', 'C', 'V'};
+    putU32(msg, static_cast<uint32_t>(remote_path.size()));
+    msg.insert(msg.end(), remote_path.begin(), remote_path.end());
+    if (!sock->writeAll(msg.data(), msg.size())) return false;
+
+    FILE* fp = fopen(local_path.c_str(), "wb");
+    if (!fp) { if (out_err) *out_err = "cannot write " + local_path; return false; }
+    bool ok = false;
+    std::vector<uint8_t> buf;
+    while (true) {
+        uint8_t hdr[8];
+        if (!sock->readFully(hdr, 8)) break;
+        uint32_t len = getU32(hdr + 4);
+        if (memcmp(hdr, "DATA", 4) == 0) {
+            buf.resize(len);
+            if (len && !sock->readFully(buf.data(), len)) break;
+            if (len && fwrite(buf.data(), 1, len, fp) != len) break;
+        } else if (memcmp(hdr, "DONE", 4) == 0) {
+            ok = true;
+            break;
+        } else if (memcmp(hdr, "FAIL", 4) == 0) {
+            std::string err(len, '\0');
+            if (len && sock->readFully(err.data(), len) && out_err) *out_err = err;
+            break;
+        } else {
+            break;
+        }
+    }
+    fclose(fp);
+    if (!ok) unlink(local_path.c_str());
+    return ok;
+}
+
+bool AdbClient::execOut(const std::string& serial, const std::string& command, std::vector<uint8_t>& out) {
+    out.clear();
+    auto sock = openTransport(serial);
+    if (!sock) return false;
+    if (!sendRequest(*sock, "exec:" + command) || !expectOkay(*sock)) return false;
+    uint8_t buf[65536];
+    while (true) {
+        ssize_t n = sock->read(buf, sizeof(buf));
+        if (n <= 0) break;
+        out.insert(out.end(), buf, buf + n);
+    }
+    return true;
 }
 
 std::vector<std::string> AdbClient::getPackages(const std::string& serial, bool third_party_only) {
@@ -269,22 +382,15 @@ bool AdbClient::takeScreenshot(const std::string& serial, const std::string& loc
 }
 
 bool AdbClient::installApk(const std::string& serial, const std::string& apk_path, std::string& out_err) {
-    std::string cmd = "adb -s " + serial + " install -r " + apk_path;
-    FILE* fp = popen(cmd.c_str(), "r");
-    if (!fp) {
-        out_err = "Failed to run adb install";
+    std::string remote = "/data/local/tmp/rplayhub-install-" + std::to_string(getpid()) + ".apk";
+    if (!pushFile(serial, apk_path, remote, 0644)) {
+        out_err = "push failed";
         return false;
     }
-    char buf[512];
-    std::string output;
-    while (fgets(buf, sizeof(buf), fp)) {
-        output += buf;
-    }
-    int code = pclose(fp);
-    if (code == 0 && output.find("Success") != std::string::npos) {
-        return true;
-    }
-    out_err = output;
+    std::string output = shell(serial, "pm install -r -t '" + remote + "'; rm -f '" + remote + "'");
+    if (output.find("Success") != std::string::npos) return true;
+    while (!output.empty() && (output.back() == '\n' || output.back() == '\r')) output.pop_back();
+    out_err = output.empty() ? "pm install failed" : output;
     return false;
 }
 
