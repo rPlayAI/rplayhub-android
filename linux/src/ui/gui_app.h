@@ -7,6 +7,7 @@
 #include "session/emulator_launcher.h"
 #include "util/async_jobs.h"
 #include "ui/display_window.h"
+#include "ui/twin_view.h"
 #include <deque>
 #include <set>
 #include "imgui.h"
@@ -39,6 +40,7 @@ public:
     void setStartupDesktop(bool on) { startup_desktop_ = on; }
     void setStartupApp(const std::string& package) { startup_app_ = package; }
     void setStartupPopOut(bool on) { startup_pop_out_ = on; }
+    void setStartupTwin(bool on) { startup_twin_ = on; }
 
     bool init();
     void run();
@@ -47,6 +49,7 @@ public:
 private:
     bool auto_mirror_ = false;
     float scale_ = 0.0f;
+    float menu_h_ = 0.0f;                // height of the menu bar this frame
     std::string dump_frame_path_;
     std::chrono::steady_clock::time_point dump_settled_at_;
     std::string preferred_serial_;
@@ -128,6 +131,13 @@ private:
     std::set<std::string> avd_starting_;                // names launched, not yet listed by adb
     std::map<std::string, std::string> emulator_names_; // adb serial -> AVD name, asked once per serial
 
+    // The 3D twin
+    TwinView twin_;
+    bool twin_mode_ = false;
+    SDL_Texture* back_texture_ = nullptr;
+    bool back_texture_tried_ = false;
+    bool startup_twin_ = false;
+
     // Clipboard sync (both ways, on by default): device changes land on the host clipboard,
     // host changes are pushed on a one-second poll (SDL has no reliable clipboard event on X11).
     bool clipboard_sync_ = true;
@@ -170,6 +180,7 @@ private:
 
     // Touch & input tracking
     bool is_touch_active_ = false;
+    int last_touch_x_ = 0, last_touch_y_ = 0;
     ImVec2 last_mouse_pos_{0, 0};
 
     // Notification toast
@@ -220,12 +231,16 @@ private:
     static std::string timestampName(const std::string& model, const char* ext);
 
     // Render components
+    void renderMenuBar();
     void renderLeftSidebar(float width, float height);
     void renderCenterStage(float start_x, float width, float height);
     void renderRightInspector(float width, float height);
 
     void renderPhoneMockup(ImVec2 center, ImVec2 max_size);
     void renderLiveMirror(ImVec2 origin, ImVec2 size, const DecodedFrame& frame);
+    void uploadLiveTexture(const DecodedFrame& frame);
+    void renderTwin(ImVec2 origin, ImVec2 size, const DecodedFrame& frame);
+    void loadBackTexture();
     void renderControlStrip(ImVec2 pos, float width);
 
     void handleTouchInput(ImVec2 img_pos, ImVec2 img_size, int dev_w, int dev_h, int quadrants);

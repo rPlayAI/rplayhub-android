@@ -13,8 +13,13 @@ struct RgbaImage {
     bool valid() const { return width > 0 && height > 0 && !rgba.empty(); }
 };
 
-// Decode a PNG (or anything else libavcodec can sniff from a single packet)
-// to straight RGBA using the FFmpeg we already link; no extra image library.
+// Decode a PNG or JPEG to straight RGBA using the FFmpeg we already link;
+// no extra image library.
 RgbaImage decodePngToRgba(const uint8_t* data, size_t size);
+
+// Clear a light photo backdrop to transparent: a flood fill from the borders through
+// everything lighter than the phone, with alpha ramping through the anti-aliased rim, so a
+// white flash inside the phone survives. No-op when a corner is already transparent.
+void removeLightBackground(RgbaImage& img);
 
 } // namespace rplayhub
