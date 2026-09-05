@@ -476,24 +476,29 @@ float DisplayWindow::updateChromeAlpha(int win_w, int win_h) {
     const bool maximized = SDL_GetWindowFlags(window_) & SDL_WINDOW_MAXIMIZED;
     if (have_frame_ && tex_w_ > 0 && tex_h_ > 0 && !maximized) {
         const float aspect = static_cast<float>(tex_w_) / tex_h_;
-        auto resize = [this, wx, wy](int w, int h) {
+        // The picture itself must not move on screen: the window grows around it, so it
+        // moves up and left by the bars and margins that appear above and beside the picture,
+        // and back again when they go.
+        auto resize = [this](int w, int h, int x, int y) {
             SDL_SetWindowSize(window_, w, h);
-            SDL_SetWindowPosition(window_, wx, wy);   // the window manager may otherwise re-place it
-            if (std::getenv("RPLAYHUB_INPUT_DEBUG")) std::cerr << "display window " << display_id_ << ": resized to " << w << "x" << h << "\n";
+            SDL_SetWindowPosition(window_, x, y);
+            if (std::getenv("RPLAYHUB_INPUT_DEBUG")) std::cerr << "display window " << display_id_ << ": resized to " << w << "x" << h << " at " << x << "," << y << "\n";
         };
         // Mac proportions: the chassis (screen + 4.5 % bezel each side) spans 90 % of the
-        // window's width and touches the bars, so the picture keeps its size and the window
-        // grows around it, right and down.
+        // window's width and touches the bars, so the picture keeps its size.
         if (target > 0.5f && !normal_sized_) {
             bare_w_ = win_w;
             bare_h_ = win_h;
             const float pw = static_cast<float>(win_w), bezel = kBezel * pw;
             const int w = static_cast<int>(std::lround((pw + 2.0f * bezel) / kChassisSpan));
             const int h = static_cast<int>(std::lround(titleBarHeight() + pw / aspect + 2.0f * bezel + 2.0f * kChassisGap * chrome_.scale + toolbarHeight()));
-            resize(w, h);
+            grow_dx_ = (w - win_w) / 2;
+            grow_dy_ = static_cast<int>(std::lround(titleBarHeight() + bezel + kChassisGap * chrome_.scale));
+            resize(w, h, wx - grow_dx_, wy - grow_dy_);
             normal_sized_ = true;
         } else if (target < 0.5f && normal_sized_ && chrome_alpha_ == 0.0f) {
-            resize(bare_w_ > 0 ? bare_w_ : win_w, bare_h_ > 0 ? bare_h_ : static_cast<int>(std::lround(win_w / aspect)));
+            resize(bare_w_ > 0 ? bare_w_ : win_w, bare_h_ > 0 ? bare_h_ : static_cast<int>(std::lround(win_w / aspect)),
+                   wx + grow_dx_, wy + grow_dy_);
             normal_sized_ = false;
         }
     }
