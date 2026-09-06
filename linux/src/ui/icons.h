@@ -516,9 +516,9 @@ inline void DrawImageTurned(ImDrawList* dl, ImTextureID tex, ImVec2 p_min, ImVec
 
 // A macOS-style switch (NSSwitch): a pill track, accent blue when on, with a white knob that
 // slides over. Returns true when toggled. The label sits to the right, as in System Settings.
-inline bool ToggleSwitch(const char* label, bool* on, float scale = 1.0f) {
-    ImGui::PushID(label);
-    const float h = 22.0f * scale, w = 38.0f * scale;
+inline bool ToggleSwitchBare(const char* id, bool* on, float scale = 1.0f, float w = 38.0f, float h = 22.0f) {
+    ImGui::PushID(id);
+    w *= scale; h *= scale;
     ImVec2 p = ImGui::GetCursorScreenPos();
     const bool clicked = ImGui::InvisibleButton("##switch", ImVec2(w, h));
     if (clicked) *on = !*on;
@@ -539,11 +539,58 @@ inline bool ToggleSwitch(const char* label, bool* on, float scale = 1.0f) {
     const ImVec2 c(p.x + h * 0.5f + (w - h) * t, p.y + h * 0.5f);
     dl->AddCircleFilled(ImVec2(c.x, c.y + 1.0f * scale), r, IM_COL32(0, 0, 0, 40), 24);   // soft shadow
     dl->AddCircleFilled(c, r, IM_COL32(255, 255, 255, 255), 24);
+    ImGui::PopID();
+    return clicked;
+}
+
+inline bool ToggleSwitch(const char* label, bool* on, float scale = 1.0f) {
+    const bool clicked = ToggleSwitchBare(label, on, scale);
     ImGui::SameLine(0, 10.0f * scale);
     ImGui::AlignTextToFramePadding();
     ImGui::TextUnformatted(label);
-    ImGui::PopID();
     return clicked;
+}
+
+// Small gray glyphs for the Settings rows, after the Mac's SF symbols (hand.tap,
+// cursorarrow.motionlines, speedometer, bolt, macwindow, rectangle.2.swap, timer).
+inline void drawSettingGlyph(ImDrawList* dl, int which, ImVec2 pos, float size, ImU32 col) {
+    const float t = std::max(1.2f, size * 0.09f);
+    const ImVec2 c(pos.x + size * 0.5f, pos.y + size * 0.5f);
+    switch (which) {
+    case 0:   // hand.tap: a fingertip dot with two arcs above it
+        dl->AddCircleFilled(ImVec2(c.x, c.y + size * 0.2f), size * 0.16f, col, 16);
+        dl->PathArcTo(ImVec2(c.x, c.y + size * 0.2f), size * 0.32f, 3.5f, 5.9f, 16); dl->PathStroke(col, 0, t);
+        dl->PathArcTo(ImVec2(c.x, c.y + size * 0.2f), size * 0.46f, 3.6f, 5.8f, 16); dl->PathStroke(col, 0, t);
+        break;
+    case 1: { // cursorarrow.motionlines: an arrow with two speed lines
+        const ImVec2 a(pos.x + size * 0.35f, pos.y + size * 0.1f);
+        dl->AddTriangleFilled(a, ImVec2(a.x, a.y + size * 0.7f), ImVec2(a.x + size * 0.5f, a.y + size * 0.5f), col);
+        dl->AddLine(ImVec2(pos.x, pos.y + size * 0.35f), ImVec2(pos.x + size * 0.22f, pos.y + size * 0.35f), col, t);
+        dl->AddLine(ImVec2(pos.x, pos.y + size * 0.55f), ImVec2(pos.x + size * 0.22f, pos.y + size * 0.55f), col, t);
+        break; }
+    case 2:   // speedometer: a gauge arc and a needle
+        dl->PathArcTo(ImVec2(c.x, c.y + size * 0.1f), size * 0.42f, 3.3f, 6.1f, 20); dl->PathStroke(col, 0, t);
+        dl->AddLine(ImVec2(c.x, c.y + size * 0.1f), ImVec2(c.x + size * 0.25f, c.y - size * 0.2f), col, t);
+        break;
+    case 3: { // bolt
+        const ImVec2 pts[7] = { ImVec2(c.x + size * 0.1f, pos.y), ImVec2(pos.x + size * 0.28f, c.y + size * 0.05f), ImVec2(c.x, c.y + size * 0.05f),
+                                ImVec2(c.x - size * 0.1f, pos.y + size), ImVec2(pos.x + size * 0.72f, c.y - size * 0.05f), ImVec2(c.x, c.y - size * 0.05f), ImVec2(c.x + size * 0.1f, pos.y) };
+        dl->AddPolyline(pts, 7, col, ImDrawFlags_Closed, t);
+        break; }
+    case 4:   // macwindow: a frame with a title strip
+        dl->AddRect(pos, ImVec2(pos.x + size, pos.y + size * 0.8f), col, size * 0.12f, 0, t);
+        dl->AddLine(ImVec2(pos.x, pos.y + size * 0.25f), ImVec2(pos.x + size, pos.y + size * 0.25f), col, t);
+        break;
+    case 5:   // rectangle.2.swap: two offset rectangles
+        dl->AddRect(pos, ImVec2(pos.x + size * 0.6f, pos.y + size * 0.6f), col, size * 0.08f, 0, t);
+        dl->AddRect(ImVec2(pos.x + size * 0.4f, pos.y + size * 0.4f), ImVec2(pos.x + size, pos.y + size), col, size * 0.08f, 0, t);
+        break;
+    default:  // timer: a dial with a hand and a stem
+        dl->AddCircle(ImVec2(c.x, c.y + size * 0.08f), size * 0.4f, col, 20, t);
+        dl->AddLine(ImVec2(c.x, c.y + size * 0.08f), ImVec2(c.x, c.y - size * 0.2f), col, t);
+        dl->AddLine(ImVec2(c.x - size * 0.12f, pos.y), ImVec2(c.x + size * 0.12f, pos.y), col, t);
+        break;
+    }
 }
 
 // Helper to render flat, transparent navigation icon button matching macOS bottom bar

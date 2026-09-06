@@ -1102,7 +1102,13 @@ void GuiApp::renderMenuBar() {
         // The device pill: name over serial, like the Mac's toolbar
         ImVec2 pill_pos(ImGui::GetCursorScreenPos().x + 10.0f * scale_, 5.0f * scale_);
         std::string name = have_device ? devices_[selected_device_idx_].displayName() : "No device";
+        // The Mac's newer toolbar puts "Android <version>" under the name; the serial stands
+        // in until the version is known.
         std::string serial = have_device ? devices_[selected_device_idx_].serial : "";
+        if (have_device) {
+            auto rel = device_release_.find(serial);
+            if (rel != device_release_.end()) serial = "Android " + rel->second;
+        }
         float name_w = font_medium_ ? font_medium_->CalcTextSizeA(14.0f * scale_, FLT_MAX, 0, name.c_str()).x : ImGui::CalcTextSize(name.c_str()).x;
         float serial_w = font_caption_ ? font_caption_->CalcTextSizeA(11.5f * scale_, FLT_MAX, 0, serial.c_str()).x : 0;
         float pill_w = std::max(name_w, serial_w) + 24.0f * scale_;
@@ -3158,13 +3164,26 @@ void GuiApp::renderRightInspector(float width, float height) {
             ImGui::TextColored(Theme::ColorTextSecondary, "Developer options on the device");
             if (font_caption_) ImGui::PopFont();
             ImGui::Spacing();
+            // Rows like the Mac's: glyph and label at the left, the switch at the right edge
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            const float row_h = 27.0f * scale_, sw_w = 34.0f, sw_h = 19.0f;
             for (int i = 0; i < 7; ++i) {
                 const DevToggle& t = kDevToggles[i];
                 const int st = i < static_cast<int>(dev_toggle_state_.size()) ? dev_toggle_state_[i] : -1;
                 bool on = st < 0 ? t.default_on : st == 1;
                 ImGui::PushID(i);
-                ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 4.0f * scale_);
-                if (ToggleSwitch(t.label, &on, scale_)) setDevToggle(current_serial, i, on);
+                const ImVec2 row = ImGui::GetCursorScreenPos();
+                const float glyph = 15.0f * scale_;
+                drawSettingGlyph(dl, i, ImVec2(row.x, row.y + (row_h - glyph) * 0.5f), glyph, IM_COL32(120, 120, 126, 255));
+                if (font_caption_) {
+                    draw_list->AddText(font_caption_, 13.5f * scale_, ImVec2(row.x + 24.0f * scale_, row.y + (row_h - 13.5f * scale_) * 0.5f),
+                                       IM_COL32(28, 28, 30, 255), t.label);
+                } else {
+                    dl->AddText(ImVec2(row.x + 24.0f * scale_, row.y + 6.0f * scale_), IM_COL32(28, 28, 30, 255), t.label);
+                }
+                ImGui::SetCursorScreenPos(ImVec2(row.x + width - 24.0f * scale_ - sw_w * scale_, row.y + (row_h - sw_h * scale_) * 0.5f));
+                if (ToggleSwitchBare(t.key, &on, scale_, sw_w, sw_h)) setDevToggle(current_serial, i, on);
+                ImGui::SetCursorScreenPos(ImVec2(row.x, row.y + row_h));
                 ImGui::PopID();
             }
             if (dev_toggles_loading_) ImGui::TextColored(Theme::ColorTextTertiary, "Reading current values...");
