@@ -1666,6 +1666,18 @@ void GuiApp::maintainSession() {
     }
     if (st != SessionState::STOPPED && st != SessionState::FAILED) return;
 
+    // The device itself is gone (unplugged, off the network): its last frame must not stay on
+    // screen as if it were live. The stage falls back to the mockup and the pop-out goes dark
+    // while the reconnect loop keeps waiting for the device to come back.
+    bool listed_ready = false;
+    for (const auto& d : devices_) if (d.serial == session_serial_ && d.isReady()) listed_ready = true;
+    if (!listed_ready && !live_frame_.empty()) {
+        live_frame_ = DecodedFrame();
+        texture_dirty_ = false;
+        for (auto& dw : display_windows_) if (dw->displayId() == 0) dw->clearPicture();
+        std::cerr << "session: device no longer listed; dropping its last frame\n";
+    }
+
     if (!reconnect_pending_) {
         // A failure during bring-up (agent missing, adb refused) will not fix itself; a stream
         // that ended usually will. Bound both.
