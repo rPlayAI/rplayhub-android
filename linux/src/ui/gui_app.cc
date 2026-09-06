@@ -1906,8 +1906,10 @@ void GuiApp::renderLeftSidebar(float width, float height) {
         if (!connect_status_msg_.empty()) {
             ImGui::TextColored(ImVec4(0.8f, 0.2f, 0.2f, 1.0f), "%s", connect_status_msg_.c_str());
         }
-        if (connect_inflight_) ImGui::BeginDisabled();
-        if (ImGui::Button(connect_inflight_ ? "Connecting..." : "Connect", ImVec2(100 * scale_, 0))) {
+        // Decide once per frame: the click below flips the flag, and Begin/End must pair.
+        const bool connecting = connect_inflight_;
+        if (connecting) ImGui::BeginDisabled();
+        if (ImGui::Button(connecting ? "Connecting..." : "Connect", ImVec2(100 * scale_, 0))) {
             connect_inflight_ = true;
             connect_status_msg_.clear();
             std::string address = connect_ip_buf_;
@@ -1925,7 +1927,7 @@ void GuiApp::renderLeftSidebar(float width, float height) {
                     }
                 });
         }
-        if (connect_inflight_) ImGui::EndDisabled();   // was missing: ImGui asserted on the next frame
+        if (connecting) ImGui::EndDisabled();
         ImGui::SameLine();
         if (ImGui::Button("Cancel", ImVec2(80 * scale_, 0))) {
             show_connect_popup_ = false;
