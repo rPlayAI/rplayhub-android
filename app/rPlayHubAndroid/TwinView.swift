@@ -228,18 +228,32 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
     private func buildScene(displaySize: CGSize) -> SCNScene {
         let scene = SCNScene()
         scene.background.contents = Self.studioBackdrop()   // a soft spotlight, premium on camera
+        let built = Self.makePhone(displaySize: displaySize)
+        scene.rootNode.addChildNode(built.node)
+        phoneNode = built.node
+        screenMaterial = built.screen
+        addCameraAndLights(scene)
+        return scene
+    }
 
+    /// The phone itself — body, glass panel, and the back — as a free-standing node, so the same
+    /// device can stand in the live twin and in the hero renderer (HeroComposer) alike. The
+    /// panel's material is returned for the caller to paint the live frame onto.
+    /// `bezel` is the body's width over the panel's (1.06 = a slim bezel); `shell` the body's
+    /// grey. The hero renderer asks for a wider, lighter frame so the rails read on camera.
+    static func makePhone(displaySize: CGSize, bezel: CGFloat = 1.06,
+                          shell shellWhite: CGFloat = 0.13) -> (node: SCNNode, screen: SCNMaterial) {
         let aspect = displaySize.width > 0 && displaySize.height > 0
             ? displaySize.width / displaySize.height
             : 9.0 / 19.5
         let bodyHeight: CGFloat = 1.5
-        let bodyWidth = bodyHeight * aspect * 1.06        // a slim bezel beyond the panel
+        let bodyWidth = bodyHeight * aspect * bezel       // a slim bezel beyond the panel
         let bodyDepth = bodyWidth * 0.10
 
         let body = SCNBox(width: bodyWidth, height: bodyHeight, length: bodyDepth,
                           chamferRadius: bodyWidth * 0.07)
         let shell = SCNMaterial()
-        shell.diffuse.contents = NSColor(calibratedWhite: 0.13, alpha: 1)
+        shell.diffuse.contents = NSColor(calibratedWhite: shellWhite, alpha: 1)
         shell.specular.contents = NSColor(calibratedWhite: 0.6, alpha: 1)
         shell.shininess = 0.6
         body.materials = [shell]
@@ -258,12 +272,12 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
         panelNode.name = "panel"           // hit-tested for touch input (TwinSCNView)
         panelNode.position = SCNVector3(0, 0, bodyDepth / 2 + 0.002)
         phone.addChildNode(panelNode)
-        screenMaterial = screen
 
         // A camera-hole dot, purely so the top of the device reads as "top" from any angle.
-        let dot = SCNNode(geometry: SCNSphere(radius: bodyWidth * 0.022))
+        // Centred, just under the top edge, where a Pixel's punch hole sits.
+        let dot = SCNNode(geometry: SCNSphere(radius: bodyWidth * 0.018))
         dot.geometry?.firstMaterial?.diffuse.contents = NSColor.black
-        dot.position = SCNVector3(0, bodyHeight * 0.44, bodyDepth / 2 + 0.004)
+        dot.position = SCNVector3(0, bodyHeight * 0.47, bodyDepth / 2 + 0.004)
         phone.addChildNode(dot)
 
         // A user-supplied back image wins: texture it straight onto the back face so the twin
@@ -282,10 +296,7 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
             backNode.position = SCNVector3(0, 0, -bodyDepth / 2 - 0.001)
             backNode.eulerAngles = SCNVector3(0, CGFloat.pi, 0)   // face out the back
             phone.addChildNode(backNode)
-            scene.rootNode.addChildNode(phone)
-            phoneNode = phone
-            addCameraAndLights(scene)
-            return scene
+            return (phone, screen)
         }
 
         // The camera bar across the back — the Pixel's signature, and it makes the back a back
@@ -340,11 +351,7 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
         gNode.position = SCNVector3(0, -bodyHeight * 0.05, -bodyDepth / 2 - 0.001)   // near centre
         gNode.eulerAngles = SCNVector3(0, CGFloat.pi, 0)   // turn to face out the back
         phone.addChildNode(gNode)
-
-        scene.rootNode.addChildNode(phone)
-        phoneNode = phone
-        addCameraAndLights(scene)
-        return scene
+        return (phone, screen)
     }
 
     /// A radial studio backdrop — a pool of light behind the phone fading to near-black at the
@@ -505,7 +512,12 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
         geometryLock.lock()
         let quadrants = textureQuadrants
         geometryLock.unlock()
+        return Self.panelTransform(quadrants: quadrants)
+    }
 
+    /// The counter-rotation for a picture arriving `quadrants` quarter-turns from the panel's
+    /// own orientation. Shared with the hero renderer, which paints the same frames.
+    static func panelTransform(quadrants: Int) -> SCNMatrix4 {
         // u' = m11·u + m21·v + m41 ; v' = m12·u + m22·v + m42
         var m = SCNMatrix4Identity
         switch quadrants {

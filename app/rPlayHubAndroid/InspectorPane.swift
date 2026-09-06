@@ -25,6 +25,7 @@ final class InspectorPane: NSView {
     let logcat = LogcatPanel()
     let crashes = CrashesPanel()
     let settings = SettingsPanel()
+    let hero = HeroPanel()
 
     /// Lives in the title bar, not in this view — exposed so AppDelegate can put it there.
     /// Hand-rolled (see IconTabBar) because a segmented control paints its selection with the
@@ -44,6 +45,7 @@ final class InspectorPane: NSView {
             logcat.serial = serial
             crashes.serial = serial
             settings.serial = serial
+            hero.serial = serial
             logcatWindow.update(serial: serial)
         }
     }
@@ -62,7 +64,7 @@ final class InspectorPane: NSView {
 
     /// The sub-tabs under each icon tab, in order.
     private var subTabs: [Int: [(String, NSView)]] {
-        [Self.settingsIcon: [("Settings", settings)],
+        [Self.settingsIcon: [("Settings", settings), ("Hero", hero)],
          Self.logsIcon:     [("Logcat", logcat), ("Crashes", crashes)],
          Self.infoIcon:     [("Info", info), ("Apps", apps), ("Files", files)]]
     }
@@ -103,7 +105,7 @@ final class InspectorPane: NSView {
         textTabs.translatesAutoresizingMaskIntoConstraints = false
 
         container.translatesAutoresizingMaskIntoConstraints = false
-        for panel in [info as NSView, apps, files, logcat, crashes, settings] {
+        for panel in [info as NSView, apps, files, logcat, crashes, settings, hero] {
             panel.translatesAutoresizingMaskIntoConstraints = false
             panel.isHidden = true
             container.addSubview(panel)
@@ -179,7 +181,7 @@ final class InspectorPane: NSView {
         // Panels not under the current icon tab stay hidden — which is also what stops the
         // logcat stream when it is not being looked at.
         let visible = tabs.indices.contains(index) ? tabs[index].1 : nil
-        for panel in [info as NSView, apps, files, logcat, crashes, settings]
+        for panel in [info as NSView, apps, files, logcat, crashes, settings, hero]
         where !tabs.contains(where: { $0.1 === panel }) {
             panel.isHidden = true
         }
@@ -187,11 +189,15 @@ final class InspectorPane: NSView {
     }
 
     /// Bring the pane back if it was collapsed, showing a particular icon tab.
-    func reveal(icon: Int) {
+    func reveal(icon: Int, sub: Int? = nil) {
         if isHidden {
             isHidden = false
             onVisibilityChanged?(true)
         }
+        if let sub { activeText[icon] = sub }
         showIcon(icon)
     }
+
+    /// The Hero tab, front and centre.
+    func revealHero() { reveal(icon: Self.settingsIcon, sub: 1) }
 }
