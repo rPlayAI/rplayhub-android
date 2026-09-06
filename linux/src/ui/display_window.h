@@ -53,6 +53,7 @@ public:
     // shown while the pointer is in or near the window. Without it the window is picture only.
     void setChrome(const DisplayChrome& chrome);
     void requestClose(const char* why);
+    void clearPicture() { have_frame_ = false; }   // the device went away: show the dark chassis
     const std::string& closeReason() const { return close_reason_; }
 
     bool pinned() const { return pinned_; }
