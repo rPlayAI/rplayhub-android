@@ -304,6 +304,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         mirror.onCommand = { [weak self] command in self?.perform(command) }
         mirror.onFilesDropped = { [weak self] urls in self?.handleDroppedFiles(urls) }
         inspector.apps.onFusion = { [weak self] package in self?.startFusion(package: package) }
+        inspector.hero.frameSource = { [weak self] in self?.latestPicture }
+        inspector.hero.displaySizeSource = { [weak self] in
+            guard let self else { return nil }
+            if let size = self.session?.video?.lastHeader?.displaySize { return size }
+            if let size = self.legacySession?.displaySize, size.width > 0 { return size }
+            return nil
+        }
+        inspector.hero.hostWindow = { [weak self] in self?.window }
+        inspector.hero.onStatus = { [weak self] text in self?.window.subtitle = text }
         // A fusion window hides the control strip (it drives the phone, not the app window);
         // whatever closed the window, the strip belongs back in the main stage. And closing the
         // window is closing the feature: tear the virtual display down too, or it keeps streaming
@@ -479,6 +488,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if twinActive { exitTwin() }   // the new session's decoder starts back in native output
         discardFusionWindows()         // their virtual displays die with the old agent
         session?.stop()
+        pictureLock.lock()
+        newestPicture = nil
+        pictureLock.unlock()
         mirror.reset()
         mirror.autoReveal = reveal          // reset() set it true; a prepared session stays gated
         strip.setSessionActive(false)
@@ -589,6 +601,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     }
                 }
                 self.mirror.displayLayer.present(picture)
+                self.pictureLock.lock()
+                self.newestPicture = picture
+                self.pictureLock.unlock()
             }
         }
         l.onState = { [weak self] state in
@@ -692,7 +707,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self else { return }
             self.mirror.displayLayer.present(picture)
             self.twin?.present(picture)   // one lock and out when the mode is off
+            self.pictureLock.lock()
+            self.newestPicture = picture   // kept for the hero renderer; newest wins
+            self.pictureLock.unlock()
         }
+    }
+
+    private let pictureLock = NSLock()
+    private var newestPicture: CVPixelBuffer?
+    /// The newest frame on the main stage, for anything that paints the screen on demand.
+    private var latestPicture: CVPixelBuffer? {
+        pictureLock.lock()
+        defer { pictureLock.unlock() }
+        return newestPicture
     }
 
     private func sessionStateChanged(_ state: AgentSession.State) {
@@ -795,6 +822,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.adoptDisplay(id)
             self.mirror.apply(header: header)
             self.twin?.apply(header: header)
+            self.inspector.hero.apply(header: header)
         }
         // Both closures check the stream is still the current one: after a reconnect, a stale
         // stream's last gasp arrives on the main queue behind the new session's startup and
@@ -1663,6 +1691,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    // MARK: - hero composer (experimental)
+
+    /// The inspector's Hero tab: the live screen on a tilted phone over a gradient with a
+    /// headline and badge — a store-listing shot, exported as PNGs or recorded as a video. It
+    /// only reads frames, so it needs no sensor and sits outside the twin gate.
+    @objc private func showHero() {
+        inspector.revealHero()
+    }
+
     @objc private func toggleTwinGate() {
         AppBuild.twinEnabled.toggle()
         let enabled = AppBuild.twinEnabled
@@ -1977,9 +2014,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let panel = NSSavePanel()
         panel.nameFieldStringValue = "screenshot.png"
         panel.allowedContentTypes = [.png]
+        // The plain capture, or the fancy one: the screen on a tilted phone with the headline
+        // and badge from the Hero tab, at the size chosen there.
+        let styles = NSPopUpButton()
+        styles.addItems(withTitles: ["Plain screenshot", "Hero shot (fancy)"])
+        let styleLabel = NSTextField(labelWithString: "Style:")
+        let accessory = NSStackView(views: [styleLabel, styles])
+        accessory.orientation = .horizontal
+        accessory.edgeInsets = NSEdgeInsets(top: 8, left: 0, bottom: 8, right: 0)
+        panel.accessoryView = accessory
         let host: NSWindow = fusionWindows[displayId]?.window ?? window
-        panel.beginSheetModal(for: host) { response in
+        panel.beginSheetModal(for: host) { [weak self] response in
             guard response == .OK, let url = panel.url else { return }
+            if styles.indexOfSelectedItem == 1, displayId == 0 {
+                self?.inspector.hero.export(to: url)
+                return
+            }
             DispatchQueue.global(qos: .userInitiated).async {
                 do {
                     let remote = "/data/local/tmp/rplayhub-screenshot.png"
@@ -2228,6 +2278,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         twinToggle.target = self
         twinToggle.state = AppBuild.twinEnabled ? .on : .off
         twinGateItem = twinToggle
+        viewMenu.addItem(.separator())
+        let heroItem = viewMenu.addItem(withTitle: "Hero Composer (Experimental)…",
+                                        action: #selector(showHero), keyEquivalent: "h")
+        heroItem.keyEquivalentModifierMask = [.command, .shift]
+        heroItem.target = self
         viewItem.submenu = viewMenu
         main.addItem(viewItem)
 
