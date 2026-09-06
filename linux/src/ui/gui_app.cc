@@ -1925,6 +1925,7 @@ void GuiApp::renderLeftSidebar(float width, float height) {
                     }
                 });
         }
+        if (connect_inflight_) ImGui::EndDisabled();   // was missing: ImGui asserted on the next frame
         ImGui::SameLine();
         if (ImGui::Button("Cancel", ImVec2(80 * scale_, 0))) {
             show_connect_popup_ = false;
