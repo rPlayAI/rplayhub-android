@@ -32,6 +32,15 @@ struct DecodedFrame {
     int displayHeight = 0;
     int displayOrientation = 0;
     int displayOrientationCorrection = 0;
+    // The agent pre-rotates the encoded picture by displayOrientationCorrection (a display
+    // that will not turn, a launcher locked to portrait): the viewer must turn the decoded
+    // frame back by that many quadrants, and the picture it then shows stands at
+    // presentedQuadrants() (Studio's VideoDecoder, the Mac's MirrorView).
+    int presentedQuadrants() const {
+        int raw = (displayOrientationCorrection % 2 == 0) ? (displayOrientation + displayOrientationCorrection) : displayOrientation;
+        return ((raw % 4) + 4) % 4;
+    }
+    int correctionQuadrants() const { return ((displayOrientationCorrection % 4) + 4) % 4; }
     FrameFormat format = FrameFormat::NONE;
     std::vector<uint8_t> planes[3];
     int pitch[3] = {0, 0, 0}; // bytes per row of each plane

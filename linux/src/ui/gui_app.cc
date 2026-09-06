@@ -2379,8 +2379,9 @@ void GuiApp::renderLiveMirror(ImVec2 origin, ImVec2 size, const DecodedFrame& fr
     if (!video_texture_) return;
 
     // Calculate aspect fit inside center stage
-    int rot_w = (frame.displayOrientation % 2 == 1) ? frame.displayHeight : frame.displayWidth;
-    int rot_h = (frame.displayOrientation % 2 == 1) ? frame.displayWidth : frame.displayHeight;
+    const int presented = frame.presentedQuadrants();
+    int rot_w = (presented % 2 == 1) ? frame.displayHeight : frame.displayWidth;
+    int rot_h = (presented % 2 == 1) ? frame.displayWidth : frame.displayHeight;
     if (rot_w <= 0 || rot_h <= 0) {
         rot_w = frame.width;
         rot_h = frame.height;
@@ -2409,19 +2410,18 @@ void GuiApp::renderLiveMirror(ImVec2 origin, ImVec2 size, const DecodedFrame& fr
     draw_list->AddRectFilled(bezel_tl, bezel_br, IM_COL32(18, 18, 22, 255), 28.0f * scale_);
     draw_list->AddRect(bezel_tl, bezel_br, IM_COL32(55, 55, 62, 255), 28.0f * scale_, 0, 1.5f * scale_);
 
-    // Live Video Image with rounded corners matching phone screen
-    draw_list->AddImageRounded((ImTextureID)video_texture_,
-                               ImVec2(pos_x, pos_y),
-                               ImVec2(pos_x + target_w, pos_y + target_h),
-                               ImVec2(0, 0), ImVec2(1, 1),
-                               IM_COL32_WHITE, 20.0f * scale_);
+    // Live picture with rounded corners matching the phone screen, turned back by the
+    // agent's pre-rotation when there is one
+    DrawImageTurned(draw_list, (ImTextureID)video_texture_, ImVec2(pos_x, pos_y),
+                           ImVec2(pos_x + target_w, pos_y + target_h), frame.correctionQuadrants(),
+                           IM_COL32_WHITE, 20.0f * scale_);
 
     // Punch Hole Camera Cutout at top center
     draw_list->AddCircleFilled(ImVec2(pos_x + target_w * 0.5f, pos_y + 14.0f), 5.0f, IM_COL32(0, 0, 0, 255));
 
     // Handle mouse touch events on the mirrored screen
     handleTouchInput(ImVec2(pos_x, pos_y), ImVec2(target_w, target_h),
-                     frame.displayWidth, frame.displayHeight, frame.displayOrientation);
+                     frame.displayWidth, frame.displayHeight, frame.presentedQuadrants());
     handleKeyboardInput();
 }
 

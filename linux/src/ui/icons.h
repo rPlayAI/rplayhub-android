@@ -496,6 +496,24 @@ inline bool IconButton(const char* str_id,
     return clicked;
 }
 
+// Draw a texture into a rectangle turned by `quadrants` * 90 degrees counter-clockwise (the
+// way an Android display rotation 1 turns: the top edge goes to the left); with no turn the
+// corners can be rounded (ImGui only rounds axis-aligned images).
+inline void DrawImageTurned(ImDrawList* dl, ImTextureID tex, ImVec2 p_min, ImVec2 p_max, int quadrants,
+                            ImU32 col = IM_COL32_WHITE, float rounding = 0.0f) {
+    quadrants = ((quadrants % 4) + 4) % 4;
+    if (quadrants == 0) {
+        dl->AddImageRounded(tex, p_min, p_max, ImVec2(0, 0), ImVec2(1, 1), col, rounding);
+        return;
+    }
+    // Texture corners in order TL, TR, BR, BL; the quad's corners take them shifted round.
+    const ImVec2 uv[4] = { ImVec2(0, 0), ImVec2(1, 0), ImVec2(1, 1), ImVec2(0, 1) };
+    const ImVec2 p1 = p_min, p2(p_max.x, p_min.y), p3 = p_max, p4(p_min.x, p_max.y);
+    // Counter-clockwise by one quadrant: the texture's top-right lands at the quad's top-left.
+    const int k = quadrants;
+    dl->AddImageQuad(tex, p1, p2, p3, p4, uv[k % 4], uv[(k + 1) % 4], uv[(k + 2) % 4], uv[(k + 3) % 4], col);
+}
+
 // Helper to render flat, transparent navigation icon button matching macOS bottom bar
 inline bool FlatNavButton(const char* str_id,
                           std::function<void(ImDrawList*, ImVec2, float, ImU32)> draw_icon,

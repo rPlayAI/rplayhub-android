@@ -281,7 +281,7 @@ void DisplayWindow::fitWindowToFrame() {
     SDL_GetWindowPosition(window_, &x, &y);
     const int bw = grown_ ? bare_w_ : w, bh = grown_ ? bare_h_ : h;
     const int longest = std::max(bw, bh);
-    const float aspect = static_cast<float>(tex_w_) / tex_h_;
+    const float aspect = presentedAspect();
     int nw, nh;
     if (isPhone()) {
         if (aspect < 1.0f) {   // portrait: the chassis is `longest` tall
@@ -314,7 +314,7 @@ int DisplayWindow::bareHeightForWidth(int width, float screen_aspect) {
 }
 
 void DisplayWindow::barePicture(float W, float H, float& px, float& py, float& pw, float& ph) const {
-    const float aspect = static_cast<float>(tex_w_) / static_cast<float>(tex_h_);
+    const float aspect = presentedAspect();
     if (!isPhone()) {   // no chassis: the picture fills the window
         pw = W; ph = pw / aspect;
         if (ph > H) { ph = H; pw = ph * aspect; }
@@ -329,7 +329,7 @@ void DisplayWindow::barePicture(float W, float H, float& px, float& py, float& p
 void DisplayWindow::chassisPicture(float W, float H, float& px, float& py, float& pw, float& ph) const {
     const float s = chrome_.scale;
     const float stage_top = titleBarHeight(), stage_h = std::max(1.0f, H - titleBarHeight() - toolbarHeight());
-    const float aspect = static_cast<float>(tex_w_) / static_cast<float>(tex_h_);
+    const float aspect = presentedAspect();
     if (!isPhone()) {   // plain window: the picture fills everything under the title bar
         pw = W; ph = pw / aspect;
         if (ph > stage_h) { ph = stage_h; pw = ph * aspect; }
@@ -494,7 +494,8 @@ void DisplayWindow::render(const DecodedFrame& frame) {
             tex_h_ = frame.height;
             tex_format_ = frame.format;
             uploaded_frame_ = 0;
-            const int landscape = frame.width > frame.height ? 1 : 0;
+            turn_ = frame.correctionQuadrants();
+            const int landscape = presentedAspect() > 1.0f ? 1 : 0;
             if (tex_landscape_ >= 0 && tex_landscape_ != landscape) fitWindowToFrame();
             tex_landscape_ = landscape;
             have_frame_ = false;
@@ -518,7 +519,12 @@ void DisplayWindow::render(const DecodedFrame& frame) {
         }
         disp_w_ = frame.displayWidth > 0 ? frame.displayWidth : frame.width;
         disp_h_ = frame.displayHeight > 0 ? frame.displayHeight : frame.height;
-        disp_rot_ = frame.displayOrientation;
+        disp_rot_ = frame.presentedQuadrants();
+        if (turn_ != frame.correctionQuadrants()) {
+            turn_ = frame.correctionQuadrants();
+            const int landscape = presentedAspect() > 1.0f ? 1 : 0;
+            if (tex_landscape_ != landscape) { fitWindowToFrame(); tex_landscape_ = landscape; }
+        }
     }
 
     int out_w = 0, out_h = 0;
@@ -536,11 +542,16 @@ void DisplayWindow::render(const DecodedFrame& frame) {
         // the bars and borders fade in or out around it.
         if (win_w > 0 && win_h > 0) renderChrome(win_w, win_h, out_w, out_h);
     } else if (texture_ && have_frame_ && out_w > 0 && out_h > 0) {
-        float aspect = static_cast<float>(tex_w_) / static_cast<float>(tex_h_);
+        float aspect = presentedAspect();
         int w = out_w, h = static_cast<int>(out_w / aspect);
         if (h > out_h) { h = out_h; w = static_cast<int>(out_h * aspect); }
         SDL_Rect bare = { (out_w - w) / 2, (out_h - h) / 2, w, h };
-        SDL_RenderCopy(renderer_, texture_, nullptr, &bare);
+        if (turn_ == 0) {
+            SDL_RenderCopy(renderer_, texture_, nullptr, &bare);
+        } else {   // SDL rotates about the destination centre: give it the untamed rect
+            SDL_Rect src_sized = (turn_ % 2 == 1) ? SDL_Rect{ bare.x + (bare.w - bare.h) / 2, bare.y + (bare.h - bare.w) / 2, bare.h, bare.w } : bare;
+            SDL_RenderCopyEx(renderer_, texture_, nullptr, &src_sized, -90.0 * turn_, nullptr, SDL_FLIP_NONE);
+        }
         image_rect_ = px != 1.0f ? SDL_Rect{ static_cast<int>(bare.x / px), static_cast<int>(bare.y / px),
                                              static_cast<int>(bare.w / px), static_cast<int>(bare.h / px) }
                                  : bare;
@@ -711,13 +722,12 @@ void DisplayWindow::renderChrome(int win_w, int win_h, int out_w, int out_h) {
             const float bezel = kBezel * pw;
             dl->AddRectFilled(ImVec2(px - bezel, py - bezel), ImVec2(px + pw + bezel, py + ph + bezel),
                               IM_COL32(6, 6, 8, 255), 0.16f * pw);
-            dl->AddImageRounded((ImTextureID)(intptr_t)texture_, ImVec2(px, py), ImVec2(px + pw, py + ph),
-                                ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE, 0.12f * pw);
+            DrawImageTurned(dl, (ImTextureID)(intptr_t)texture_, ImVec2(px, py), ImVec2(px + pw, py + ph), turn_,
+                                   IM_COL32_WHITE, 0.12f * std::min(pw, ph));
             dl->AddCircleFilled(ImVec2(px + pw * 0.5f, py + 0.07f * pw), 0.041f * pw, IM_COL32(0, 0, 0, 255), 32);
         } else {
             dl->AddRectFilled(ImVec2(0, top_h * e), ImVec2(W, H), IM_COL32(0, 0, 0, 255));
-            dl->AddImage((ImTextureID)(intptr_t)texture_, ImVec2(px, py), ImVec2(px + pw, py + ph),
-                         ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE);
+            DrawImageTurned(dl, (ImTextureID)(intptr_t)texture_, ImVec2(px, py), ImVec2(px + pw, py + ph), turn_);
         }
         image_rect_ = { static_cast<int>(px), static_cast<int>(py), static_cast<int>(pw), static_cast<int>(ph) };
     }

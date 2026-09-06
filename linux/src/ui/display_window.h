@@ -114,6 +114,9 @@ private:
     void computeGrownSize();                       // grown_w_/h_ and grow_dx_/dy_ from bare_w_/h_
     void fitWindowToFrame();                       // the picture turned: portrait window <-> landscape
     int tex_landscape_ = -1;                       // orientation parity of the last texture
+    int turn_ = 0;                                 // quadrants the frame is turned back by when drawn
+    // The picture as the viewer sees it: the texture turned by turn_
+    float presentedAspect() const { return (turn_ % 2 == 1) ? static_cast<float>(tex_h_) / tex_w_ : static_cast<float>(tex_w_) / tex_h_; }
     void moveResize(int w, int h, int x, int y);   // one X request, so the window does not hop
 
     int32_t display_id_;
