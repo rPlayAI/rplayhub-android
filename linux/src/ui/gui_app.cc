@@ -3163,7 +3163,8 @@ void GuiApp::renderRightInspector(float width, float height) {
                 const int st = i < static_cast<int>(dev_toggle_state_.size()) ? dev_toggle_state_[i] : -1;
                 bool on = st < 0 ? t.default_on : st == 1;
                 ImGui::PushID(i);
-                if (ImGui::Checkbox(t.label, &on)) setDevToggle(current_serial, i, on);
+                ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 4.0f * scale_);
+                if (ToggleSwitch(t.label, &on, scale_)) setDevToggle(current_serial, i, on);
                 ImGui::PopID();
             }
             if (dev_toggles_loading_) ImGui::TextColored(Theme::ColorTextTertiary, "Reading current values...");

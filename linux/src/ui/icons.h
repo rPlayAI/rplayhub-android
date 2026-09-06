@@ -514,6 +514,38 @@ inline void DrawImageTurned(ImDrawList* dl, ImTextureID tex, ImVec2 p_min, ImVec
     dl->AddImageQuad(tex, p1, p2, p3, p4, uv[k % 4], uv[(k + 1) % 4], uv[(k + 2) % 4], uv[(k + 3) % 4], col);
 }
 
+// A macOS-style switch (NSSwitch): a pill track, accent blue when on, with a white knob that
+// slides over. Returns true when toggled. The label sits to the right, as in System Settings.
+inline bool ToggleSwitch(const char* label, bool* on, float scale = 1.0f) {
+    ImGui::PushID(label);
+    const float h = 22.0f * scale, w = 38.0f * scale;
+    ImVec2 p = ImGui::GetCursorScreenPos();
+    const bool clicked = ImGui::InvisibleButton("##switch", ImVec2(w, h));
+    if (clicked) *on = !*on;
+    const bool hovered = ImGui::IsItemHovered();
+    // Slide the knob: a per-widget animation value kept in ImGui's storage
+    ImGuiStorage* st = ImGui::GetStateStorage();
+    const ImGuiID key = ImGui::GetID("##t");
+    float t = st->GetFloat(key, *on ? 1.0f : 0.0f);
+    const float target = *on ? 1.0f : 0.0f;
+    t += (target - t) * std::min(1.0f, ImGui::GetIO().DeltaTime * 14.0f);
+    if (std::fabs(t - target) < 0.01f) t = target;
+    st->SetFloat(key, t);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    auto lerp = [](int a, int b, float f) { return static_cast<int>(a + (b - a) * f); };
+    const ImU32 track = IM_COL32(lerp(hovered ? 220 : 229, 0, t), lerp(hovered ? 220 : 229, 122, t), lerp(hovered ? 224 : 234, 255, t), 255);
+    dl->AddRectFilled(p, ImVec2(p.x + w, p.y + h), track, h * 0.5f);
+    const float r = h * 0.5f - 2.0f * scale;
+    const ImVec2 c(p.x + h * 0.5f + (w - h) * t, p.y + h * 0.5f);
+    dl->AddCircleFilled(ImVec2(c.x, c.y + 1.0f * scale), r, IM_COL32(0, 0, 0, 40), 24);   // soft shadow
+    dl->AddCircleFilled(c, r, IM_COL32(255, 255, 255, 255), 24);
+    ImGui::SameLine(0, 10.0f * scale);
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted(label);
+    ImGui::PopID();
+    return clicked;
+}
+
 // Helper to render flat, transparent navigation icon button matching macOS bottom bar
 inline bool FlatNavButton(const char* str_id,
                           std::function<void(ImDrawList*, ImVec2, float, ImU32)> draw_icon,

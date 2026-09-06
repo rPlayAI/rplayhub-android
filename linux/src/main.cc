@@ -47,9 +47,10 @@ int main(int argc, char* argv[]) {
             rplayhub::AgentSession::setVerbose(true);
         } else if (arg == "--tab" && i + 1 < argc) {
             std::string t = argv[++i];
-            tab = (t == "info") ? 0 : (t == "apps") ? 1 : (t == "files") ? 2 : (t == "logcat") ? 3 : -1;
+            tab = (t == "info") ? 0 : (t == "apps") ? 1 : (t == "files") ? 2 : (t == "logcat") ? 3
+                : (t == "crashes") ? 4 : (t == "settings") ? 5 : -1;
             if (tab < 0) {
-                std::cerr << "--tab: expected info, apps, files or logcat\n";
+                std::cerr << "--tab: expected info, apps, files, logcat, crashes or settings\n";
                 return 2;
             }
         } else if (arg == "--no-audio") {
@@ -94,7 +95,7 @@ int main(int argc, char* argv[]) {
                          "      --dump-frame <p>  save a BMP of the window once the mirror is up\n"
                          "      --stats           print decoded / rendered fps to stderr every 5 s\n"
                          "  -v, --verbose         echo the device agent's log to stderr\n"
-                         "      --tab <name>      inspector tab to open with: info, apps, files, logcat\n"
+                         "      --tab <name>      inspector tab to open with: info, apps, files, logcat, crashes, settings\n"
                          "      --no-audio        do not forward device audio (Android 12+ devices)\n"
                          "      --desktop         once mirroring, open Android's desktop in a window (Desktop Mode)\n"
                          "      --app <package>   once mirroring, open that app in a window of its own\n"
