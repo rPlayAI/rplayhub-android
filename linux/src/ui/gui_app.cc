@@ -122,6 +122,13 @@ bool GuiApp::init() {
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+    // A Push without its Pop (or a Begin without its End) must not take the app down: let
+    // ImGui repair its stacks at the end of the frame and say so on stderr.
+    io.ConfigErrorRecovery = true;
+    io.ConfigErrorRecoveryEnableAssert = false;
+    io.ConfigErrorRecoveryEnableDebugLog = true;
+    io.ConfigErrorRecoveryEnableTooltip = false;
+    io.ConfigDebugIsDebuggerPresent = false;
 
     buildFonts();
 
