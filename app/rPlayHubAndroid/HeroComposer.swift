@@ -51,6 +51,41 @@ struct HeroSize: Equatable {
     ]
 }
 
+/// A chassis finish: the polished rail, the matte face, and the chamfer that carries the
+/// highlight. Keeping them separate is what gives the edge its two-tone read.
+enum HeroFinish: String, Codable, CaseIterable {
+    case graphite, midnight, sand, silver
+
+    var title: String {
+        switch self {
+        case .graphite: return "Graphite"
+        case .midnight: return "Midnight Blue"
+        case .sand: return "Desert Sand"
+        case .silver: return "Silver"
+        }
+    }
+    var rail: NSColor {
+        switch self {
+        case .graphite: return NSColor(srgbRed: 0.42, green: 0.43, blue: 0.46, alpha: 1)
+        case .midnight: return NSColor(srgbRed: 0.16, green: 0.26, blue: 0.62, alpha: 1)
+        case .sand:     return NSColor(srgbRed: 0.78, green: 0.58, blue: 0.40, alpha: 1)
+        case .silver:   return NSColor(srgbRed: 0.80, green: 0.82, blue: 0.85, alpha: 1)
+        }
+    }
+    var body: NSColor {
+        switch self {
+        case .graphite: return NSColor(srgbRed: 0.14, green: 0.15, blue: 0.16, alpha: 1)
+        case .midnight: return NSColor(srgbRed: 0.07, green: 0.09, blue: 0.18, alpha: 1)
+        case .sand:     return NSColor(srgbRed: 0.34, green: 0.27, blue: 0.21, alpha: 1)
+        case .silver:   return NSColor(srgbRed: 0.62, green: 0.64, blue: 0.67, alpha: 1)
+        }
+    }
+    /// A touch brighter than the rail: the chamfer is the first thing the light finds.
+    var chamfer: NSColor {
+        rail.blended(withFraction: 0.34, of: .white) ?? rail
+    }
+}
+
 /// Everything about the look that is not the picture. Persisted as JSON in UserDefaults.
 struct HeroStyle: Codable, Equatable {
     var headline = "Your\ncreative"
@@ -72,6 +107,7 @@ struct HeroStyle: Codable, Equatable {
     var fieldOfView: Double = 30
     var showBadge = true
     var shadow = true
+    var finish: HeroFinish = .graphite
 
     struct RGBA: Codable, Equatable {
         var r: Double, g: Double, b: Double, a: Double
@@ -124,6 +160,7 @@ struct HeroStyle: Codable, Equatable {
 /// serial queue, because SceneKit wants a scene touched from a single thread at a time.
 final class HeroComposer {
     private(set) var displaySize: CGSize
+    private(set) var finish: HeroFinish
     private let scene = SCNScene()
     private let phone: SCNNode
     private let screen: SCNMaterial
@@ -137,13 +174,14 @@ final class HeroComposer {
     private let bodyHeight: CGFloat
     private let bodyWidth: CGFloat
 
-    init(displaySize: CGSize) {
+    init(displaySize: CGSize, finish: HeroFinish = .graphite) {
         self.displaySize = displaySize
+        self.finish = finish
         let device = MTLCreateSystemDefaultDevice()
         renderer = SCNRenderer(device: device, options: nil)
         ciContext = device.map { CIContext(mtlDevice: $0) } ?? CIContext()
 
-        let built = Self.makeHeroPhone(displaySize: displaySize)
+        let built = Self.makeHeroPhone(displaySize: displaySize, finish: finish)
         phone = built.node
         screen = built.screen
         bodyHeight = built.height
@@ -352,8 +390,8 @@ final class HeroComposer {
     /// rounded-rectangle body in polished graphite (physically based, so the environment draws a
     /// highlight along every rounded edge), a black glass front, the screen inset with rounded
     /// corners, the punch hole, and the side buttons on the rail that faces the viewer.
-    private static func makeHeroPhone(displaySize: CGSize)
-        -> (node: SCNNode, screen: SCNMaterial, width: CGFloat, height: CGFloat) {
+    static func makeHeroPhone(displaySize: CGSize, finish: HeroFinish = .graphite)
+        -> (node: SCNNode, screen: SCNMaterial, width: CGFloat, height: CGFloat, depth: CGFloat) {
         let aspect = displaySize.width > 0 && displaySize.height > 0
             ? displaySize.width / displaySize.height : 9.0 / 19.5
         let panelHeight: CGFloat = 1.5
@@ -361,7 +399,10 @@ final class HeroComposer {
         let bezel = panelWidth * 0.028                  // the black glass border around the picture
         let bodyWidth = panelWidth + 2 * bezel
         let bodyHeight = panelHeight + 2 * bezel
-        let depth = bodyWidth * 0.075
+        // Real hardware: a Pixel 9 is 8.5 mm thick and 72 mm wide, so thickness over width is
+        // about 0.118, and every current phone lands near that. We were at 0.068, barely half,
+        // which is why the rail read as a thin line rather than a rail.
+        let depth = bodyWidth * 0.116
         let corner = bodyWidth * 0.115                  // the plan-view corner radius
 
         let phone = SCNNode()
@@ -374,13 +415,24 @@ final class HeroComposer {
         bodyPath.flatness = 0.0005
         let body = SCNShape(path: bodyPath, extrusionDepth: depth)
         body.chamferMode = .both
-        body.chamferRadius = depth * 0.22
-        let metal = SCNMaterial()
-        metal.lightingModel = .physicallyBased
-        metal.diffuse.contents = NSColor(calibratedWhite: 0.30, alpha: 1)
-        metal.metalness.contents = 0.92
-        metal.roughness.contents = 0.28
-        body.materials = [metal]
+        body.chamferRadius = depth * 0.26
+        // Two-tone, which is the thing that makes a real phone's edge read: the RAIL is a
+        // brighter, more saturated, more polished metal than the faces around it, so the eye
+        // catches a bright band with a hard line down each side. One uniform grey cannot do it,
+        // however good the lighting is. SCNShape takes its materials as front, back, side, then
+        // the two chamfer profiles, so each gets its own.
+        func pbr(_ color: NSColor, metalness: CGFloat, roughness: CGFloat) -> SCNMaterial {
+            let m = SCNMaterial()
+            m.lightingModel = .physicallyBased
+            m.diffuse.contents = color
+            m.metalness.contents = metalness
+            m.roughness.contents = roughness
+            return m
+        }
+        let rail = pbr(finish.rail, metalness: 0.98, roughness: 0.08)      // polished band
+        let face = pbr(finish.body, metalness: 0.55, roughness: 0.45)      // matte back/front
+        let edge = pbr(finish.chamfer, metalness: 1.0, roughness: 0.04)    // the bright line
+        body.materials = [face, face, rail, edge, edge]
         let bodyNode = SCNNode(geometry: body)
         phone.addChildNode(bodyNode)
 
@@ -443,7 +495,7 @@ final class HeroComposer {
         // Matte polymer for the antenna breaks and the speaker slit.
         let matte = SCNMaterial()
         matte.lightingModel = .physicallyBased
-        matte.diffuse.contents = NSColor(srgbRed: 0.165, green: 0.165, blue: 0.180, alpha: 1)
+        matte.diffuse.contents = finish.body.blended(withFraction: 0.35, of: .black) ?? finish.body
         matte.metalness.contents = 0.0
         matte.roughness.contents = 0.85
 
@@ -472,23 +524,23 @@ final class HeroComposer {
             phone.addChildNode(node)
         }
 
-        // Side buttons on the left rail (the side a negative turn brings toward the camera):
-        // power above, the volume rocker below, both proud of the rail by a hair.
+        // Side buttons on the RIGHT rail, where a Pixel wears them: the power key above, the
+        // volume rocker below it, both standing a hair proud of the rail.
         let buttonMetal = SCNMaterial()
         buttonMetal.lightingModel = .physicallyBased
-        buttonMetal.diffuse.contents = NSColor(calibratedWhite: 0.34, alpha: 1)
-        buttonMetal.metalness.contents = 0.9
-        buttonMetal.roughness.contents = 0.32
+        buttonMetal.diffuse.contents = finish.rail
+        buttonMetal.metalness.contents = 0.96
+        buttonMetal.roughness.contents = 0.12
         for (y, length) in [(bodyHeight * 0.26, bodyHeight * 0.06), (bodyHeight * 0.12, bodyHeight * 0.11)] {
             let button = SCNBox(width: depth * 0.22, height: length, length: depth * 0.55,
                                 chamferRadius: depth * 0.08)
             button.materials = [buttonMetal]
             let node = SCNNode(geometry: button)
-            node.position = SCNVector3(-bodyWidth / 2 - depth * 0.06, y, 0)
+            node.position = SCNVector3(bodyWidth / 2 + depth * 0.06, y, 0)
             phone.addChildNode(node)
         }
 
-        return (phone, screen, bodyWidth, bodyHeight)
+        return (phone, screen, bodyWidth, bodyHeight, depth)
     }
 
     /// A white rounded rectangle on clear, for masking the screen's corners.
@@ -508,21 +560,30 @@ final class HeroComposer {
     /// An equirectangular studio: a bright sky, a dark floor, and a hot horizontal softbox
     /// above the horizon — the reflection that reads as "polished metal" on a rounded rail.
     private static func studioEnvironment() -> NSImage {
-        let size = NSSize(width: 512, height: 256)
+        // What a rounded metal rail shows you is a picture of the room, squeezed. So the room is
+        // built to be squeezed: a nearly black field with a few small, HARD-edged bright strips.
+        // A wide soft glow smears into the broad gradient we had before; a narrow hard strip
+        // reflects as the razor-thin line a real chamfer catches, and it brightens through the
+        // corners on its own as the surface turns.
+        let size = NSSize(width: 1024, height: 512)
         let image = NSImage(size: size)
         image.lockFocus()
         let sky = NSGradient(colorsAndLocations:
-            (NSColor(calibratedWhite: 0.75, alpha: 1), 0.0),
-            (NSColor(calibratedWhite: 0.30, alpha: 1), 0.45),
-            (NSColor(calibratedWhite: 0.06, alpha: 1), 0.6),
-            (NSColor(calibratedWhite: 0.02, alpha: 1), 1.0))
+            (NSColor(calibratedWhite: 0.30, alpha: 1), 0.0),
+            (NSColor(calibratedWhite: 0.10, alpha: 1), 0.42),
+            (NSColor(calibratedWhite: 0.03, alpha: 1), 0.52),
+            (NSColor(calibratedWhite: 0.01, alpha: 1), 1.0))
         sky?.draw(in: NSRect(origin: .zero, size: size), angle: -90)
-        // The softbox: a wide bright band a little above the horizon, feathered.
-        let box = NSGradient(colorsAndLocations:
-            (NSColor(calibratedWhite: 1.0, alpha: 0.0), 0.0),
-            (NSColor(calibratedWhite: 1.0, alpha: 0.9), 0.5),
-            (NSColor(calibratedWhite: 1.0, alpha: 0.0), 1.0))
-        box?.draw(in: NSRect(x: 40, y: 150, width: 300, height: 34), angle: 90)
+
+        // Key strip, above the horizon and slightly left of centre: the main rim line.
+        NSColor(calibratedWhite: 1.0, alpha: 1).setFill()
+        NSRect(x: 150, y: 322, width: 470, height: 13).fill()
+        // A dimmer, shorter strip opposite, so the far rail is separated from the background
+        // instead of vanishing, and a small hot square for a glint on the corners.
+        NSColor(calibratedWhite: 0.72, alpha: 1).setFill()
+        NSRect(x: 700, y: 300, width: 250, height: 8).fill()
+        NSColor(calibratedWhite: 1.0, alpha: 1).setFill()
+        NSRect(x: 60, y: 360, width: 46, height: 46).fill()
         image.unlockFocus()
         return image
     }
