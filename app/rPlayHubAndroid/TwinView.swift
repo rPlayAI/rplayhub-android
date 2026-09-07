@@ -242,7 +242,10 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
     /// unlike a hero still the twin turns around: either a user-supplied device photo or the
     /// procedural Pixel back below.
     static func makePhone(displaySize: CGSize) -> (node: SCNNode, screen: SCNMaterial) {
-        let built = HeroComposer.makeHeroPhone(displaySize: displaySize, finish: .graphite)
+        // A user-supplied back photo replaces the whole back, camera island included.
+        let backImage = Self.loadBackImage()
+        let built = HeroComposer.makeHeroPhone(displaySize: displaySize, finish: .graphite,
+                                               cameraIsland: backImage == nil)
         let phone = built.node
         let screen = built.screen
         let bodyWidth = built.width
@@ -252,7 +255,7 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
         // A user-supplied back image wins: texture it straight onto the back face so the twin
         // wears whatever device the user handed it — a Samsung, a Xiaomi, anything. When one is
         // set the procedural Pixel back (camera bar, lenses, G) is skipped entirely.
-        if let backImage = Self.loadBackImage() {
+        if let backImage {
             let backPlane = SCNPlane(width: bodyWidth, height: bodyHeight)
             let backMat = SCNMaterial()
             backMat.lightingModel = .constant     // show the photo as printed, not relit
@@ -268,58 +271,6 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
             return (phone, screen)
         }
 
-        // The camera bar across the back — the Pixel's signature, and it makes the back a back
-        // instead of an anonymous dark slab when the twin turns around.
-        let barHeight = bodyHeight * 0.105
-        let bar = SCNBox(width: bodyWidth * 0.92, height: barHeight, length: bodyDepth * 0.75,
-                         chamferRadius: barHeight * 0.35)
-        let barMaterial = SCNMaterial()
-        barMaterial.diffuse.contents = NSColor(calibratedWhite: 0.08, alpha: 1)
-        barMaterial.specular.contents = NSColor(calibratedWhite: 0.7, alpha: 1)
-        barMaterial.shininess = 0.8
-        bar.materials = [barMaterial]
-        let barNode = SCNNode(geometry: bar)
-        barNode.position = SCNVector3(0, bodyHeight * 0.35, -bodyDepth / 2 - bodyDepth * 0.18)
-        phone.addChildNode(barNode)
-
-        // Two lenses and a flash dot on the bar, facing backwards.
-        let lensMaterial = SCNMaterial()
-        lensMaterial.diffuse.contents = NSColor(calibratedWhite: 0.02, alpha: 1)
-        lensMaterial.specular.contents = NSColor.white
-        lensMaterial.shininess = 1
-        for (offset, radius) in [(-0.30, 0.055), (-0.14, 0.055)] {
-            let lens = SCNCylinder(radius: bodyWidth * radius, height: bodyDepth * 0.1)
-            lens.materials = [lensMaterial]
-            let lensNode = SCNNode(geometry: lens)
-            lensNode.eulerAngles = SCNVector3(CGFloat.pi / 2, 0, 0)   // axis along z, face out the back
-            lensNode.position = SCNVector3(bodyWidth * offset, bodyHeight * 0.35,
-                                           -bodyDepth / 2 - bodyDepth * 0.58)
-            phone.addChildNode(lensNode)
-        }
-        let flash = SCNNode(geometry: SCNSphere(radius: bodyWidth * 0.02))
-        flash.geometry?.firstMaterial?.diffuse.contents = NSColor(calibratedWhite: 0.85, alpha: 1)
-        flash.position = SCNVector3(bodyWidth * 0.32, bodyHeight * 0.35,
-                                    -bodyDepth / 2 - bodyDepth * 0.56)
-        phone.addChildNode(flash)
-
-        // The "G" on the lower back, as a real Pixel wears it: not the colour logo but a
-        // monochrome polished-metal G etched into the panel, the same tone as the body, catching
-        // the light as the phone turns. A metallic material (not constant) gives it that glint;
-        // the mask is a single-colour G facing -z out of the back.
-        let gSize = bodyWidth * 0.24      // as the reference wears it — no plate behind it
-        let gPlane = SCNPlane(width: gSize, height: gSize)
-        let gMaterial = SCNMaterial()
-        // Flat, and drawn with its own alpha channel (the glyph on a transparent field), used
-        // straight as the diffuse — so there is no square plate, only the G, subtly darker than
-        // the body just like the reference.
-        gMaterial.lightingModel = .constant
-        gMaterial.diffuse.contents = Self.googleGImage(side: 512)
-        gMaterial.isDoubleSided = false
-        gPlane.materials = [gMaterial]
-        let gNode = SCNNode(geometry: gPlane)
-        gNode.position = SCNVector3(0, -bodyHeight * 0.05, -bodyDepth / 2 - 0.001)   // near centre
-        gNode.eulerAngles = SCNVector3(0, CGFloat.pi, 0)   // turn to face out the back
-        phone.addChildNode(gNode)
         return (phone, screen)
     }
 
@@ -571,7 +522,7 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
     /// is a ring with its opening in the upper-right and a crossbar reaching in from the middle
     /// of the right edge to the centre — that asymmetry (gap above, bar at the middle) is what
     /// makes it read as a G rather than a power symbol.
-    private static func googleGImage(side: Int) -> NSImage {
+    static func googleGImage(side: Int) -> NSImage {
         let s = CGFloat(side)
         let image = NSImage(size: NSSize(width: side, height: side))
         image.lockFocus()

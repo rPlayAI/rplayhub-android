@@ -191,7 +191,7 @@ final class HeroComposer {
         // A studio environment for the metal to reflect: bright above, dark below, one hot
         // band — that is what draws the highlight line along a rounded rail.
         scene.lightingEnvironment.contents = Self.studioEnvironment()
-        scene.lightingEnvironment.intensity = 1.4
+        scene.lightingEnvironment.intensity = 1.7
 
         let camera = SCNCamera()
         camera.projectionDirection = .vertical
@@ -201,23 +201,27 @@ final class HeroComposer {
         scene.rootNode.addChildNode(cameraNode)
 
         // The twin's lighting, so the body reads the same in both places.
+        // Deliberately dim. Under physically based shading the environment supplies the
+        // specular — the rim line, the lens glints — and these lights only add diffuse. At the
+        // old intensities they lifted a near-black graphite back to a flat mid grey that read
+        // as plastic. doc/pixel-backside.png is the target: charcoal, not silver.
         let key = SCNNode()
         key.light = SCNLight()
         key.light!.type = .directional
-        key.light!.intensity = 700
+        key.light!.intensity = 260
         key.eulerAngles = SCNVector3(-0.5, 0.4, 0)
         scene.rootNode.addChildNode(key)
         let ambient = SCNNode()
         ambient.light = SCNLight()
         ambient.light!.type = .ambient
-        ambient.light!.intensity = 350
+        ambient.light!.intensity = 70
         scene.rootNode.addChildNode(ambient)
         // A rim light from the upper left, raking the side that faces the camera once the phone
         // turns, so the rail catches a highlight instead of vanishing into the background.
         let rim = SCNNode()
         rim.light = SCNLight()
         rim.light!.type = .directional
-        rim.light!.intensity = 900
+        rim.light!.intensity = 320
         rim.eulerAngles = SCNVector3(-0.3, -1.1, 0)
         scene.rootNode.addChildNode(rim)
         // A second, harder light from high on the left, aimed at the phone: it catches only the
@@ -225,7 +229,7 @@ final class HeroComposer {
         let bevel = SCNNode()
         bevel.light = SCNLight()
         bevel.light!.type = .directional
-        bevel.light!.intensity = 1300
+        bevel.light!.intensity = 520
         bevel.position = SCNVector3(-2.0, 3.0, 1.5)
         bevel.look(at: SCNVector3Zero)
         scene.rootNode.addChildNode(bevel)
@@ -390,7 +394,8 @@ final class HeroComposer {
     /// rounded-rectangle body in polished graphite (physically based, so the environment draws a
     /// highlight along every rounded edge), a black glass front, the screen inset with rounded
     /// corners, the punch hole, and the side buttons on the rail that faces the viewer.
-    static func makeHeroPhone(displaySize: CGSize, finish: HeroFinish = .graphite)
+    static func makeHeroPhone(displaySize: CGSize, finish: HeroFinish = .graphite,
+                              cameraIsland: Bool = true)
         -> (node: SCNNode, screen: SCNMaterial, width: CGFloat, height: CGFloat, depth: CGFloat) {
         let aspect = displaySize.width > 0 && displaySize.height > 0
             ? displaySize.width / displaySize.height : 9.0 / 19.5
@@ -430,7 +435,10 @@ final class HeroComposer {
             return m
         }
         let rail = pbr(finish.rail, metalness: 0.98, roughness: 0.08)      // polished band
-        let face = pbr(finish.body, metalness: 0.55, roughness: 0.45)      // matte back/front
+        // The back is glass, not metal. Their model makes the same call: dark base, low
+        // metalness, mid roughness. At 0.55 metalness ours drank the environment and came out
+        // a flat light grey that read as plastic.
+        let face = pbr(finish.body, metalness: 0.15, roughness: 0.55)      // matte glass back
         let edge = pbr(finish.chamfer, metalness: 1.0, roughness: 0.04)    // the bright line
         body.materials = [face, face, rail, edge, edge]
         let bodyNode = SCNNode(geometry: body)
@@ -540,7 +548,135 @@ final class HeroComposer {
             phone.addChildNode(node)
         }
 
+        if cameraIsland {
+            phone.addChildNode(makeCameraIsland(bodyWidth: bodyWidth, bodyHeight: bodyHeight,
+                                                depth: depth, finish: finish))
+        }
         return (phone, screen, bodyWidth, bodyHeight, depth)
+    }
+
+    /// The camera island on the back, as a current Pixel wears it: a raised pill inset from both
+    /// rails, its own chamfer catching the same rim light as the body, a glossy black glass
+    /// panel recessed into it, and three lens barrels standing proud with a metal ring, a deep
+    /// glass dome and a coated highlight. The flash and the sensor sit at the far end.
+    ///
+    /// It is built here rather than in the twin so both views share it. A hero shot swinging
+    /// past the back sees the same phone the twin does when you turn it over.
+    private static func makeCameraIsland(bodyWidth: CGFloat, bodyHeight: CGFloat,
+                                         depth: CGFloat, finish: HeroFinish) -> SCNNode {
+        func pbr(_ color: NSColor, _ metalness: CGFloat, _ roughness: CGFloat) -> SCNMaterial {
+            let m = SCNMaterial()
+            m.lightingModel = .physicallyBased
+            m.diffuse.contents = color
+            m.metalness.contents = metalness
+            m.roughness.contents = roughness
+            return m
+        }
+
+        let island = SCNNode()
+        // Proportions read off doc/pixel-backside.png and the three-view reference: the island
+        // is clearly inset from BOTH rails, not full width, and sits high on the back.
+        let islandW = bodyWidth * 0.74
+        let islandH = bodyHeight * 0.145
+        let islandD = depth * 0.34                 // how far it stands off the back
+        let centreY = bodyHeight * 0.295
+        let backZ = -depth / 2                     // the back face
+
+        // The raised pill. Extruded from a rounded path so its rim is a curve, like the body's.
+        let path = NSBezierPath(roundedRect: NSRect(x: -islandW / 2, y: -islandH / 2,
+                                                    width: islandW, height: islandH),
+                                xRadius: islandH / 2, yRadius: islandH / 2)
+        path.flatness = 0.0005
+        let pill = SCNShape(path: path, extrusionDepth: islandD)
+        pill.chamferMode = .both
+        pill.chamferRadius = islandD * 0.30
+        // The island body is nearly black on a real Pixel; what you see of it is the bright
+        // ring of its rim, not the face.
+        let shell = pbr(NSColor(calibratedWhite: 0.045, alpha: 1), 0.65, 0.22)
+        let rim = pbr(finish.chamfer, 1.0, 0.05)
+        pill.materials = [shell, shell, shell, rim, rim]
+        let pillNode = SCNNode(geometry: pill)
+        pillNode.position = SCNVector3(0, centreY, backZ - islandD / 2)
+        island.addChildNode(pillNode)
+
+        // Black glass across the pill's face, a hair proud, so the lenses sit in glass and not
+        // in metal. Glossy and nearly black: it is the darkest thing on the phone.
+        let inset = islandH * 0.07
+        let glassPath = NSBezierPath(roundedRect: NSRect(x: -islandW / 2 + inset, y: -islandH / 2 + inset,
+                                                         width: islandW - inset * 2,
+                                                         height: islandH - inset * 2),
+                                     xRadius: (islandH - inset * 2) / 2,
+                                     yRadius: (islandH - inset * 2) / 2)
+        glassPath.flatness = 0.0005
+        let glass = SCNShape(path: glassPath, extrusionDepth: 0.002)
+        glass.materials = [pbr(NSColor(calibratedWhite: 0.015, alpha: 1), 0.0, 0.06)]
+        let glassNode = SCNNode(geometry: glass)
+        glassNode.position = SCNVector3(0, centreY, backZ - islandD - 0.001)
+        island.addChildNode(glassNode)
+
+        // Three lenses in a row. Each is a ring, a dome of dark glass, and a small bright dot
+        // for the coating — that dot is what stops a lens reading as a flat black circle.
+        let ringMetal = pbr(NSColor(calibratedWhite: 0.22, alpha: 1), 0.9, 0.16)
+        let lensGlass = pbr(NSColor(srgbRed: 0.02, green: 0.03, blue: 0.06, alpha: 1), 0.35, 0.03)
+        let coating = pbr(NSColor(srgbRed: 0.30, green: 0.45, blue: 0.85, alpha: 1), 0.2, 0.02)
+        // Lenses fill one end of the island with clear gaps between them, and the flash sits
+        // alone at the other. On the phone's LEFT side, which is what a back view shows on the
+        // right — the same side the reference photo puts it.
+        let lensR = islandH * 0.24
+        for x in [islandW * 0.32, islandW * 0.10, -islandW * 0.12] {
+            let ring = SCNTube(innerRadius: lensR * 0.88, outerRadius: lensR, height: islandD * 0.42)
+            ring.materials = [ringMetal]
+            let ringNode = SCNNode(geometry: ring)
+            ringNode.eulerAngles = SCNVector3(CGFloat.pi / 2, 0, 0)
+            ringNode.position = SCNVector3(x, centreY, backZ - islandD - islandD * 0.20)
+            island.addChildNode(ringNode)
+
+            let dome = SCNSphere(radius: lensR * 0.88)
+            dome.materials = [lensGlass]
+            let domeNode = SCNNode(geometry: dome)
+            domeNode.scale = SCNVector3(1, 1, 0.26)          // a shallow dome, not a ball
+            domeNode.position = SCNVector3(x, centreY, backZ - islandD - islandD * 0.12)
+            island.addChildNode(domeNode)
+
+            let glint = SCNSphere(radius: lensR * 0.20)
+            glint.materials = [coating]
+            let glintNode = SCNNode(geometry: glint)
+            glintNode.scale = SCNVector3(1, 1, 0.30)
+            glintNode.position = SCNVector3(x - lensR * 0.28, centreY + lensR * 0.28,
+                                            backZ - islandD - islandD * 0.26)
+            island.addChildNode(glintNode)
+        }
+
+        // Flash and the sensor window at the far end of the island.
+        let flash = SCNSphere(radius: lensR * 0.46)
+        flash.materials = [pbr(NSColor(srgbRed: 0.99, green: 0.98, blue: 0.94, alpha: 1), 0.0, 0.22)]
+        let flashNode = SCNNode(geometry: flash)
+        flashNode.scale = SCNVector3(1, 1, 0.16)
+        flashNode.position = SCNVector3(-islandW * 0.34, centreY, backZ - islandD - 0.002)
+        island.addChildNode(flashNode)
+
+        let sensor = SCNSphere(radius: lensR * 0.12)
+        sensor.materials = [pbr(NSColor(calibratedWhite: 0.06, alpha: 1), 0.0, 0.30)]
+        let sensorNode = SCNNode(geometry: sensor)
+        sensorNode.scale = SCNVector3(1, 1, 0.30)
+        sensorNode.position = SCNVector3(-islandW * 0.23, centreY, backZ - islandD - 0.002)
+        island.addChildNode(sensorNode)
+
+        // The G low on the back, the way a real Pixel wears it: not the colour logo but a
+        // monochrome mark a shade darker than the panel, catching the light as the phone turns.
+        let gSize = bodyWidth * 0.24
+        let gPlane = SCNPlane(width: gSize, height: gSize)
+        let gMaterial = SCNMaterial()
+        gMaterial.lightingModel = .constant
+        gMaterial.diffuse.contents = TwinView.googleGImage(side: 512)
+        gMaterial.isDoubleSided = false
+        gPlane.materials = [gMaterial]
+        let gNode = SCNNode(geometry: gPlane)
+        gNode.position = SCNVector3(0, -bodyHeight * 0.05, backZ - 0.001)
+        gNode.eulerAngles = SCNVector3(0, CGFloat.pi, 0)      // turn to face out the back
+        island.addChildNode(gNode)
+
+        return island
     }
 
     /// A white rounded rectangle on clear, for masking the screen's corners.
