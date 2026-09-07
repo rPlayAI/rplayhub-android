@@ -91,21 +91,21 @@ common = """				ALWAYS_SEARCH_USER_PATHS = NO;
 
 target_common = """				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 6;
 				ENABLE_HARDENED_RUNTIME = YES;
 				INFOPLIST_FILE = rPlayHubAndroid/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 1.0.1;
 				PRODUCT_BUNDLE_IDENTIFIER = ai.rplay.rplayhub.android;
 				PRODUCT_NAME = "$(TARGET_NAME)";"""
 
 ext_target_common = """				APPLICATION_EXTENSION_API_ONLY = YES;
 				CODE_SIGN_ENTITLEMENTS = FinderMount/FinderMount.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 6;
 				ENABLE_HARDENED_RUNTIME = YES;
 				INFOPLIST_FILE = FinderMount/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -113,7 +113,7 @@ ext_target_common = """				APPLICATION_EXTENSION_API_ONLY = YES;
 					"@executable_path/../Frameworks",
 					"@executable_path/../../../../Frameworks",
 				);
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 1.0.1;
 				PRODUCT_BUNDLE_IDENTIFIER = ai.rplay.rplayhub.android.FinderMount;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;"""
