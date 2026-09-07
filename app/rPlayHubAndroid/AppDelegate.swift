@@ -109,6 +109,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppBuild.log("rPlayHubAndroid \(AppBuild.version) starting")
+        // This window is a light-only design and always has been: Palette pins literal light
+        // greys so the three panes cannot drift apart when the window loses key, and every
+        // panel was measured against them. Text, though, uses semantic colours, which DO follow
+        // the system — so on a Mac set to Dark the labels invert to white, the canvas stays
+        // hardcoded white, and whole panes of text disappear. Pin the appearance so what ships
+        // is what was designed. Supporting Dark Mode properly means making Palette semantic and
+        // re-checking every hardcoded grey; until then this is the honest behaviour.
+        NSApp.appearance = NSAppearance(named: .aqua)
+        // Dev hook: RPLAYHUB_APPEARANCE=dark|light overrides that, which is how the Dark Mode
+        // failure above can be reproduced on a Mac without changing the Mac's own setting.
+        if let want = ProcessInfo.processInfo.environment["RPLAYHUB_APPEARANCE"] {
+            NSApp.appearance = NSAppearance(named: want == "dark" ? .darkAqua : .aqua)
+        }
         buildMenu()
         buildWindow()
         // Developer reset: clear any File Provider domains this provider owns before polling —
