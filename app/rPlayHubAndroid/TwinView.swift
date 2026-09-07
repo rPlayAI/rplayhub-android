@@ -236,49 +236,18 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
         return scene
     }
 
-    /// The phone itself — body, glass panel, and the back — as a free-standing node, so the same
-    /// device can stand in the live twin and in the hero renderer (HeroComposer) alike. The
-    /// panel's material is returned for the caller to paint the live frame onto.
-    /// `bezel` is the body's width over the panel's (1.06 = a slim bezel); `shell` the body's
-    /// grey. The hero renderer asks for a wider, lighter frame so the rails read on camera.
-    static func makePhone(displaySize: CGSize, bezel: CGFloat = 1.06,
-                          shell shellWhite: CGFloat = 0.13) -> (node: SCNNode, screen: SCNMaterial) {
-        let aspect = displaySize.width > 0 && displaySize.height > 0
-            ? displaySize.width / displaySize.height
-            : 9.0 / 19.5
-        let bodyHeight: CGFloat = 1.5
-        let bodyWidth = bodyHeight * aspect * bezel       // a slim bezel beyond the panel
-        let bodyDepth = bodyWidth * 0.10
-
-        let body = SCNBox(width: bodyWidth, height: bodyHeight, length: bodyDepth,
-                          chamferRadius: bodyWidth * 0.07)
-        let shell = SCNMaterial()
-        shell.diffuse.contents = NSColor(calibratedWhite: shellWhite, alpha: 1)
-        shell.specular.contents = NSColor(calibratedWhite: 0.6, alpha: 1)
-        shell.shininess = 0.6
-        body.materials = [shell]
-
-        let phone = SCNNode(geometry: body)
-
-        // The panel floats a hair in front of the body. Unlit: it is a light source, not a
-        // surface — the video should not dim as the phone tilts away from the key light.
-        let panel = SCNPlane(width: bodyHeight * aspect, height: bodyHeight)
-        let screen = SCNMaterial()
-        screen.lightingModel = .constant
-        screen.diffuse.contents = NSColor.black
-        screen.isDoubleSided = false
-        panel.materials = [screen]
-        let panelNode = SCNNode(geometry: panel)
-        panelNode.name = "panel"           // hit-tested for touch input (TwinSCNView)
-        panelNode.position = SCNVector3(0, 0, bodyDepth / 2 + 0.002)
-        phone.addChildNode(panelNode)
-
-        // A camera-hole dot, purely so the top of the device reads as "top" from any angle.
-        // Centred, just under the top edge, where a Pixel's punch hole sits.
-        let dot = SCNNode(geometry: SCNSphere(radius: bodyWidth * 0.018))
-        dot.geometry?.firstMaterial?.diffuse.contents = NSColor.black
-        dot.position = SCNVector3(0, bodyHeight * 0.47, bodyDepth / 2 + 0.004)
-        phone.addChildNode(dot)
+    /// The twin wears the same chassis as the hero renderer — one phone, built once in
+    /// HeroComposer.makeHeroPhone: two-tone polished rail, bright chamfer, glass, punch hole,
+    /// antenna breaks and the buttons on the right rail. What the twin adds is the BACK, because
+    /// unlike a hero still the twin turns around: either a user-supplied device photo or the
+    /// procedural Pixel back below.
+    static func makePhone(displaySize: CGSize) -> (node: SCNNode, screen: SCNMaterial) {
+        let built = HeroComposer.makeHeroPhone(displaySize: displaySize, finish: .graphite)
+        let phone = built.node
+        let screen = built.screen
+        let bodyWidth = built.width
+        let bodyHeight = built.height
+        let bodyDepth = built.depth
 
         // A user-supplied back image wins: texture it straight onto the back face so the twin
         // wears whatever device the user handed it — a Samsung, a Xiaomi, anything. When one is

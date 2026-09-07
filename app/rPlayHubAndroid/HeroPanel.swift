@@ -53,6 +53,7 @@ final class HeroPanel: NSView {
     private let badgeSwitch = NSSwitch()
     private var sliders: [Slider: NSSlider] = [:]
     private let sizePopup = NSPopUpButton()
+    private let finishPopup = NSPopUpButton()
     private let motionPopup = NSPopUpButton()
     private let exportButton = NSButton(title: "Export PNG…", target: nil, action: nil)
     private let packButton = NSButton(title: "Export Pack…", target: nil, action: nil)
@@ -200,6 +201,14 @@ final class HeroPanel: NSView {
         sizePopup.selectItem(at: min(UserDefaults.standard.integer(forKey: "HeroSizeIndex"), HeroSize.all.count - 1))
         sizePopup.target = self
         sizePopup.action = #selector(sizeChanged)
+        finishPopup.controlSize = .small
+        finishPopup.font = .systemFont(ofSize: 11)
+        for f in HeroFinish.allCases { finishPopup.addItem(withTitle: f.title) }
+        finishPopup.selectItem(at: HeroFinish.allCases.firstIndex(of: style.finish) ?? 0)
+        finishPopup.target = self
+        finishPopup.action = #selector(finishChanged)
+        rows.append(labelled("Finish", finishPopup))
+
         rows.append(labelled("Output", sizePopup))
 
         motionPopup.controlSize = .small
@@ -320,8 +329,8 @@ final class HeroPanel: NSView {
         let displaySize = displaySizeSource?() ?? CGSize(width: 1080, height: 2400)
         queue.async { [weak self] in
             guard let self else { return }
-            if self.composer == nil || self.composerSize != displaySize {
-                self.composer = HeroComposer(displaySize: displaySize)
+            if self.composer == nil || self.composerSize != displaySize || self.composer?.finish != self.style.finish {
+                self.composer = HeroComposer(displaySize: displaySize, finish: self.style.finish)
                 self.composerSize = displaySize
             }
             if let frame { self.composer?.setFrame(frame) }
@@ -389,6 +398,11 @@ final class HeroPanel: NSView {
         case .offsetX: style.offsetX = v
         case .offsetY: style.offsetY = v
         }
+        styleChanged()
+    }
+
+    @objc private func finishChanged() {
+        style.finish = HeroFinish.allCases[max(finishPopup.indexOfSelectedItem, 0)]
         styleChanged()
     }
 
@@ -489,8 +503,8 @@ final class HeroPanel: NSView {
     /// Queue only. Keeps one composer per display size and paints the newest frame before rendering.
     private func compose(frame: CVPixelBuffer?, displaySize: CGSize, size: CGSize, style: HeroStyle,
                          pose: HeroComposer.Pose?, supersample: Bool = true) -> CGImage? {
-        if composer == nil || composerSize != displaySize {
-            composer = HeroComposer(displaySize: displaySize)
+        if composer == nil || composerSize != displaySize || composer?.finish != style.finish {
+            composer = HeroComposer(displaySize: displaySize, finish: style.finish)
             composerSize = displaySize
         }
         guard let composer else { return nil }
