@@ -9,11 +9,11 @@
 #include <cstdlib>
 #include <iostream>
 
+#include "window_effects.h"
+
 #ifdef RPLAYHUB_HAVE_X11
 #include <SDL2/SDL_syswm.h>
 #include <X11/Xlib.h>
-#include <X11/Xutil.h>
-#include <GL/glx.h>
 #endif
 
 namespace rplayhub {
@@ -24,40 +24,6 @@ namespace {
 constexpr float kBezel = 0.045f;        // bezel each side, of the screen width
 constexpr float kChassisSpan = 0.9f;    // chassis width as a share of the window width
 constexpr float kChassisGap = 2.0f;     // scaled px between the chassis and each bar
-
-// The X11 shape extension would be the classic way to round a window, but GNOME Shell on X11
-// paints unframed shaped windows square (xeyes comes out as a black rectangle). What every
-// compositor does honour is a window with an alpha channel, so the pop-out asks SDL for a
-// 32-bit TrueColor visual that GLX can draw to and paints its corners transparent.
-std::string argbVisualId() {
-#ifdef RPLAYHUB_HAVE_X11
-    const char* driver = SDL_GetCurrentVideoDriver();
-    if (!driver || std::string(driver) != "x11") return "";
-    Display* dpy = XOpenDisplay(nullptr);
-    if (!dpy) return "";
-    std::string id;
-    XVisualInfo tmpl{};
-    tmpl.screen = DefaultScreen(dpy);
-    tmpl.depth = 32;
-    tmpl.c_class = TrueColor;
-    int n = 0;
-    XVisualInfo* vis = XGetVisualInfo(dpy, VisualScreenMask | VisualDepthMask | VisualClassMask, &tmpl, &n);
-    for (int i = 0; i < n && id.empty(); ++i) {
-        int use_gl = 0, rgba = 0, dbl = 0, alpha = 0;
-        if (glXGetConfig(dpy, &vis[i], GLX_USE_GL, &use_gl) == 0 && use_gl &&
-            glXGetConfig(dpy, &vis[i], GLX_RGBA, &rgba) == 0 && rgba &&
-            glXGetConfig(dpy, &vis[i], GLX_DOUBLEBUFFER, &dbl) == 0 && dbl &&
-            glXGetConfig(dpy, &vis[i], GLX_ALPHA_SIZE, &alpha) == 0 && alpha >= 8) {
-            id = std::to_string(vis[i].visualid);
-        }
-    }
-    if (vis) XFree(vis);
-    XCloseDisplay(dpy);
-    return id;
-#else
-    return "";
-#endif
-}
 
 } // namespace
 
@@ -90,9 +56,21 @@ DisplayWindow::DisplayWindow(int32_t display_id, const std::string& title, int w
     if (!window_) return;
     if (const char* fixed = std::getenv("RPLAYHUB_POPOUT_FIXED")) grow_mode_ = std::atoi(fixed) == 0;
     SDL_SetWindowHitTest(window_, &DisplayWindow::hitTest, this);
+
+    cursor_arrow_ = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_ARROW);
+    cursor_resize_ew_ = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_SIZEWE);
+    cursor_resize_ns_ = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_SIZENS);
+    cursor_resize_nwse_ = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_SIZENWSE);
+    cursor_resize_nesw_ = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_SIZENESW);
 }
 
 DisplayWindow::~DisplayWindow() {
+    if (cursor_arrow_) { SDL_FreeCursor(cursor_arrow_); cursor_arrow_ = nullptr; }
+    if (cursor_resize_ew_) { SDL_FreeCursor(cursor_resize_ew_); cursor_resize_ew_ = nullptr; }
+    if (cursor_resize_ns_) { SDL_FreeCursor(cursor_resize_ns_); cursor_resize_ns_ = nullptr; }
+    if (cursor_resize_nwse_) { SDL_FreeCursor(cursor_resize_nwse_); cursor_resize_nwse_ = nullptr; }
+    if (cursor_resize_nesw_) { SDL_FreeCursor(cursor_resize_nesw_); cursor_resize_nesw_ = nullptr; }
+
     if (ui_) {
         ImGuiContext* prev = ImGui::GetCurrentContext();
         ImGui::SetCurrentContext(ui_);
@@ -128,33 +106,7 @@ void DisplayWindow::cutCorners(int out_w, int out_h, float px_per_unit) {
         }
     }
     const float r = (bare_r + (normal_r - bare_r) * chrome_alpha_) * px_per_unit;
-    const int ri = static_cast<int>(std::ceil(r));
-    if (ri <= 0) return;
-    static const SDL_BlendMode scale_by_alpha = SDL_ComposeCustomBlendMode(
-        SDL_BLENDFACTOR_ZERO, SDL_BLENDFACTOR_SRC_ALPHA, SDL_BLENDOPERATION_ADD,
-        SDL_BLENDFACTOR_ZERO, SDL_BLENDFACTOR_SRC_ALPHA, SDL_BLENDOPERATION_ADD);
-    const bool aa = SDL_SetRenderDrawBlendMode(renderer_, scale_by_alpha) == 0;
-    if (!aa) SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_NONE);
-    for (int i = 0; i < ri; ++i) {
-        const float d = r - (i + 0.5f);
-        const float xb = r - std::sqrt(std::max(0.0f, r * r - d * d));   // where the arc crosses this row
-        const int full = static_cast<int>(std::floor(xb));
-        const int y_top = i, y_bot = out_h - 1 - i;
-        if (full > 0) {
-            SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 0);
-            SDL_Rect rows[4] = { {0, y_top, full, 1}, {out_w - full, y_top, full, 1},
-                                 {0, y_bot, full, 1}, {out_w - full, y_bot, full, 1} };
-            SDL_RenderFillRects(renderer_, rows, 4);
-        }
-        if (aa) {
-            const float coverage = std::clamp(full + 1.0f - xb, 0.0f, 1.0f);
-            SDL_SetRenderDrawColor(renderer_, 0, 0, 0, static_cast<Uint8>(coverage * 255.0f));
-            SDL_Rect edge[4] = { {full, y_top, 1, 1}, {out_w - 1 - full, y_top, 1, 1},
-                                 {full, y_bot, 1, 1}, {out_w - 1 - full, y_bot, 1, 1} };
-            SDL_RenderFillRects(renderer_, edge, 4);
-        }
-    }
-    SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_NONE);
+    rplayhub::cutCorners(renderer_, out_w, out_h, r);
 }
 
 SDL_HitTestResult DisplayWindow::hitTest(SDL_Window* win, const SDL_Point* pt, void* data) {
@@ -399,6 +351,10 @@ bool DisplayWindow::handleEvent(const SDL_Event& e, AgentSession* session) {
     case SDL_WINDOWEVENT:
         if (e.window.windowID != id) return false;
         if (e.window.event == SDL_WINDOWEVENT_CLOSE) requestClose("window manager");
+        if (e.window.event == SDL_WINDOWEVENT_LEAVE && cursor_overridden_) {
+            SDL_SetCursor(cursor_arrow_);
+            cursor_overridden_ = false;
+        }
         return true;
     case SDL_MOUSEBUTTONDOWN:
     case SDL_MOUSEBUTTONUP: {
@@ -435,6 +391,25 @@ bool DisplayWindow::handleEvent(const SDL_Event& e, AgentSession* session) {
             int dx, dy;
             mapToDisplay(e.motion.x, e.motion.y, dx, dy);
             session->sendTouch(dx, dy, MotionAction::MOVE, display_id_);
+        } else if (!touch_down_) {
+            int w = 0, h = 0;
+            SDL_GetWindowSize(window_, &w, &h);
+            int mx = e.motion.x, my = e.motion.y;
+            const int edge = static_cast<int>(std::max(8.0f, 7.0f * chrome_.scale));
+            bool l = (mx < edge), r = (mx >= w - edge), t = (my < edge), b = (my >= h - edge);
+            SDL_Cursor* target = nullptr;
+            if ((t && l) || (b && r)) target = cursor_resize_nwse_;
+            else if ((t && r) || (b && l)) target = cursor_resize_nesw_;
+            else if (l || r) target = cursor_resize_ew_;
+            else if (t || b) target = cursor_resize_ns_;
+
+            if (target) {
+                SDL_SetCursor(target);
+                cursor_overridden_ = true;
+            } else if (cursor_overridden_) {
+                SDL_SetCursor(cursor_arrow_);
+                cursor_overridden_ = false;
+            }
         }
         return true;
     }
@@ -717,17 +692,20 @@ void DisplayWindow::renderChrome(int win_w, int win_h, int out_w, int out_h) {
             px = bx + (cx - bx) * e; py = by + (cy - by) * e;
             pw = bw + (cw - bw) * e; ph = bh + (ch - bh) * e;
         }
+        ImVec2 uv0, uv1;                                // drop the frame's edge texels
+        VideoUvInset(tex_w_, tex_h_, uv0, uv1);
         if (isPhone()) {
             // The chassis is there in both modes, like the Mac's (doc/mirror-and-youtube.png)
             const float bezel = kBezel * pw;
             dl->AddRectFilled(ImVec2(px - bezel, py - bezel), ImVec2(px + pw + bezel, py + ph + bezel),
                               IM_COL32(6, 6, 8, 255), 0.16f * pw);
             DrawImageTurned(dl, (ImTextureID)(intptr_t)texture_, ImVec2(px, py), ImVec2(px + pw, py + ph), turn_,
-                                   IM_COL32_WHITE, 0.12f * std::min(pw, ph));
+                                   IM_COL32_WHITE, 0.12f * std::min(pw, ph), uv0, uv1);
             dl->AddCircleFilled(ImVec2(px + pw * 0.5f, py + 0.07f * pw), 0.041f * pw, IM_COL32(0, 0, 0, 255), 32);
         } else {
             dl->AddRectFilled(ImVec2(0, top_h * e), ImVec2(W, H), IM_COL32(0, 0, 0, 255));
-            DrawImageTurned(dl, (ImTextureID)(intptr_t)texture_, ImVec2(px, py), ImVec2(px + pw, py + ph), turn_);
+            DrawImageTurned(dl, (ImTextureID)(intptr_t)texture_, ImVec2(px, py), ImVec2(px + pw, py + ph), turn_,
+                                   IM_COL32_WHITE, 0.0f, uv0, uv1);
         }
         image_rect_ = { static_cast<int>(px), static_cast<int>(py), static_cast<int>(pw), static_cast<int>(ph) };
     }

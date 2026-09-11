@@ -498,20 +498,31 @@ inline bool IconButton(const char* str_id,
 
 // Draw a texture into a rectangle turned by `quadrants` * 90 degrees counter-clockwise (the
 // way an Android display rotation 1 turns: the top edge goes to the left); with no turn the
-// corners can be rounded (ImGui only rounds axis-aligned images).
+// corners can be rounded (ImGui only rounds axis-aligned images). `uv0`/`uv1` name the part
+// of the texture to show: video frames pass an inset so the outermost texels, which carry
+// the encoder's edge garbage, never reach the screen.
 inline void DrawImageTurned(ImDrawList* dl, ImTextureID tex, ImVec2 p_min, ImVec2 p_max, int quadrants,
-                            ImU32 col = IM_COL32_WHITE, float rounding = 0.0f) {
+                            ImU32 col = IM_COL32_WHITE, float rounding = 0.0f,
+                            ImVec2 uv0 = ImVec2(0, 0), ImVec2 uv1 = ImVec2(1, 1)) {
     quadrants = ((quadrants % 4) + 4) % 4;
     if (quadrants == 0) {
-        dl->AddImageRounded(tex, p_min, p_max, ImVec2(0, 0), ImVec2(1, 1), col, rounding);
+        dl->AddImageRounded(tex, p_min, p_max, uv0, uv1, col, rounding);
         return;
     }
     // Texture corners in order TL, TR, BR, BL; the quad's corners take them shifted round.
-    const ImVec2 uv[4] = { ImVec2(0, 0), ImVec2(1, 0), ImVec2(1, 1), ImVec2(0, 1) };
+    const ImVec2 uv[4] = { uv0, ImVec2(uv1.x, uv0.y), uv1, ImVec2(uv0.x, uv1.y) };
     const ImVec2 p1 = p_min, p2(p_max.x, p_min.y), p3 = p_max, p4(p_min.x, p_max.y);
     // Counter-clockwise by one quadrant: the texture's top-right lands at the quad's top-left.
     const int k = quadrants;
     dl->AddImageQuad(tex, p1, p2, p3, p4, uv[k % 4], uv[(k + 1) % 4], uv[(k + 2) % 4], uv[(k + 3) % 4], col);
+}
+
+// The UV window of a video frame with its outermost `texels` cropped away on every side.
+inline void VideoUvInset(int tex_w, int tex_h, ImVec2& uv0, ImVec2& uv1, float texels = 2.0f) {
+    const float ix = tex_w > 0 ? texels / static_cast<float>(tex_w) : 0.0f;
+    const float iy = tex_h > 0 ? texels / static_cast<float>(tex_h) : 0.0f;
+    uv0 = ImVec2(ix, iy);
+    uv1 = ImVec2(1.0f - ix, 1.0f - iy);
 }
 
 // A macOS-style switch (NSSwitch): a pill track, accent blue when on, with a white knob that
