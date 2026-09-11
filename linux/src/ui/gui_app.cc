@@ -1,6 +1,7 @@
 #include "gui_app.h"
 #include "theme.h"
 #include "icons.h"
+#include "window_effects.h"
 #include "protocol/control_messages.h"
 #include "util/png_decode.h"
 
@@ -81,33 +82,58 @@ bool GuiApp::init() {
 
     // Borderless: the window draws its own macOS-style title bar (traffic lights, toolbar,
     // menus); SDL's hit test makes the bar drag the window and the edges resize it.
-    SDL_WindowFlags window_flags = (SDL_WindowFlags)(SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI |
-                                                     (system_titlebar_ ? 0 : SDL_WINDOW_BORDERLESS));
-    window_ = SDL_CreateWindow(
-        "rPlayHub Android",
-        SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-        win_w, win_h,
-        window_flags
-    );
+    // For rounded corners, we request a 32-bit ARGB TrueColor visual on X11 / Wayland with alpha channel.
+    // Set RPLAYHUB_NO_ARGB=1 to take a plain opaque window (square corners): the compositor
+    // then copies the window instead of blending it, which is the A/B test for edge artifacts.
+    const bool no_argb = ::getenv("RPLAYHUB_NO_ARGB") != nullptr;
+    const std::string argb_visual = (system_titlebar_ || no_argb) ? "" : argbVisualId();
+    for (int attempt = 0; attempt < 2 && !renderer_; ++attempt) {
+        const bool argb = (attempt == 0 && !argb_visual.empty());
+        if (attempt == 1 && argb_visual.empty()) break;
+        if (argb) SDL_SetHint(SDL_HINT_VIDEO_X11_WINDOW_VISUALID, argb_visual.c_str());
 
-    if (!window_) {
-        std::cerr << "Error: SDL_CreateWindow: " << SDL_GetError() << "\n";
+        SDL_WindowFlags window_flags = (SDL_WindowFlags)(
+            SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI |
+            (system_titlebar_ ? 0 : (SDL_WINDOW_BORDERLESS | (argb ? SDL_WINDOW_OPENGL : 0)))
+        );
+
+        window_ = SDL_CreateWindow(
+            "rPlayHub Android",
+            SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
+            win_w, win_h,
+            window_flags
+        );
+
+        if (window_) {
+            renderer_ = SDL_CreateRenderer(window_, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
+            if (!renderer_) renderer_ = SDL_CreateRenderer(window_, -1, 0);
+        }
+        if (argb) SDL_ResetHint(SDL_HINT_VIDEO_X11_WINDOW_VISUALID);
+
+        if (!window_ || !renderer_) {
+            if (window_) { SDL_DestroyWindow(window_); window_ = nullptr; }
+            continue;
+        }
+        argb_ = argb;
+    }
+
+    if (!window_ || !renderer_) {
+        std::cerr << "Error: Window/Renderer creation failed: " << SDL_GetError() << "\n";
         return false;
     }
+
     if (!system_titlebar_ && SDL_SetWindowHitTest(window_, &GuiApp::hitTest, this) != 0) {
         std::cerr << "Window hit testing unavailable (" << SDL_GetError() << "); using the system title bar\n";
         SDL_SetWindowBordered(window_, SDL_TRUE);
         system_titlebar_ = true;
     }
 
-    renderer_ = SDL_CreateRenderer(window_, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
-    if (!renderer_) {
-        renderer_ = SDL_CreateRenderer(window_, -1, 0);
-    }
-    if (!renderer_) {
-        std::cerr << "Error: SDL_CreateRenderer: " << SDL_GetError() << "\n";
-        return false;
-    }
+    // System cursors for window edge resizing
+    cursor_arrow_ = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_ARROW);
+    cursor_resize_ew_ = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_SIZEWE);
+    cursor_resize_ns_ = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_SIZENS);
+    cursor_resize_nwse_ = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_SIZENWSE);
+    cursor_resize_nesw_ = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_SIZENESW);
     {
         SDL_RendererInfo info;
         if (SDL_GetRendererInfo(renderer_, &info) == 0) {
@@ -310,10 +336,17 @@ void GuiApp::cleanup() {
         SDL_DestroyRenderer(renderer_);
         renderer_ = nullptr;
     }
+    if (cursor_arrow_) { SDL_FreeCursor(cursor_arrow_); cursor_arrow_ = nullptr; }
+    if (cursor_resize_ew_) { SDL_FreeCursor(cursor_resize_ew_); cursor_resize_ew_ = nullptr; }
+    if (cursor_resize_ns_) { SDL_FreeCursor(cursor_resize_ns_); cursor_resize_ns_ = nullptr; }
+    if (cursor_resize_nwse_) { SDL_FreeCursor(cursor_resize_nwse_); cursor_resize_nwse_ = nullptr; }
+    if (cursor_resize_nesw_) { SDL_FreeCursor(cursor_resize_nesw_); cursor_resize_nesw_ = nullptr; }
+
     if (window_) {
         SDL_DestroyWindow(window_);
         window_ = nullptr;
     }
+
     SDL_Quit();
 }
 
@@ -990,7 +1023,7 @@ SDL_HitTestResult GuiApp::hitTest(SDL_Window* win, const SDL_Point* pt, void* da
     int w = 0, h = 0;
     SDL_GetWindowSize(win, &w, &h);
     const bool maximized = SDL_GetWindowFlags(win) & SDL_WINDOW_MAXIMIZED;
-    const int edge = 6;
+    const int edge = static_cast<int>(std::max(8.0f, 7.0f * app->scale_));
     if (!maximized) {
         bool l = pt->x < edge, r = pt->x >= w - edge, t = pt->y < edge, b = pt->y >= h - edge;
         if (t && l) return SDL_HITTEST_RESIZE_TOPLEFT;
@@ -1014,6 +1047,86 @@ SDL_HitTestResult GuiApp::hitTest(SDL_Window* win, const SDL_Point* pt, void* da
                   << " (" << app->no_drag_rects_.size() << " widget rects, bar " << app->menu_h_ << ")\n";
     }
     return result;
+}
+
+void GuiApp::updateResizeCursor() {
+    if (system_titlebar_ || !window_) return;
+    Uint32 win_flags = SDL_GetWindowFlags(window_);
+    if (win_flags & SDL_WINDOW_MAXIMIZED) {
+        if (cursor_overridden_) {
+            SDL_SetCursor(cursor_arrow_);
+            ImGui::SetMouseCursor(ImGuiMouseCursor_Arrow);
+            cursor_overridden_ = false;
+        }
+        is_resizing_border_ = false;
+        active_resize_cursor_ = nullptr;
+        return;
+    }
+
+    int win_w = 0, win_h = 0;
+    SDL_GetWindowSize(window_, &win_w, &win_h);
+    int mx = 0, my = 0;
+    Uint32 buttons = SDL_GetMouseState(&mx, &my);
+    const bool left_down = (buttons & SDL_BUTTON(SDL_BUTTON_LEFT)) != 0;
+
+    if (left_down) {
+        if (is_resizing_border_ && active_resize_cursor_) {
+            SDL_SetCursor(active_resize_cursor_);
+            ImGui::SetMouseCursor(active_resize_imgui_cursor_);
+            cursor_overridden_ = true;
+            return;
+        }
+        // Button down on non-border: preserve standard interaction
+        return;
+    }
+
+    is_resizing_border_ = false;
+    active_resize_cursor_ = nullptr;
+
+    if (mx < 0 || mx >= win_w || my < 0 || my >= win_h) {
+        if (cursor_overridden_) {
+            SDL_SetCursor(cursor_arrow_);
+            ImGui::SetMouseCursor(ImGuiMouseCursor_Arrow);
+            cursor_overridden_ = false;
+        }
+        return;
+    }
+
+    const int edge = static_cast<int>(std::max(8.0f, 7.0f * scale_));
+    bool l = (mx < edge);
+    bool r = (mx >= win_w - edge);
+    bool t = (my < edge);
+    bool b = (my >= win_h - edge);
+
+    SDL_Cursor* target = nullptr;
+    ImGuiMouseCursor imgui_target = ImGuiMouseCursor_Arrow;
+
+    if ((t && l) || (b && r)) {
+        target = cursor_resize_nwse_;
+        imgui_target = ImGuiMouseCursor_ResizeNWSE;
+    } else if ((t && r) || (b && l)) {
+        target = cursor_resize_nesw_;
+        imgui_target = ImGuiMouseCursor_ResizeNESW;
+    } else if (l || r) {
+        target = cursor_resize_ew_;
+        imgui_target = ImGuiMouseCursor_ResizeEW;
+    } else if (t || b) {
+        target = cursor_resize_ns_;
+        imgui_target = ImGuiMouseCursor_ResizeNS;
+    }
+
+    if (target) {
+        is_resizing_border_ = true;
+        active_resize_cursor_ = target;
+        active_resize_imgui_cursor_ = imgui_target;
+        SDL_SetCursor(target);
+        ImGui::SetMouseCursor(imgui_target);
+        cursor_overridden_ = true;
+    } else if (cursor_overridden_) {
+        SDL_SetCursor(cursor_arrow_);
+        ImGui::SetMouseCursor(ImGuiMouseCursor_Arrow);
+        cursor_overridden_ = false;
+    }
 }
 
 // Close, minimise, zoom: drawn like macOS, with the glyphs on hover.
@@ -1065,7 +1178,7 @@ void GuiApp::renderMenuBar() {
     // the device pill and status, the inspector icons. It is the main menu bar with a tall
     // frame, which puts it at the top of the viewport.
     if (!system_titlebar_) {
-        const float bar_h = 40.0f * scale_;
+        const float bar_h = 48.0f * scale_;   // header-bar height: room around the toolbar
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10.0f * scale_, (bar_h - ImGui::GetFontSize()) * 0.5f));
         ImGui::PushStyleColor(ImGuiCol_MenuBarBg, IM_COL32(247, 247, 250, 255));
         if (ImGui::BeginMainMenuBar()) {
@@ -1756,6 +1869,16 @@ void GuiApp::run() {
                 && event.window.windowID == SDL_GetWindowID(window_)) {
                 done = true;
             }
+            if (event.type == SDL_MOUSEMOTION) {
+                updateResizeCursor();
+            } else if (event.type == SDL_WINDOWEVENT && event.window.event == SDL_WINDOWEVENT_LEAVE) {
+                if (cursor_overridden_) {
+                    SDL_SetCursor(cursor_arrow_);
+                    ImGui::SetMouseCursor(ImGuiMouseCursor_Arrow);
+                    cursor_overridden_ = false;
+                    is_resizing_border_ = false;
+                }
+            }
             if (event.type == SDL_DROPFILE && event.drop.file) {
                 std::string path = event.drop.file;
                 SDL_free(event.drop.file);
@@ -1810,11 +1933,30 @@ void GuiApp::run() {
             ImGui::PopStyleColor(2);
         }
 
+        updateResizeCursor();
+
+        // GNOME-style window outline: one hairline hugging the rounded edge, on the
+        // foreground list so it draws over every pane. The radius matches the alpha
+        // cut below, so the stroke follows the corner instead of being sliced off.
+        if (!(SDL_GetWindowFlags(window_) & SDL_WINDOW_MAXIMIZED)) {
+            const float radius = system_titlebar_ ? 0.0f : 11.0f * scale_;
+            ImGui::GetForegroundDrawList()->AddRect(
+                ImVec2(0.5f, 0.5f), ImVec2(static_cast<float>(win_w) - 0.5f, static_cast<float>(win_h) - 0.5f),
+                IM_COL32(0, 0, 0, 100), radius, 0, 1.0f);
+        }
+
         // Rendering
         ImGui::Render();
         SDL_SetRenderDrawColor(renderer_, 247, 247, 250, 255);
         SDL_RenderClear(renderer_);
         ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData(), renderer_);
+
+        if (argb_ && !system_titlebar_ && !(SDL_GetWindowFlags(window_) & SDL_WINDOW_MAXIMIZED)) {
+            int out_w = 0, out_h = 0;
+            SDL_GetRendererOutputSize(renderer_, &out_w, &out_h);
+            float px_per_unit = win_w > 0 ? static_cast<float>(out_w) / win_w : 1.0f;
+            cutCorners(renderer_, out_w, out_h, 11.0f * scale_ * px_per_unit);
+        }
 
         frame_count_++;
         // Dump once the UI has settled and, if a mirror was requested, once the
@@ -2148,8 +2290,12 @@ void GuiApp::renderCenterStage(float start_x, float width, float height) {
     height -= menu_h_;
     ImGui::SetNextWindowPos(ImVec2(start_x, menu_h_));
     ImGui::SetNextWindowSize(ImVec2(width, height));
+    // The stage is an absolutely positioned layout (phone / mirror, then the control strip
+    // pinned to the bottom band), so it never scrolls: the strip sitting a few pixels into
+    // the window's bottom padding must not raise a scrollbar down the middle pane.
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
-                             ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse;
+                             ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse |
+                             ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
 
     ImGui::PushStyleColor(ImGuiCol_WindowBg, Theme::ColorBgStage);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(16.0f * scale_, 12.0f * scale_));
@@ -2358,6 +2504,11 @@ void GuiApp::uploadLiveTexture(const DecodedFrame& frame) {
             std::cerr << "SDL_CreateTexture: " << SDL_GetError() << "\n";
             return;
         }
+        // Blend, don't overwrite: the rounded picture's antialiased edge carries alpha < 255,
+        // and a texture drawn with BLENDMODE_NONE writes that alpha straight into the window.
+        // On the ARGB visual those pixels are holes, so the desktop shows through as a light
+        // hairline around the picture. Same fix the pop-out window already carries.
+        SDL_SetTextureBlendMode(video_texture_, SDL_BLENDMODE_BLEND);
         tex_w_ = frame.width;
         tex_h_ = frame.height;
         tex_format_ = frame.format;
@@ -2419,17 +2570,19 @@ void GuiApp::renderLiveMirror(ImVec2 origin, ImVec2 size, const DecodedFrame& fr
 
     ImDrawList* draw_list = ImGui::GetWindowDrawList();
 
-    // Black Phone Bezel Surround (~12px margin scaled)
+    // Black Phone Bezel Surround (~12px margin scaled), with no rim and no shadow.
     ImVec2 bezel_tl(pos_x - bezel, pos_y - bezel);
     ImVec2 bezel_br(pos_x + target_w + bezel, pos_y + target_h + bezel);
     draw_list->AddRectFilled(bezel_tl, bezel_br, IM_COL32(18, 18, 22, 255), 28.0f * scale_);
-    draw_list->AddRect(bezel_tl, bezel_br, IM_COL32(55, 55, 62, 255), 28.0f * scale_, 0, 1.5f * scale_);
 
     // Live picture with rounded corners matching the phone screen, turned back by the
-    // agent's pre-rotation when there is one
+    // agent's pre-rotation when there is one. The UV inset drops the frame's outer texels:
+    // the encoder leaves stray chroma there, which reads as bright lines on the bezel.
+    ImVec2 uv0, uv1;
+    VideoUvInset(frame.width, frame.height, uv0, uv1);
     DrawImageTurned(draw_list, (ImTextureID)video_texture_, ImVec2(pos_x, pos_y),
                            ImVec2(pos_x + target_w, pos_y + target_h), frame.correctionQuadrants(),
-                           IM_COL32_WHITE, 20.0f * scale_);
+                           IM_COL32_WHITE, 20.0f * scale_, uv0, uv1);
 
     // Punch Hole Camera Cutout at top center
     draw_list->AddCircleFilled(ImVec2(pos_x + target_w * 0.5f, pos_y + 14.0f), 5.0f, IM_COL32(0, 0, 0, 255));
@@ -2751,6 +2904,14 @@ void GuiApp::renderRightInspector(float width, float height) {
     std::string current_serial = (selected_device_idx_ >= 0 && selected_device_idx_ < static_cast<int>(devices_.size()))
                                  ? devices_[selected_device_idx_].serial : "";
 
+    // Tabs that pin a block to the bottom (Apps: count, System apps / Install APK, filter;
+    // Files: the hint line) measure it instead of reserving a fixed number of points. A
+    // fixed reserve is wrong as soon as the fonts and the frame padding scale up, and the
+    // last row then falls off the bottom edge of the pane.
+    const float row_gap = ImGui::GetStyle().ItemSpacing.y;
+    const float pane_bottom = ImGui::GetWindowHeight() - ImGui::GetStyle().WindowPadding.y;
+    const float caption_line = font_caption_ ? font_caption_->FontSize : ImGui::GetTextLineHeight();
+
     // TAB 0: INFO
     if (inspector_tab_ == 0) {
         if (current_serial.empty()) {
@@ -2818,7 +2979,12 @@ void GuiApp::renderRightInspector(float width, float height) {
         } else {
             // Scrollable app list: icon, launcher label, (package). It ends above the
             // count / System apps / Install APK / filter block that sits at the bottom.
-            float list_h = std::max(40.0f * scale_, (height - 80.0f * scale_) - ImGui::GetCursorPosY() - 10.0f * scale_);
+            const float apps_bottom_h = caption_line + row_gap + ImGui::GetFrameHeight() + row_gap + ImGui::GetFrameHeight();
+            const float apps_bottom_y = pane_bottom - apps_bottom_h;
+            const float app_row_pitch = 30.0f * scale_ + row_gap;   // Selectable height + item spacing
+            float list_h = std::max(40.0f * scale_, apps_bottom_y - ImGui::GetCursorPosY() - row_gap);
+            // Land on a whole row: a half-drawn row at the bottom reads as clipped content.
+            list_h = std::max(app_row_pitch, std::floor(list_h / app_row_pitch) * app_row_pitch);
             ImGui::BeginChild("##AppList", ImVec2(width - 24.0f * scale_, list_h), false);
             ImDrawList* list_dl = ImGui::GetWindowDrawList();   // the child's: rows clip to the list
 
@@ -2951,7 +3117,7 @@ void GuiApp::renderRightInspector(float width, float height) {
             }
 
             // Bottom Apps Controls
-            ImGui::SetCursorPosY(height - 80.0f * scale_);
+            ImGui::SetCursorPosY(apps_bottom_y);
             std::ostringstream pkg_cnt;
             if (!apps_status_.empty()) pkg_cnt << apps_status_;
             else pkg_cnt << matched_count << " packages" << (app_labels_loading_ ? ", loading icons..." : "");
@@ -3004,7 +3170,17 @@ void GuiApp::renderRightInspector(float width, float height) {
                 refreshFiles(current_serial);
             }
 
-            float list_h = height - 128.0f * scale_;
+            // The hint under the list wraps, so measure it in the caption font and give the
+            // list whatever is left; a fixed reserve cut the last row off at this scale.
+            static const char* const kFilesHint =
+                "Double-click a folder to open it, a file to save it. Drop a file here to send it.";
+            const float files_wrap_w = width - 24.0f * scale_;
+            if (font_caption_) ImGui::PushFont(font_caption_);
+            const float files_hint_h = ImGui::CalcTextSize(kFilesHint, nullptr, false, files_wrap_w).y;
+            if (font_caption_) ImGui::PopFont();
+
+            float list_h = std::max(40.0f * scale_,
+                                    pane_bottom - files_hint_h - row_gap - ImGui::GetCursorPosY() - row_gap);
             ImGui::BeginChild("##FileList", ImVec2(width - 24.0f * scale_, list_h), false);
             ImDrawList* list_dl = ImGui::GetWindowDrawList();   // the child's: rows clip to the list
             float row_w = width - 24.0f * scale_;
@@ -3116,15 +3292,17 @@ void GuiApp::renderRightInspector(float width, float height) {
             }
 
             if (font_caption_) ImGui::PushFont(font_caption_);
-            ImGui::TextColored(Theme::ColorTextTertiary, "Double-click a folder to open it, a file to save it. Drop a file here to send it.");
+            ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + files_wrap_w);
+            ImGui::TextColored(Theme::ColorTextTertiary, "%s", kFilesHint);
+            ImGui::PopTextWrapPos();
             if (font_caption_) ImGui::PopFont();
         }
     }
     // TAB 3: LOGCAT
     else if (inspector_tab_ == 3) {
         ImGui::TextColored(Theme::ColorTextSecondary, "Session Logs");
-        float list_h = height - 100.0f;
-        ImGui::BeginChild("##LogList", ImVec2(width - 24.0f, list_h), true);
+        float list_h = std::max(40.0f * scale_, pane_bottom - ImGui::GetCursorPosY());
+        ImGui::BeginChild("##LogList", ImVec2(width - 24.0f * scale_, list_h), true);
         if (session_) {
             auto logs = session_->getLogs();
             for (const auto& l : logs) {
@@ -3147,7 +3325,7 @@ void GuiApp::renderRightInspector(float width, float height) {
             ImGui::PopItemWidth();
             ImGui::SameLine();
             if (ImGui::Button(crash_loading_ ? "Loading..." : "Refresh") && !crash_loading_) refreshCrashes(current_serial);
-            float list_h = height - 100.0f * scale_;
+            float list_h = std::max(40.0f * scale_, pane_bottom - ImGui::GetCursorPosY());
             ImGui::BeginChild("##CrashList", ImVec2(width - 24.0f * scale_, list_h), true, ImGuiWindowFlags_HorizontalScrollbar);
             if (crash_text_.empty()) ImGui::TextColored(Theme::ColorTextSecondary, crash_loading_ ? "Reading..." : "No crashes recorded");
             else ImGui::TextUnformatted(crash_text_.c_str());

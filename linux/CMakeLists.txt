@@ -67,6 +67,7 @@ set(SOURCES
     src/ui/gui_app.cc
     src/ui/display_window.cc
     src/ui/twin_view.cc
+    src/ui/window_effects.cc
 )
 
 add_executable(rplayhub-android-linux ${SOURCES})

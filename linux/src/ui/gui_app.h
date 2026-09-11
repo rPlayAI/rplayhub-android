@@ -53,7 +53,21 @@ private:
     float scale_ = 0.0f;
     float menu_h_ = 0.0f;                // height of the title bar this frame
     bool system_titlebar_ = false;
+    bool argb_ = false;
     bool sidebar_hidden_ = false;
+
+    // Window resize edge cursor handling
+    SDL_Cursor* cursor_arrow_ = nullptr;
+    SDL_Cursor* cursor_resize_ew_ = nullptr;
+    SDL_Cursor* cursor_resize_ns_ = nullptr;
+    SDL_Cursor* cursor_resize_nwse_ = nullptr;
+    SDL_Cursor* cursor_resize_nesw_ = nullptr;
+    SDL_Cursor* active_resize_cursor_ = nullptr;
+    ImGuiMouseCursor active_resize_imgui_cursor_ = ImGuiMouseCursor_Arrow;
+    bool is_resizing_border_ = false;
+    bool cursor_overridden_ = false;
+    void updateResizeCursor();
+
     // Title-bar hit testing for the borderless window: the strip drags the window except over
     // these widget rectangles (x0, y0, x1, y1 in window pixels), refreshed every frame.
     std::vector<ImVec4> no_drag_rects_;

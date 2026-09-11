@@ -136,6 +136,13 @@ private:
     bool pinned_ = false;
     bool close_requested_ = false;
     std::string close_reason_;
+
+    SDL_Cursor* cursor_arrow_ = nullptr;
+    SDL_Cursor* cursor_resize_ew_ = nullptr;
+    SDL_Cursor* cursor_resize_ns_ = nullptr;
+    SDL_Cursor* cursor_resize_nwse_ = nullptr;
+    SDL_Cursor* cursor_resize_nesw_ = nullptr;
+    bool cursor_overridden_ = false;
 };
 
 } // namespace rplayhub
