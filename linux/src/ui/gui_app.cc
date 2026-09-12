@@ -936,6 +936,12 @@ void GuiApp::pumpAgentEvents() {
         case AgentSession::AgentEvent::ERROR_RESPONSE:
             showToast("Agent: " + ev.text, 6);
             break;
+        case AgentSession::AgentEvent::DEVICE_STATE_CHANGED: {
+            // A foldable folded or unfolded: the display swaps panels and the stream follows.
+            std::string what = ev.text == "CLOSED" ? "Folded" : ev.text == "OPENED" ? "Unfolded" : ev.text == "HALF_OPENED" ? "Half open" : ev.text;
+            showToast(what, 3);
+            break;
+        }
         case AgentSession::AgentEvent::NEW_DISPLAY_STREAM:
             // A display we asked for announces itself by its first packet; requests are
             // answered in the order they were made.
@@ -2494,6 +2500,16 @@ void GuiApp::uploadLiveTexture(const DecodedFrame& frame) {
     if (frame.empty()) return;
 
     if (!video_texture_ || tex_w_ != frame.width || tex_h_ != frame.height || tex_format_ != frame.format) {
+        if (video_texture_ && session_ && session_->isFoldable() && tex_w_ > 0 &&
+            static_cast<float>(tex_w_) / tex_h_ > static_cast<float>(frame.width) / frame.height) {
+            // The stream moved from the (wider) inner panel to the outer one: keep the inner
+            // picture for the fold animation instead of throwing it away.
+            if (fold_inner_tex_) SDL_DestroyTexture(fold_inner_tex_);
+            fold_inner_tex_ = video_texture_;
+            fold_inner_w_ = tex_w_;
+            fold_inner_h_ = tex_h_;
+            video_texture_ = nullptr;
+        }
         if (video_texture_) SDL_DestroyTexture(video_texture_);
         Uint32 sdl_fmt = SDL_PIXELFORMAT_RGBA32;
         if (frame.format == FrameFormat::I420) sdl_fmt = SDL_PIXELFORMAT_IYUV;
@@ -2569,6 +2585,34 @@ void GuiApp::renderLiveMirror(ImVec2 origin, ImVec2 size, const DecodedFrame& fr
     float pos_y = origin.y + (size.y - target_h) * 0.5f;
 
     ImDrawList* draw_list = ImGui::GetWindowDrawList();
+
+    // A foldable: feed the fold model and, while the phone is not flat, draw the hinged
+    // halves (or the outer panel once closed) instead of the flat picture.
+    if (session_ && (session_->isFoldable() || std::getenv("RPLAYHUB_FAKE_HINGE"))) {
+        const auto now = std::chrono::steady_clock::now();
+        const float dt = fold_clock_.time_since_epoch().count() == 0 ? 1.0f / 60.0f
+                       : std::clamp(std::chrono::duration<float>(now - fold_clock_).count(), 0.001f, 0.1f);
+        fold_clock_ = now;
+        float hinge = 0;
+        const bool have_hinge = session_->latestHinge(hinge);
+        fold_.setHinge(hinge, have_hinge);
+        fold_.setState(session_->deviceStateName());
+        fold_.tick(dt);
+        if (fold_.active()) {
+            ImVec2 fuv0, fuv1;
+            const bool current_is_inner = fold_inner_tex_ == nullptr ||
+                static_cast<float>(frame.width) / frame.height >= static_cast<float>(fold_inner_w_) / fold_inner_h_;
+            ImTextureID inner = current_is_inner ? (ImTextureID)video_texture_ : (ImTextureID)fold_inner_tex_;
+            const int iw = current_is_inner ? frame.width : fold_inner_w_, ih = current_is_inner ? frame.height : fold_inner_h_;
+            VideoUvInset(iw, ih, fuv0, fuv1);
+            fold_.render(draw_list, origin, size, inner, iw, ih,
+                         current_is_inner ? (ImTextureID)0 : (ImTextureID)video_texture_, frame.width, frame.height, scale_, fuv0, fuv1);
+            handleTouchInput(ImVec2(pos_x, pos_y), ImVec2(target_w, target_h),
+                             frame.displayWidth, frame.displayHeight, frame.presentedQuadrants());
+            handleKeyboardInput();
+            return;
+        }
+    }
 
     // Black Phone Bezel Surround (~12px margin scaled), with no rim and no shadow.
     ImVec2 bezel_tl(pos_x - bezel, pos_y - bezel);
@@ -2957,9 +3001,22 @@ void GuiApp::renderRightInspector(float width, float height) {
                 row("Rotation", std::to_string(st.rotation));
                 snprintf(buf, sizeof(buf), "%d kbps", st.bit_rate / 1000);
                 row("Bitrate", buf);
+                if (session_->isFoldable()) row("Fold", session_->deviceStateName());
                 if (session_->hasSensorChannel()) {
                     snprintf(buf, sizeof(buf), "%llu pkts", (unsigned long long)session_->orientationPackets());
-                    row("Gyro", buf);
+                    row("Orientation", buf);
+                    float hinge = 0;
+                    if (session_->latestHinge(hinge)) {
+                        snprintf(buf, sizeof(buf), "%.0f\u00b0", hinge);
+                        row("Hinge", buf);
+                    }
+                    for (int g = 0; g < 2; ++g) {
+                        float v[3];
+                        if (session_->latestGyro(g, v)) {
+                            snprintf(buf, sizeof(buf), "%.2f %.2f %.2f rad/s", v[0], v[1], v[2]);
+                            row(g == 0 ? "Gyro A" : "Gyro B", buf);
+                        }
+                    }
                 }
                 if (const AudioPlayer* ap = session_->getAudioPlayer()) {
                     snprintf(buf, sizeof(buf), "%llu pkts, peak %.0f dB", (unsigned long long)ap->packetsReceived(), ap->peakDb());

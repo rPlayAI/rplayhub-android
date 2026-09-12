@@ -3,6 +3,7 @@ plugins {
 }
 
 android {
+    ndkVersion = "27.0.12077973"   // the NDK installed on the Linux build host; AGP would otherwise fetch 28.x
   namespace = "com.android.tools.screensharing"
   compileSdk = 36
 
