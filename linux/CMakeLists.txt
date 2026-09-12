@@ -18,7 +18,7 @@ pkg_check_modules(AVUTIL REQUIRED IMPORTED_TARGET libavutil)
 
 # Xlib + GLX, so the frameless pop-out windows can pick an ARGB visual for their rounded
 # corners (optional; without it the corners are square)
-pkg_check_modules(X11GL IMPORTED_TARGET x11 gl)
+pkg_check_modules(X11GL IMPORTED_TARGET x11 xext gl)
 
 # Fetch Dear ImGui automatically at configure time
 include(FetchContent)
