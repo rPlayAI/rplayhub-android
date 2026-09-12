@@ -102,16 +102,19 @@ private:
     float chrome_alpha_ = 0.0f;       // 0 = hidden, 1 = fully shown
 
     std::chrono::steady_clock::time_point chrome_clock_{};
-    // Default: the window grows around the unchanged raw view to append the bars and
-    // borders (macOS). RPLAYHUB_POPOUT_FIXED=1 keeps the window as it is and fits the
-    // bars inside instead.
-    bool grow_mode_ = true;
-    bool grown_ = false;              // asked the window manager for the grown size
-    int bare_w_ = 0, bare_h_ = 0;     // the raw view's size, which the picture keeps
-    int grown_w_ = 0, grown_h_ = 0;   // the size asked for
-    int grow_dx_ = 0, grow_dy_ = 0;   // margins added left of / above the raw view
-    bool grownSizeReached(int win_w, int win_h) const { return grown_ && win_w == grown_w_ && win_h == grown_h_; }
-    void computeGrownSize();                       // grown_w_/h_ and grow_dx_/dy_ from bare_w_/h_
+    // The window is created at its final size and never changes it: the phone sits in a
+    // "frame box" (bare_w_ x bare_h_ at grow_dx_, grow_dy_) with room around it for the
+    // title bar, the strip and the side margins. Outside the phone the window is
+    // transparent (ARGB) until the bars fade in, and an X input shape passes clicks in the
+    // transparent margins through to whatever is behind. Nothing ever moves or resizes.
+    bool framed_ = false;             // the window already includes the margins
+    int bare_w_ = 0, bare_h_ = 0;     // the phone's box inside the window
+    int grow_dx_ = 0, grow_dy_ = 0;   // where that box starts
+    int grown_w_ = 0, grown_h_ = 0;   // the window size for that box
+    bool input_full_ = true;          // the input shape covers the whole window (bars shown)
+    void frameFromBare(int bw, int bh);            // grown_w_/h_ and grow_dx_/dy_ from a phone box
+    void layoutFromWindow(int win_w, int win_h);   // the phone box from the window's size
+    void applyInputShape(bool full);
     void fitWindowToFrame();                       // the picture turned: portrait window <-> landscape
     int tex_landscape_ = -1;                       // orientation parity of the last texture
     int turn_ = 0;                                 // quadrants the frame is turned back by when drawn
