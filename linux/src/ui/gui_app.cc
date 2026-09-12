@@ -2588,16 +2588,8 @@ void GuiApp::renderLiveMirror(ImVec2 origin, ImVec2 size, const DecodedFrame& fr
 
     // A foldable: feed the fold model and, while the phone is not flat, draw the hinged
     // halves (or the outer panel once closed) instead of the flat picture.
-    if (session_ && (session_->isFoldable() || std::getenv("RPLAYHUB_FAKE_HINGE"))) {
-        const auto now = std::chrono::steady_clock::now();
-        const float dt = fold_clock_.time_since_epoch().count() == 0 ? 1.0f / 60.0f
-                       : std::clamp(std::chrono::duration<float>(now - fold_clock_).count(), 0.001f, 0.1f);
-        fold_clock_ = now;
-        float hinge = 0;
-        const bool have_hinge = session_->latestHinge(hinge);
-        fold_.setHinge(hinge, have_hinge);
-        fold_.setState(session_->deviceStateName());
-        fold_.tick(dt);
+    if (foldModelActive()) {
+        updateFoldModel();
         if (fold_.active()) {
             ImVec2 fuv0, fuv1;
             const bool current_is_inner = fold_inner_tex_ == nullptr ||
@@ -2674,6 +2666,22 @@ void GuiApp::loadBackTexture() {
 
 // The 3D twin in the stage: the phone turns as the real one turns; touches land through the
 // rotated screen plane.
+bool GuiApp::foldModelActive() const {
+    return session_ && (session_->isFoldable() || std::getenv("RPLAYHUB_FAKE_HINGE"));
+}
+
+void GuiApp::updateFoldModel() {
+    const auto now = std::chrono::steady_clock::now();
+    const float dt = fold_clock_.time_since_epoch().count() == 0 ? 1.0f / 60.0f
+                   : std::clamp(std::chrono::duration<float>(now - fold_clock_).count(), 0.001f, 0.1f);
+    fold_clock_ = now;
+    float hinge = 0;
+    const bool have_hinge = session_ && session_->latestHinge(hinge);
+    fold_.setHinge(hinge, have_hinge);
+    if (session_) fold_.setState(session_->deviceStateName());
+    fold_.tick(dt);
+}
+
 void GuiApp::renderTwin(ImVec2 origin, ImVec2 size, const DecodedFrame& frame) {
     uploadLiveTexture(frame);
     loadBackTexture();
@@ -2687,8 +2695,35 @@ void GuiApp::renderTwin(ImVec2 origin, ImVec2 size, const DecodedFrame& frame) {
     float q[4] = {0, 0, 0, 1};
     bool have = session_ && session_->latestOrientation(q);
     twin_.setOrientation({q[0], q[1], q[2], q[3]}, have);
-    twin_.render(draw_list, origin, ImVec2(size.x, size.y - 44.0f * scale_), (ImTextureID)video_texture_,
-                 (ImTextureID)back_texture_, frame.displayWidth, frame.displayHeight, frame.displayOrientation, scale_);
+    // A foldable: two hinged halves. The inner picture is the live one while the phone is open
+    // and the kept inner frame once the stream has moved to the outer panel, which then
+    // shows on the cover half's back.
+    ImTextureID inner = (ImTextureID)video_texture_, outer = 0;
+    int inner_w = frame.displayWidth, inner_h = frame.displayHeight;
+    if (foldModelActive()) {
+        updateFoldModel();
+        twin_.setFold(true, fold_.angle(), true);
+        if (const char* m = std::getenv("RPLAYHUB_TWIN_MODE")) twin_.setRenderMode(std::atoi(m) % 3);   // for screenshots
+        const bool current_is_inner = fold_inner_tex_ == nullptr ||
+            static_cast<float>(frame.width) / frame.height >= static_cast<float>(fold_inner_w_) / fold_inner_h_;
+        if (!current_is_inner) { inner = (ImTextureID)fold_inner_tex_; outer = (ImTextureID)video_texture_; inner_w = fold_inner_w_; inner_h = fold_inner_h_; }
+        if (!ImGui::GetIO().WantTextInput) {
+            if (ImGui::IsKeyPressed(ImGuiKey_1)) twin_.setRenderMode(0);
+            if (ImGui::IsKeyPressed(ImGuiKey_2)) twin_.setRenderMode(1);
+            if (ImGui::IsKeyPressed(ImGuiKey_3) && !ImGui::GetIO().KeyCtrl) twin_.setRenderMode(2);
+        }
+    } else {
+        twin_.setFold(false, 180.0f, false);
+    }
+    twin_.render(draw_list, origin, ImVec2(size.x, size.y - 44.0f * scale_), inner,
+                 (ImTextureID)back_texture_, inner_w, inner_h, frame.displayOrientation, scale_, outer);
+    if (foldModelActive() && font_caption_) {
+        // Mode and hinge readout, top-left of the stage: keys 1 hard cut, 2 locked, 3 stylized
+        static const char* const names[3] = { "1 Hard cut", "2 Locked", "3 Stylized" };
+        char buf[96];
+        snprintf(buf, sizeof(buf), "%s   hinge %.0f\u00b0   (1/2/3 to switch)", names[twin_.renderMode() % 3], fold_.angle());
+        draw_list->AddText(font_caption_, 12.5f * scale_, ImVec2(origin.x + 12.0f * scale_, origin.y + 10.0f * scale_), IM_COL32(230, 230, 236, 220), buf);
+    }
 
     // Touch through the plane
     ImVec2 mouse = ImGui::GetMousePos();

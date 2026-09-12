@@ -170,6 +170,8 @@ private:
     // Foldable: the fold transition and the last inner-panel picture it needs while the
     // stream has moved to the outer panel.
     FoldView fold_;
+    void updateFoldModel();   // feed FoldView from the session each frame (hinge, posture, fake sweep)
+    bool foldModelActive() const;
     SDL_Texture* fold_inner_tex_ = nullptr;
     int fold_inner_w_ = 0, fold_inner_h_ = 0;
     std::chrono::steady_clock::time_point fold_clock_{};

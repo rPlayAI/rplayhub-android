@@ -19,9 +19,11 @@ void FoldView::setState(const std::string& name) {
 }
 
 void FoldView::tick(float dt) {
-    if (std::getenv("RPLAYHUB_FAKE_HINGE")) {
+    if (const char* fake = std::getenv("RPLAYHUB_FAKE_HINGE")) {
+        // "1" sweeps closed <-> open; any other number holds that angle (for screenshots)
         fake_t_ += dt;
-        target_ = 90.0f + 90.0f * std::cos(fake_t_ * 0.7f);
+        const float fixed = static_cast<float>(std::atof(fake));
+        target_ = fixed > 1.0f ? std::clamp(fixed, 0.0f, 180.0f) : 90.0f + 90.0f * std::cos(fake_t_ * 0.7f);
         have_hinge_ = true;
         state_ = target_ < 8.0f ? "CLOSED" : "OPENED";
     }
