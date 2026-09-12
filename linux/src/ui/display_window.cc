@@ -526,8 +526,10 @@ void DisplayWindow::render(const DecodedFrame& frame) {
             uploaded_frame_ = 0;
             turn_ = frame.correctionQuadrants();
             const int landscape = presentedAspect() > 1.0f ? 1 : 0;
-            if (tex_landscape_ >= 0 && tex_landscape_ != landscape) fitWindowToFrame();
+            // A turn flips the aspect; a foldable's fold swaps the panel and changes it too.
+            if (tex_landscape_ >= 0 && (tex_landscape_ != landscape || std::fabs(presentedAspect() - tex_aspect_) > 0.02f)) fitWindowToFrame();
             tex_landscape_ = landscape;
+            tex_aspect_ = presentedAspect();
             have_frame_ = false;
         }
         if (texture_ && (!have_frame_ || frame.frameNumber != uploaded_frame_)) {

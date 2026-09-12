@@ -375,18 +375,40 @@ void AgentSession::runControlLoop() {
             if (ok) pushEvent(std::move(ev));
             break;
         }
-        case 24: {   // SupportedDeviceStatesNotification
+        case 24: {   // SupportedDeviceStatesNotification: count, (id, name, sys, phys)*, current + 1
             uint32_t count;
             ok = read_varint(count);
+            std::vector<std::pair<int32_t, std::string>> states;
             for (uint32_t i = 0; ok && i < count && i < 64; ++i) {
                 int32_t id, sys, phys; std::string name;
                 ok = read_i32(id) && read_bytes(name) && read_i32(sys) && read_i32(phys);
+                if (ok) states.emplace_back(id, name);
             }
             int32_t current;
             ok = ok && read_i32(current);
+            if (ok) {
+                std::lock_guard<std::mutex> lock(state_mutex_);
+                device_states_ = std::move(states);
+                device_state_id_ = current - 1;   // the agent offsets by one so -1 fits a varint
+                if (!device_states_.empty()) addLog("[Agent] foldable: " + std::to_string(device_states_.size()) + " device states, current " + deviceStateNameLocked());
+            }
             break;
         }
-        case 25: { int32_t state; ok = read_i32(state); break; }   // DeviceStateNotification
+        case 25: {   // DeviceStateNotification: state id + 1
+            int32_t state;
+            ok = read_i32(state);
+            if (ok) {
+                AgentEvent ev; ev.kind = AgentEvent::DEVICE_STATE_CHANGED;
+                {
+                    std::lock_guard<std::mutex> lock(state_mutex_);
+                    device_state_id_ = state - 1;
+                    ev.text = deviceStateNameLocked();
+                }
+                addLog("[Agent] device state: " + ev.text);
+                pushEvent(std::move(ev));
+            }
+            break;
+        }
         case 26: {   // DisplayAddedOrChangedNotification: id, w, h, rotation, type, env w, env h
             AgentEvent ev; ev.kind = AgentEvent::DISPLAY_ADDED_OR_CHANGED;
             int32_t env_w, env_h;
@@ -417,21 +439,80 @@ void AgentSession::runControlLoop() {
     }
 }
 
-// Each packet: four little-endian float32 (quaternion x, y, z, w) plus an int64 timestamp we
-// ignore: orientation is a current value and the newest packet always wins.
+// Each packet is 28 bytes, little-endian: int64 sensor timestamp (ignored: every value is a
+// current value and the newest wins), four float32, and a uint32 tag: 1 rotation vector
+// quaternion x, y, z, w; 2 hinge angle in degrees; 3 and 4 the gyroscopes of a foldable's two
+// halves, rad/s.
 void AgentSession::runSensorLoop() {
-    uint8_t buf[24];
+    uint8_t buf[28];
     while (!stopping_.load()) {
         if (!sensor_socket_.readFully(buf, sizeof(buf))) break;
-        float q[4];
-        memcpy(q, buf, 16);
-        float len = std::sqrt(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]);
-        if (!(len > 0.5f)) continue;   // malformed or all-zero packet
+        float v[4];
+        uint32_t tag;
+        memcpy(v, buf + 8, 16);
+        memcpy(&tag, buf + 24, 4);
         std::lock_guard<std::mutex> lock(sensor_mutex_);
-        for (int i = 0; i < 4; ++i) sensor_quat_[i] = q[i] / len;
-        sensor_have_ = true;
-        sensor_packets_.fetch_add(1, std::memory_order_relaxed);
+        switch (tag) {
+        case 1: {
+            float len = std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2] + v[3] * v[3]);
+            if (!(len > 0.5f)) break;   // malformed or all-zero packet
+            for (int i = 0; i < 4; ++i) sensor_quat_[i] = v[i] / len;
+            sensor_have_ = true;
+            sensor_packets_.fetch_add(1, std::memory_order_relaxed);
+            break;
+        }
+        case 2:
+            hinge_deg_ = v[0];
+            hinge_have_ = true;
+            if (std::getenv("RPLAYHUB_SENSOR_DEBUG")) {
+                // Arrival spacing tells buffering (bursts) from a clean path (~20 ms apart)
+                const auto now = std::chrono::steady_clock::now().time_since_epoch();
+                std::cerr << "hinge " << v[0] << " at " << std::chrono::duration_cast<std::chrono::milliseconds>(now).count() % 100000 << " ms\n";
+            }
+            break;
+        case 3:
+        case 4:
+            for (int i = 0; i < 3; ++i) gyro_[tag - 3][i] = v[i];
+            gyro_have_[tag - 3] = true;
+            break;
+        default:
+            break;
+        }
     }
+}
+
+std::string AgentSession::deviceStateNameLocked() const {
+    for (const auto& st : device_states_) if (st.first == device_state_id_) return st.second;
+    return device_state_id_ < 0 ? "unknown" : std::to_string(device_state_id_);
+}
+
+bool AgentSession::isFoldable() const {
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    return !device_states_.empty();
+}
+
+int AgentSession::deviceStateId() const {
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    return device_state_id_;
+}
+
+std::string AgentSession::deviceStateName() const {
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    return deviceStateNameLocked();
+}
+
+bool AgentSession::latestHinge(float& degrees) const {
+    std::lock_guard<std::mutex> lock(sensor_mutex_);
+    if (!hinge_have_) return false;
+    degrees = hinge_deg_;
+    return true;
+}
+
+bool AgentSession::latestGyro(int which, float v[3]) const {
+    std::lock_guard<std::mutex> lock(sensor_mutex_);
+    if (which < 0 || which > 1 || !gyro_have_[which]) return false;
+    for (int i = 0; i < 3; ++i) v[i] = gyro_[which][i];
+    return true;
 }
 
 bool AgentSession::latestOrientation(float q[4]) const {

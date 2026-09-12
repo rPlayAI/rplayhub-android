@@ -228,6 +228,13 @@ void DisplayStreamer::Run() {
         DisplayManager::OnDisplayRemoved(jni, display_id_);
         break;
       }
+      // rPlayHub: on a foldable the primary display goes away for a moment while the device
+      // folds or unfolds (the logical display swaps panels): its info reads 0x0 or off, and
+      // configuring the encoder with that killed the agent. Wait for it to come back instead.
+      if (!display_info.IsValid()) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        continue;
+      }
     }
     Log::D("Display %d: display_info: %s", display_id_, display_info.ToDebugString().c_str());
     if (stop_reason == FrameStreamStopReason::TIMEOUT) {

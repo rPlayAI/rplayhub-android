@@ -47,6 +47,16 @@ public:
     bool latestOrientation(float q[4]) const;
     uint64_t orientationPackets() const { return sensor_packets_.load(); }
     bool hasSensorChannel() const { return sensor_socket_.isValid(); }
+    // A foldable's posture, from the agent's DeviceStateNotification (CLOSED, HALF_OPENED,
+    // OPENED, ...). isFoldable() is true once the agent has listed any device states.
+    bool isFoldable() const;
+    int deviceStateId() const;
+    std::string deviceStateName() const;
+    std::string deviceStateNameLocked() const;   // state_mutex_ held
+    // A foldable's hinge angle in degrees (0 closed .. 180 flat), if the agent streams one.
+    bool latestHinge(float& degrees) const;
+    // The two hardware gyroscopes of a foldable (0 = the first IMU, 1 = the other half), rad/s.
+    bool latestGyro(int which, float v[3]) const;
 
     struct DisplayDescriptor {
         int32_t id = 0;
@@ -59,7 +69,8 @@ public:
     // What the agent sends unprompted on the control channel, queued for the UI thread.
     struct AgentEvent {
         enum Kind { CLIPBOARD_CHANGED, DISPLAYS, DISPLAY_ADDED_OR_CHANGED, DISPLAY_REMOVED, ERROR_RESPONSE,
-                    NEW_DISPLAY_STREAM };   // first video packet of a display id we had not seen
+                    NEW_DISPLAY_STREAM,     // first video packet of a display id we had not seen
+                    DEVICE_STATE_CHANGED }; // a foldable folded or unfolded: text = the state's name
         Kind kind = ERROR_RESPONSE;
         std::string text;                          // clipboard text / error message
         DisplayDescriptor display;                 // DISPLAY_ADDED_OR_CHANGED / DISPLAY_REMOVED
@@ -152,6 +163,13 @@ private:
     mutable std::mutex sensor_mutex_;
     float sensor_quat_[4] = {0, 0, 0, 1};
     bool sensor_have_ = false;
+    float hinge_deg_ = 0;
+    bool hinge_have_ = false;
+    mutable std::mutex state_mutex_;
+    std::vector<std::pair<int32_t, std::string>> device_states_;   // id, name
+    int32_t device_state_id_ = -1;
+    float gyro_[2][3] = {{0, 0, 0}, {0, 0, 0}};
+    bool gyro_have_[2] = {false, false};
     std::atomic<uint64_t> sensor_packets_{0};
     std::atomic<bool> audio_enabled_{false};
     std::unique_ptr<TCPSocket> shell_socket_;

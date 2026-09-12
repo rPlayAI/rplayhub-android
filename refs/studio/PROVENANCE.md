@@ -54,6 +54,11 @@ Recorded here so a resync can reapply them:
   rotation vector quaternion (NDK ASensor API — no Context needed under app_process) at 50 Hz,
   24 bytes per packet: four little-endian float32 (x, y, z, w) + int64 timestamp_ns. Drives the
   host's 3D "device twin" view. Not upstreamable as-is; on a resync, re-add the files and hooks.
+  2026-09-11: the channel now carries tagged 28-byte packets (`int64 timestamp_ns, float v[4],
+  uint32 tag`): tag 1 rotation vector (100 Hz), tag 2 hinge angle in degrees (on-change,
+  `ASENSOR_TYPE_HINGE_ANGLE`), tags 3/4 the two hardware gyroscopes of a foldable (rad/s, at
+  their fastest rate), one event queue per sensor told apart by the looper ident. The sensor
+  inventory is logged at channel start.
 
 - `agent.cc` (`Run`): when `TURN_OFF_DISPLAY_WHILE_MIRRORING` is set, instantiate the session
   environment right after the controller is created. Upstream relies on Studio's host sending an

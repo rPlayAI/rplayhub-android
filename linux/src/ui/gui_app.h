@@ -8,6 +8,7 @@
 #include "util/async_jobs.h"
 #include "ui/display_window.h"
 #include "ui/twin_view.h"
+#include "fold_view.h"
 #include <deque>
 #include <set>
 #include "imgui.h"
@@ -166,6 +167,12 @@ private:
 
     // The 3D twin
     TwinView twin_;
+    // Foldable: the fold transition and the last inner-panel picture it needs while the
+    // stream has moved to the outer panel.
+    FoldView fold_;
+    SDL_Texture* fold_inner_tex_ = nullptr;
+    int fold_inner_w_ = 0, fold_inner_h_ = 0;
+    std::chrono::steady_clock::time_point fold_clock_{};
     bool twin_mode_ = false;
     SDL_Texture* back_texture_ = nullptr;
     bool back_texture_tried_ = false;
