@@ -23,10 +23,10 @@ the middle, its info, apps and files on the right.*
 
 **Linux**
 
-![The Linux main window: the same layout, the Pixel 9a mirrored in the middle, an emulator in the sidebar, the Info tab on the right](doc/rPlayHub-android-linux.png)
+![The Linux main window: the same layout, the Pixel 9a mirrored in the middle, an emulator in the sidebar, the Apps tab on the right](doc/rPlayHub-android-linux.png)
 
-*Linux (Ubuntu 22.04) — the same Pixel 9a over USB, an emulator in the sidebar, the Info tab
-with the device and stream details.*
+*Linux (Ubuntu 22.04) — the same Pixel 9a over USB, an emulator in the sidebar, the Apps tab
+listing the phone's apps with their icons (Install APK…, system apps on request).*
 
 Sibling project: `~/rplay-hub`, the same thing for iPhone. This one is the easier half, and the
 reason is worth stating plainly: on iOS we had to reverse-engineer CoreDevice and write both
