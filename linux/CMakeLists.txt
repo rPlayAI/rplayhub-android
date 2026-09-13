@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(rplayhub-android-linux CXX C)
+project(rplayhub-android-linux VERSION 1.0.1 LANGUAGES CXX C)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -72,6 +72,14 @@ set(SOURCES
 )
 
 add_executable(rplayhub-android-linux ${SOURCES})
+target_compile_definitions(rplayhub-android-linux PRIVATE RPLAYHUB_VERSION="${PROJECT_VERSION}")
+
+# `make install` / the .deb (tools/package-deb.sh): the binary under its short name, the agent,
+# the fonts and the twin's back artwork under share/, a desktop entry and icons.
+install(TARGETS rplayhub-android-linux RUNTIME DESTINATION bin RENAME rplayhub-android)
+install(DIRECTORY ${CMAKE_SOURCE_DIR}/fonts/ DESTINATION share/rplayhub-android/fonts FILES_MATCHING PATTERN "*.ttf")
+install(FILES ${CMAKE_SOURCE_DIR}/../doc/pixel-backside-transparent.png DESTINATION share/rplayhub-android OPTIONAL)
+install(DIRECTORY ${CMAKE_SOURCE_DIR}/../build/agent/ DESTINATION share/rplayhub-android/agent OPTIONAL)
 
 if(X11GL_FOUND)
     target_compile_definitions(rplayhub-android-linux PRIVATE RPLAYHUB_HAVE_X11=1)

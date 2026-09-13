@@ -71,7 +71,12 @@ bool AudioPlayer::configure(const std::vector<uint8_t>& config) {
     }
     codec_ctx_ = avcodec_alloc_context3(codec);
     codec_ctx_->sample_rate = kSampleRate;
+#if LIBAVUTIL_VERSION_MAJOR >= 57
     av_channel_layout_default(&codec_ctx_->ch_layout, kChannels);
+#else   // FFmpeg 4.x (Ubuntu 22.04, Debian 11): the pre-5.1 channel API
+    codec_ctx_->channels = kChannels;
+    codec_ctx_->channel_layout = kChannels == 2 ? AV_CH_LAYOUT_STEREO : AV_CH_LAYOUT_MONO;
+#endif
     if (config.size() >= 8 && memcmp(config.data(), "OpusHead", 8) == 0) {
         codec_ctx_->extradata = static_cast<uint8_t*>(av_mallocz(config.size() + AV_INPUT_BUFFER_PADDING_SIZE));
         memcpy(codec_ctx_->extradata, config.data(), config.size());
@@ -119,7 +124,11 @@ void AudioPlayer::decodeAndQueue(const uint8_t* data, size_t size) {
 
     while (avcodec_receive_frame(codec_ctx_, frame_) >= 0) {
         const int n = frame_->nb_samples;
+#if LIBAVUTIL_VERSION_MAJOR >= 57
         const int ch = frame_->ch_layout.nb_channels;
+#else
+        const int ch = frame_->channels;
+#endif
         interleaved_.resize(static_cast<size_t>(n) * kChannels);
         float peak = 0.0f;
         if (frame_->format == AV_SAMPLE_FMT_FLTP) {

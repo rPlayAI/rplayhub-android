@@ -63,6 +63,27 @@ When designing the Linux client to match the macOS UI (see the macOS screenshot)
 
 ---
 
+## Install (Debian package)
+
+Ubuntu 22.04 or later, Debian 12 or later, x86_64. Download the `.deb` from the
+[latest Linux release](https://github.com/rPlayAI/rplayhub-android/releases) and install it:
+```bash
+sudo apt install ./rplayhub-android_1.0.1-1_amd64.deb
+```
+It installs `/usr/bin/rplayhub-android`, a launcher entry ("rPlayHub Android"), the device agent
+(`/usr/share/rplayhub-android/agent`, pushed to the phone on first mirror) and its fonts, and
+pulls in adb, SDL2 and the distribution's FFmpeg libraries. The package links against the
+distribution's FFmpeg (LGPL build) and SDL2 2.0.20, so it never ships a self-built one.
+
+To build the package yourself, with the agent already in `build/agent`:
+```bash
+tools/package-deb.sh          # -> build/deb/rplayhub-android_<version>-1_<arch>.deb
+```
+The script configures a separate `linux/build-deb` tree against the distribution's headers and
+libraries (a self-built FFmpeg or SDL2 in `/usr/local` is bypassed), stages the files, derives
+`Depends:` from the binary's DT_NEEDED entries, and runs `dpkg-deb` and `lintian`. The version
+comes from `project(... VERSION ...)` in `linux/CMakeLists.txt`.
+
 ## Build & Run
 
 *Continuing this port on a Linux host or a Raspberry Pi? See [`doc/LINUX-AND-RPI.md`](../doc/LINUX-AND-RPI.md).*
@@ -94,7 +115,8 @@ build-tools), and produces `build/agent/screen-sharing-agent.jar` and
 `<abi>/libscreen-sharing-agent.so`. The output is device-side and architecture-independent, so on
 a machine that cannot build it (a Raspberry Pi) copy `build/agent/` over or point
 `RPLAYHUB_AGENT_DIR` at a copy. The client looks in `build/agent`, `../build/agent`,
-`../../build/agent` relative to the working directory, then `$RPLAYHUB_AGENT_DIR`.
+`../../build/agent` relative to the working directory, `../build/agent` and
+`../share/rplayhub-android/agent` relative to the executable, then `$RPLAYHUB_AGENT_DIR`.
 
 ### 2. Build the Linux GUI
 ```bash

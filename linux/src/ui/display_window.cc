@@ -45,7 +45,7 @@ DisplayWindow::DisplayWindow(int32_t display_id, const std::string& title, int w
             renderer_ = SDL_CreateRenderer(window_, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
             if (!renderer_) renderer_ = SDL_CreateRenderer(window_, -1, 0);
         }
-        if (argb) SDL_ResetHint(SDL_HINT_VIDEO_X11_WINDOW_VISUALID);
+        if (argb) SDL_SetHint(SDL_HINT_VIDEO_X11_WINDOW_VISUALID, "");
         if (!window_ || !renderer_) {
             std::cerr << "DisplayWindow: " << (window_ ? "SDL_CreateRenderer: " : "SDL_CreateWindow: ")
                       << SDL_GetError() << (argb ? " (ARGB visual; retrying without)" : "") << "\n";

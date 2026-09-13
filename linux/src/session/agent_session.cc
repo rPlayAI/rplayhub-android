@@ -28,6 +28,21 @@ std::string AgentSession::findAgentDirectory() {
         "../build/agent",
         "../../build/agent"
     };
+    // Installed (the .deb): next to the binary under share/, so no working directory is assumed.
+    {
+        char buf[4096];
+        ssize_t n = ::readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+        if (n > 0) {
+            buf[n] = '\0';
+            std::string exe(buf);
+            size_t slash = exe.rfind('/');
+            if (slash != std::string::npos) {
+                std::string dir = exe.substr(0, slash);
+                candidates.push_back(dir + "/../share/rplayhub-android/agent");
+                candidates.push_back(dir + "/../build/agent");
+            }
+        }
+    }
 
     for (const auto& c : candidates) {
         if (fileExists(c + "/screen-sharing-agent.jar")) {

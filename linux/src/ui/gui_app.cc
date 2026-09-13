@@ -1,4 +1,8 @@
 #include "gui_app.h"
+
+#ifndef RPLAYHUB_VERSION
+#define RPLAYHUB_VERSION "dev"
+#endif
 #include "theme.h"
 #include "icons.h"
 #include "window_effects.h"
@@ -108,7 +112,7 @@ bool GuiApp::init() {
             renderer_ = SDL_CreateRenderer(window_, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
             if (!renderer_) renderer_ = SDL_CreateRenderer(window_, -1, 0);
         }
-        if (argb) SDL_ResetHint(SDL_HINT_VIDEO_X11_WINDOW_VISUALID);
+        if (argb) SDL_SetHint(SDL_HINT_VIDEO_X11_WINDOW_VISUALID, "");
 
         if (!window_ || !renderer_) {
             if (window_) { SDL_DestroyWindow(window_); window_ = nullptr; }
@@ -1398,7 +1402,7 @@ void GuiApp::renderPrimaryMenuItems() {
         ImGui::EndMenu();
     }
     ImGui::Separator();
-    if (ImGui::MenuItem("About rPlayHub Android")) showToast("rPlayHub Android for Linux: SDL2 + FFmpeg + Dear ImGui. github.com/rPlayAI/rplayhub-android", 8);
+    if (ImGui::MenuItem("About rPlayHub Android")) showToast(std::string("rPlayHub Android for Linux ") + RPLAYHUB_VERSION + ": SDL2 + FFmpeg + Dear ImGui. github.com/rPlayAI/rplayhub-android", 8);
     if (ImGui::MenuItem("Quit", "Ctrl+Q")) g_quit_requested.store(true);
 }
 
