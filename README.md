@@ -14,10 +14,19 @@ Studio's *Running Devices*), driven over `adb`, with a native app in front of it
 It is for developers — every device, every emulator, every API level from Android 5.0 up — and
 just as much for anyone who wants their phone on a bigger screen.
 
-![The main window: devices in the sidebar, the phone mirrored in the middle, its info, apps and files on the right](doc/rPlayHub-android-gui.png)
+**macOS**
 
-*The main window — a Pixel 9a and an Android 5.1 car unit over USB, a VM in the list, the
-phone live in the middle, its info, apps and files on the right.*
+![The macOS main window: devices in the sidebar, the phone mirrored in the middle, its info, apps and files on the right](doc/rPlayHub-android-gui.png)
+
+*macOS — a Pixel 9a and an Android 5.1 car unit over USB, a VM in the list, the phone live in
+the middle, its info, apps and files on the right.*
+
+**Linux**
+
+![The Linux main window: the same layout, the Pixel 9a mirrored in the middle, an emulator in the sidebar, the Info tab on the right](doc/rPlayHub-android-linux.png)
+
+*Linux (Ubuntu 22.04) — the same Pixel 9a over USB, an emulator in the sidebar, the Info tab
+with the device and stream details.*
 
 Sibling project: `~/rplay-hub`, the same thing for iPhone. This one is the easier half, and the
 reason is worth stating plainly: on iOS we had to reverse-engineer CoreDevice and write both
