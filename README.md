@@ -2,13 +2,13 @@
 
 [![Latest release](https://img.shields.io/github/v/release/rPlayAI/rplayhub-android?label=download&color=2ea44f)](https://github.com/rPlayAI/rplayhub-android/releases/latest)
 [![Downloads](https://img.shields.io/github/downloads/rPlayAI/rplayhub-android/total?color=blue)](https://github.com/rPlayAI/rplayhub-android/releases)
-[![Platform](https://img.shields.io/badge/platform-macOS%2013%2B-lightgrey)](https://github.com/rPlayAI/rplayhub-android/releases/latest)
+[![Platform](https://img.shields.io/badge/platform-macOS%2013%2B%20%7C%20Linux%20x86__64-lightgrey)](https://github.com/rPlayAI/rplayhub-android/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-yellow)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/rPlayAI/rplayhub-android?style=social)](https://github.com/rPlayAI/rplayhub-android/stargazers)
 
-**Your Android phone on your Mac** (Windows, Linux and Raspberry Pi upcoming) — mirror it,
-control it, run its apps in windows of their own, open its files in Finder, and run Android VMs
-without installing Android Studio. Built on Google's own on-device agent (the one behind Android
+**Your Android phone on your Mac or Linux desktop** (Raspberry Pi next, Windows upcoming) —
+mirror it, control it, run its apps in windows of their own, open its files in Finder, and run
+Android VMs without installing Android Studio. Built on Google's own on-device agent (the one behind Android
 Studio's *Running Devices*), driven over `adb`, with a native app in front of it.
 
 It is for developers — every device, every emulator, every API level from Android 5.0 up — and
@@ -22,6 +22,14 @@ phone live in the middle, its info, apps and files on the right.*
 Sibling project: `~/rplay-hub`, the same thing for iPhone. This one is the easier half, and the
 reason is worth stating plainly: on iOS we had to reverse-engineer CoreDevice and write both
 ends. Here Google's device agent is **Apache 2.0 and published**, so only the host is ours.
+
+## Download
+
+| | |
+|---|---|
+| **macOS 13+** | [rPlayHub Android 1.0](https://github.com/rPlayAI/rplayhub-android/releases/tag/v1.0) — notarized DMG, adb and the agents bundled |
+| **Linux x86_64** (Ubuntu 22.04+, Debian 12+) | [rPlayHub Android for Linux 1.0.1](https://github.com/rPlayAI/rplayhub-android/releases/tag/linux-v1.0.1) — `.deb`; `sudo apt install ./rplayhub-android_1.0.1-1_amd64.deb` |
+| **Raspberry Pi** (arm64) | next — the Linux client builds on the Pi today, see [`doc/LINUX-AND-RPI.md`](doc/LINUX-AND-RPI.md); a package follows |
 
 ## For regular users
 
@@ -133,8 +141,8 @@ Folder conventions follow `~/rplay-hub`: adopted sources recorded in `refs/`, to
 - **`helper/`** — the companion "rPlayHub Share" APK.
 - **`emulator-transport/`** — the gRPC bridge the hosted emulator talks through (SwiftPM; the
   app spawns it, so grpc-swift never links into the app).
-- **`linux/`** — the Linux client, in progress. C++17, SDL2, FFmpeg, Dear ImGui. See
-  `linux/README.md`.
+- **`linux/`** — the Linux client. C++17, SDL2, FFmpeg, Dear ImGui; the same window, menus,
+  inspector, pop-out, 3D twin and foldable support as the Mac. See `linux/README.md`.
 - **`refs/studio/`** — the adopted Apache-2.0 source: the device agent complete, and Studio's
   Kotlin host for reference. See `refs/studio/PROVENANCE.md` for commit, refetch and our local
   modifications.
@@ -147,8 +155,12 @@ Folder conventions follow `~/rplay-hub`: adopted sources recorded in `refs/`, to
 - **`tools/gen-xcodeproj.py`** — regenerates the Xcode project from the source files present.
 - **`tools/package-dmg.sh`** — a self-contained, notarized DMG (bundles adb, the agents and
   the companion APK).
+- **`tools/package-deb.sh`** — the Linux `.deb`, built against the distribution's SDL2 and
+  FFmpeg (bundles the agent; adb comes from the distribution).
 
 ## Quick start
+
+macOS, from source (Linux: `linux/README.md`, or install the `.deb` above):
 
 ```
 tools/build-agent.sh          # needs a JDK 17+, the Android SDK and an NDK (see below)
@@ -209,15 +221,15 @@ build streams 50 Hz quaternions on a fourth socket only when asked (flag `0x100`
 
 ## Platforms
 
-**macOS ships.** Linux and Windows ports are **in progress**, a Raspberry Pi build follows the
-Linux one, and a browser client is planned.
+**macOS and Linux ship.** A Raspberry Pi package is next, a Windows port is **in progress**,
+and a browser client is planned.
 
 | | |
 |---|---|
 | **macOS** | Swift + AppKit, VideoToolbox — **shipping** (DMG and Mac App Store builds) |
-| **Linux** | C++17, POSIX sockets, FFmpeg decode, SDL2 + Dear ImGui — **in progress**: live mirroring, touch and navigation verified on a Pixel; the rest of the feature set is being brought across |
+| **Linux** | C++17, POSIX sockets, FFmpeg decode, SDL2 + Dear ImGui — **shipping** (`.deb` for Ubuntu 22.04+ / Debian 12+, x86_64): mirroring, touch, keyboard, audio, clipboard, Desktop Mode and app windows, pop-out window, screenshots and recording, the 3D twin, foldables (Pixel Fold: posture, hinge angle, the fold drawn live, the duo twin); verified on Pixel phones and the Android emulator. Existing AVDs start and mirror from the sidebar; not yet there: the phone's storage as a folder in the file manager (the Files tab covers it) and Create Android VM |
 | **Windows** | Winsock, FFmpeg or Media Foundation / D3D11VA — **in progress** |
-| **Raspberry Pi** | the Linux client on arm64, with the Pi's hardware H.264 decode — **upcoming** |
+| **Raspberry Pi** | the Linux client on arm64 — **next**: builds on Raspberry Pi OS Bookworm today; the Pi 4's hardware H.264 (`--decoder h264_v4l2m2m`) and the Pi 5's HEVC path are in `doc/LINUX-AND-RPI.md`; an arm64 `.deb` follows |
 | **Web** | headless host + WebSocket, browser decode via WebCodecs — planned |
 
 The protocol layer is portable — the adb client, the agent launch, the packet header, the
