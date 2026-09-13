@@ -6,7 +6,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-yellow)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/rPlayAI/rplayhub-android?style=social)](https://github.com/rPlayAI/rplayhub-android/stargazers)
 
-**Your Android phone on your Mac or Linux desktop** (Raspberry Pi next, Windows upcoming) —
+**Your Android phone on your desktop computer** (macOS and Linux; Raspberry Pi next, Windows upcoming) —
 mirror it, control it, run its apps in windows of their own, open its files in Finder, and run
 Android VMs without installing Android Studio. Built on Google's own on-device agent (the one behind Android
 Studio's *Running Devices*), driven over `adb`, with a native app in front of it.
