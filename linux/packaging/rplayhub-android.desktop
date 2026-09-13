@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=rPlayHub Android
+Comment=Mirror and control an Android phone
+Exec=rplayhub-android
+Icon=rplayhub-android
+Terminal=false
+Categories=Utility;
+Keywords=android;adb;mirror;scrcpy;phone;
