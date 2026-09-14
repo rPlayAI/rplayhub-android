@@ -174,6 +174,12 @@ private:
     bool foldModelActive() const;
     SDL_Texture* fold_inner_tex_ = nullptr;
     int fold_inner_w_ = 0, fold_inner_h_ = 0;
+    // ...and the last outer-panel picture, kept once the stream goes back to the inner one.
+    // The outer screen is dark until Android hands the stream over, which it only does near
+    // the end of the fold; showing the last outer frame lets that screen light up on the way
+    // shut, the way the real phone does.
+    SDL_Texture* fold_outer_tex_ = nullptr;
+    int fold_outer_w_ = 0, fold_outer_h_ = 0;
     std::chrono::steady_clock::time_point fold_clock_{};
     bool twin_mode_ = false;
     SDL_Texture* back_texture_ = nullptr;

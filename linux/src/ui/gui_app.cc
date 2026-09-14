@@ -326,6 +326,8 @@ void GuiApp::cleanup() {
         SDL_DestroyTexture(video_texture_);
         video_texture_ = nullptr;
     }
+    if (fold_inner_tex_) { SDL_DestroyTexture(fold_inner_tex_); fold_inner_tex_ = nullptr; }
+    if (fold_outer_tex_) { SDL_DestroyTexture(fold_outer_tex_); fold_outer_tex_ = nullptr; }
     if (back_texture_) { SDL_DestroyTexture(back_texture_); back_texture_ = nullptr; }
     for (auto& [key, tex] : app_icons_) {
         if (tex) SDL_DestroyTexture(tex);
@@ -2357,9 +2359,10 @@ void GuiApp::renderCenterStage(float start_x, float width, float height) {
     }
     }   // system_titlebar_
 
-    // Phone & Stage Area
-    const float stage_top = system_titlebar_ ? 42.0f * scale_ : 14.0f * scale_;
-    float available_h = height - stage_top - 52.0f * scale_;   // down to the control strip's hairline
+    // Phone & Stage Area. Both numbers are kept tight: every pixel of air here comes straight
+    // off the mirrored phone, which is what the stage is for.
+    const float stage_top = system_titlebar_ ? 42.0f * scale_ : 8.0f * scale_;
+    float available_h = height - stage_top - 46.0f * scale_;   // down to the control strip's hairline
     float available_w = width - 30.0f * scale_;
 
     // Pull a frame only when the decoder has a new one; the copy is a few MB.
@@ -2380,7 +2383,7 @@ void GuiApp::renderCenterStage(float start_x, float width, float height) {
     }
 
     // Bottom Navigation Control Strip
-    renderControlStrip(ImVec2(start_x, menu_h_ + height - 52.0f * scale_), width);
+    renderControlStrip(ImVec2(start_x, menu_h_ + height - 46.0f * scale_), width);
 
     ImGui::End();
     ImGui::PopStyleVar();
@@ -2504,15 +2507,30 @@ void GuiApp::uploadLiveTexture(const DecodedFrame& frame) {
     if (frame.empty()) return;
 
     if (!video_texture_ || tex_w_ != frame.width || tex_h_ != frame.height || tex_format_ != frame.format) {
-        if (video_texture_ && session_ && session_->isFoldable() && tex_w_ > 0 &&
-            static_cast<float>(tex_w_) / tex_h_ > static_cast<float>(frame.width) / frame.height) {
-            // The stream moved from the (wider) inner panel to the outer one: keep the inner
-            // picture for the fold animation instead of throwing it away.
-            if (fold_inner_tex_) SDL_DestroyTexture(fold_inner_tex_);
-            fold_inner_tex_ = video_texture_;
-            fold_inner_w_ = tex_w_;
-            fold_inner_h_ = tex_h_;
-            video_texture_ = nullptr;
+        const float old_aspect = tex_w_ > 0 && tex_h_ > 0 ? static_cast<float>(tex_w_) / tex_h_ : 0.0f;
+        const float new_aspect = static_cast<float>(frame.width) / frame.height;
+        // The panels are told apart by shape, not by id: the outer one is about half as wide
+        // for its height (0.46) as the inner one (0.97). Anything at or above the midpoint is
+        // the inner panel, so turning the phone to landscape never trips these over.
+        const float kPanelSplit = 0.7f;
+        if (video_texture_ && session_ && session_->isFoldable() && old_aspect > 0.0f) {
+            if (old_aspect >= kPanelSplit && new_aspect < kPanelSplit) {
+                // The stream moved from the (wider) inner panel to the outer one: keep the inner
+                // picture for the fold animation instead of throwing it away.
+                if (fold_inner_tex_) SDL_DestroyTexture(fold_inner_tex_);
+                fold_inner_tex_ = video_texture_;
+                fold_inner_w_ = tex_w_;
+                fold_inner_h_ = tex_h_;
+                video_texture_ = nullptr;
+            } else if (old_aspect < kPanelSplit && new_aspect >= kPanelSplit) {
+                // Opening up again: keep the outer picture so the next fold has something to
+                // light the outer screen with, long before Android hands that stream over.
+                if (fold_outer_tex_) SDL_DestroyTexture(fold_outer_tex_);
+                fold_outer_tex_ = video_texture_;
+                fold_outer_w_ = tex_w_;
+                fold_outer_h_ = tex_h_;
+                video_texture_ = nullptr;
+            }
         }
         if (video_texture_) SDL_DestroyTexture(video_texture_);
         Uint32 sdl_fmt = SDL_PIXELFORMAT_RGBA32;
@@ -2574,9 +2592,11 @@ void GuiApp::renderLiveMirror(ImVec2 origin, ImVec2 size, const DecodedFrame& fr
     }
 
     float aspect = static_cast<float>(rot_w) / static_cast<float>(rot_h);
-    // The bezel around the picture must stay inside the stage too, with some air around it.
-    const float bezel = 12.0f * scale_;
-    const float margin = bezel + 8.0f * scale_;
+    // The bezel around the picture must stay inside the stage too, with a little air around it.
+    // Both are deliberately thin: the stage is height-bound on a foldable's near-square inner
+    // panel, so anything spent here is taken off every side of the picture.
+    const float bezel = 10.0f * scale_;
+    const float margin = bezel + 3.0f * scale_;
     float target_h = size.y - 2.0f * margin;
     float target_w = target_h * aspect;
 
@@ -2600,9 +2620,14 @@ void GuiApp::renderLiveMirror(ImVec2 origin, ImVec2 size, const DecodedFrame& fr
                 static_cast<float>(frame.width) / frame.height >= static_cast<float>(fold_inner_w_) / fold_inner_h_;
             ImTextureID inner = current_is_inner ? (ImTextureID)video_texture_ : (ImTextureID)fold_inner_tex_;
             const int iw = current_is_inner ? frame.width : fold_inner_w_, ih = current_is_inner ? frame.height : fold_inner_h_;
+            // While the stream is still the inner panel the outer screen is dark on the device,
+            // but the fold wants to light it up on the way shut: fall back to the last outer
+            // frame we saw. First fold after launch there is none, and it simply stays dark.
+            ImTextureID outer = current_is_inner ? (ImTextureID)fold_outer_tex_ : (ImTextureID)video_texture_;
+            const int ow = current_is_inner ? fold_outer_w_ : frame.width;
+            const int oh = current_is_inner ? fold_outer_h_ : frame.height;
             VideoUvInset(iw, ih, fuv0, fuv1);
-            fold_.render(draw_list, origin, size, inner, iw, ih,
-                         current_is_inner ? (ImTextureID)0 : (ImTextureID)video_texture_, frame.width, frame.height, scale_, fuv0, fuv1);
+            fold_.render(draw_list, origin, size, inner, iw, ih, outer, ow, oh, scale_, fuv0, fuv1);
             handleTouchInput(ImVec2(pos_x, pos_y), ImVec2(target_w, target_h),
                              frame.displayWidth, frame.displayHeight, frame.presentedQuadrants());
             handleKeyboardInput();
