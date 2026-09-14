@@ -50,38 +50,38 @@ ImVec2 project(const P3& p, ImVec2 centre, float focal, float cam_z) {
 void FoldView::render(ImDrawList* dl, ImVec2 origin, ImVec2 size, ImTextureID inner_tex, int inner_w, int inner_h,
                       ImTextureID outer_tex, int outer_w, int outer_h, float scale, ImVec2 uv0, ImVec2 uv1) {
     const ImVec2 centre(origin.x + size.x * 0.5f, origin.y + size.y * 0.5f);
-    const float bezel_px = 12.0f * scale;
+    const float bezel_px = 10.0f * scale;   // matches the flat mirror's bezel
 
-    // Closed: the outer panel, flat, in its own narrow chassis.
-    if (closed() && outer_tex && outer_w > 0 && outer_h > 0) {
-        const float aspect = static_cast<float>(outer_w) / outer_h;
-        float h = size.y - 2.0f * (bezel_px + 8.0f * scale), w = h * aspect;
-        if (w > size.x - 2.0f * (bezel_px + 8.0f * scale)) { w = size.x - 2.0f * (bezel_px + 8.0f * scale); h = w / aspect; }
-        const ImVec2 tl(centre.x - w * 0.5f, centre.y - h * 0.5f), br(centre.x + w * 0.5f, centre.y + h * 0.5f);
-        dl->AddRectFilled(ImVec2(tl.x - bezel_px, tl.y - bezel_px), ImVec2(br.x + bezel_px, br.y + bezel_px), IM_COL32(18, 18, 22, 255), 28.0f * scale);
-        dl->AddImageRounded(outer_tex, tl, br, uv0, uv1, IM_COL32_WHITE, 20.0f * scale);
-        return;
-    }
+    // No separate "closed" layout: jumping into one popped the picture to a different size at
+    // the end of the fold. The cross-fade below brings the outer panel up to full opacity on the
+    // flat half as the phone shuts, so the same model carries all the way closed.
     if (!inner_tex || inner_w <= 0 || inner_h <= 0) return;
 
     // The open phone in scene units: width 1 (half a = 0.5 each side of the crease), height
     // by aspect. The flat phone fills the stage like the flat picture does.
     const float aspect = static_cast<float>(inner_w) / inner_h;
-    const float margin = bezel_px + 8.0f * scale;
+    const float margin = bezel_px + 3.0f * scale;   // matches the flat mirror's air
     float fit_h = size.y - 2.0f * margin, fit_w = fit_h * aspect;
     if (fit_w > size.x - 2.0f * margin) { fit_w = size.x - 2.0f * margin; fit_h = fit_w / aspect; }
     const float cam_z = 3.0f;
     const float focal = fit_w * cam_z;          // 1 scene unit = fit_w pixels at the origin plane
     const float a = 0.5f, H = 0.5f / aspect;    // half width, half height
     const float b = bezel_px / fit_w;            // bezel in scene units
-    // Each half turns toward the viewer by half the fold: flat at 180, edge-on at 0.
-    const float theta = (180.0f - shown_) * 0.5f * 3.14159265f / 180.0f;
-    const float c = std::cos(theta), s = std::sin(theta);
+    // Only the left half swings; the right half stays flat and square to the viewer, the way a
+    // book lies with one cover on the table. Folding both halves symmetrically looks tidy on
+    // paper but collapses to an edge-on line at the end, which is no picture at all; this way
+    // there is a full panel to read at every angle and the closed phone is a flat panel.
+    const float phi = (180.0f - shown_) * 3.14159265f / 180.0f;   // 0 flat, pi fully closed
+    const float c = std::cos(phi), s = std::sin(phi);
+    // Swinging one half alone would walk the picture to the right, so slide the model back by
+    // half of what the left panel gives up.
+    const float shift = -a * (1.0f - std::max(c, 0.0f)) * 0.5f;
 
-    // A point on the flat phone (x in [-a, a], y) folded about the crease x = 0.
+    // A point on the flat phone (x in [-a, a], y), the left half turned about the crease x = 0.
     auto fold = [&](float x, float y) -> P3 {
-        const float ax = std::fabs(x);
-        return P3{ (x < 0 ? -1.0f : 1.0f) * ax * c, y, ax * s };
+        if (x >= 0.0f) return P3{ x + shift, y, 0.0f };
+        const float d = -x;                       // distance from the crease
+        return P3{ -d * c + shift, y, d * s };
     };
     auto quad = [&](float x0, float x1, float y0, float y1) {
         ImVec2 p[4] = { project(fold(x0, y1), centre, focal, cam_z), project(fold(x1, y1), centre, focal, cam_z),
@@ -95,22 +95,64 @@ void FoldView::render(ImDrawList* dl, ImVec2 origin, ImVec2 size, ImTextureID in
         auto q = quad(x0, x1, -H - b, H + b);
         dl->AddQuadFilled(q[0], q[1], q[2], q[3], IM_COL32(18, 18, 22, 255));
     }
-    // The picture, in vertical strips so the perspective reads right within each half
+    // The picture, in vertical strips so the perspective reads right within each half.
+    // Once the stream has moved to the outer panel the inner frame we kept is already blanked —
+    // Android turns the inner screen off on the way shut — so the flat half shows the live outer
+    // picture instead. One inner half and the outer panel are within a couple of percent of the
+    // same aspect, so it lands on the half without visible distortion.
+    const bool have_outer_frame = (outer_tex != 0 && outer_w > 0 && outer_h > 0);
+    // Nothing here switches on a threshold: a panel at a glancing angle thins out the way real
+    // glass does, and the outer picture arrives as a cross-fade. Both ride the fold angle, so
+    // the whole handover is continuous with the hinge.
+    auto smoothstep = [](float e0, float e1, float x) {
+        const float t = std::clamp((x - e0) / (e1 - e0), 0.0f, 1.0f);
+        return t * t * (3.0f - 2.0f * t);
+    };
+    // The inner screen is on the inside of the swinging half, so it fades away as that half
+    // turns edge-on and is gone by the time we are looking at its back.
+    const float swing_alpha = smoothstep(-0.08f, 0.34f, c);
+    // From about half fold to nearly shut (hinge 90 down to 40 degrees) the outer screen comes
+    // up, and it is always showing something: the live outer stream once the device hands it
+    // over, otherwise the last outer frame we kept, and failing both - the first fold of a
+    // session - the middle of the inner screen, which is roughly what the cover display shows
+    // anyway. Waiting for the real stream leaves the screen dark for most of the move.
+    const float outer_alpha = smoothstep(1.50f, 2.50f, phi);
+
     const int strips = 14;
-    for (int half = 0; half < 2; ++half) {
-        for (int i = 0; i < strips; ++i) {
-            const float u0 = (half * strips + i) / static_cast<float>(2 * strips);
-            const float u1 = (half * strips + i + 1) / static_cast<float>(2 * strips);
-            const float x0 = -a + u0 * 2.0f * a, x1 = -a + u1 * 2.0f * a;
-            auto q = quad(x0, x1, -H, H);
-            const float tu0 = uv0.x + (uv1.x - uv0.x) * u0, tu1 = uv0.x + (uv1.x - uv0.x) * u1;
-            dl->AddImageQuad(inner_tex, q[0], q[1], q[2], q[3], ImVec2(tu0, uv0.y), ImVec2(tu1, uv0.y), ImVec2(tu1, uv1.y), ImVec2(tu0, uv1.y), IM_COL32_WHITE);
+    // pass 0 draws each half's own picture, pass 1 lays the outer picture over the flat half.
+    for (int pass = 0; pass < 2; ++pass) {
+        for (int half = 0; half < 2; ++half) {
+            const bool use_outer = (pass == 1);
+            if (use_outer && (half == 0 || outer_alpha <= 0.004f)) continue;
+            float alpha = (half == 0) ? swing_alpha : 1.0f;
+            if (use_outer) alpha = outer_alpha;
+            if (alpha <= 0.004f) continue;
+            const ImU32 tint = IM_COL32(255, 255, 255, static_cast<int>(255.0f * alpha));
+            for (int i = 0; i < strips; ++i) {
+                const float u0 = (half * strips + i) / static_cast<float>(2 * strips);
+                const float u1 = (half * strips + i + 1) / static_cast<float>(2 * strips);
+                const float x0 = -a + u0 * 2.0f * a, x1 = -a + u1 * 2.0f * a;
+                auto q = quad(x0, x1, -H, H);
+                // The outer picture spans this half on its own, so rescale u into [0, 1] across
+                // it. Standing in for it with the inner picture instead, take the middle half:
+                // the cover display is about half as wide as the inner one and shows the same
+                // screen, so the content reads as carrying over rather than jumping.
+                float t0 = u0, t1 = u1;
+                if (use_outer) {
+                    t0 = (u0 - 0.5f) * 2.0f;
+                    t1 = (u1 - 0.5f) * 2.0f;
+                    if (!have_outer_frame) { t0 = 0.25f + t0 * 0.5f; t1 = 0.25f + t1 * 0.5f; }
+                }
+                const float tu0 = uv0.x + (uv1.x - uv0.x) * t0, tu1 = uv0.x + (uv1.x - uv0.x) * t1;
+                dl->AddImageQuad(use_outer && have_outer_frame ? outer_tex : inner_tex, q[0], q[1], q[2], q[3],
+                                 ImVec2(tu0, uv0.y), ImVec2(tu1, uv0.y), ImVec2(tu1, uv1.y), ImVec2(tu0, uv1.y), tint);
+            }
         }
     }
     // The crease: a soft dark line that deepens as the phone closes
     {
         auto q = quad(-0.004f, 0.004f, -H, H);
-        const int alpha = static_cast<int>(40 + 120 * std::min(1.0f, theta / 1.2f));
+        const int alpha = static_cast<int>(40 + 120 * std::min(1.0f, phi / 2.4f));
         dl->AddQuadFilled(q[0], q[1], q[2], q[3], IM_COL32(0, 0, 0, alpha));
     }
 }
