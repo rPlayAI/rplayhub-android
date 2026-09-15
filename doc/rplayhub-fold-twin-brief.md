@@ -97,9 +97,18 @@ What the twin cannot do: prototype latency. The mirror stream and the on-device 
 
 The twin on the Mac now builds a foldable as two hinged halves (`HeroComposer.makeFoldPhone`,
 used by `TwinView` when the device announces device states over the control channel, or when
-`RPLAYHUB_FAKE_HINGE` is set). Verified against the fake hinge with a test grid on the glass; a
-Pixel Fold has not yet been attached to the Mac, so the live hinge, posture and cover-stream
-paths are wired but unexercised.
+`RPLAYHUB_FAKE_HINGE` is set). First verified against the fake hinge with a test grid on the
+glass, then live the same evening with the Pixel 11 Pro Fold over network adb: the agent streams
+tags 1–4 (rotation vector, hinge, both TDK gyroscopes), the Mac reads the hinge (0° shut, 104°
+mid-sweep), the posture arrives (six states, CLOSED → HALF_OPENED → OPENED) and shows in the
+title bar, and the panel swap is handled — shut, the 1080×2342 cover stream lands on the cover
+face; opening, the 2076×2152 inner stream spans both halves.
+
+**How a device is known to fold.** Not by "it has device states": a Pixel 9a reports one state
+named DEFAULT, and the agent forwards any non-empty list (controller.cc, `if
+(!device_states.empty())`). A fold is a device whose vocabulary has more than one posture or
+names one a hinge produces (`AgentSession.isFoldVocabulary`). The Pixel 9a therefore gets the
+rigid twin.
 
 - **Hinge.** Tag 2 from the sensor channel (28-byte tagged packets since 2026-09-11), eased at
   the same rate as the Linux client so the 5° steps read as one sweep. Tags 3/4 (the two
