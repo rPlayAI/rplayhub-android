@@ -84,6 +84,15 @@ What the twin cannot do: prototype latency. The mirror stream and the on-device 
   TDK ICM45631 and ICM45621, each with accelerometer + gyroscope at 2.5 ms min delay, so a
   second gyroscope IS present. Streamed by the Linux agent as tags 2, 3, 4 on the 0x100 channel;
   measured host arrival 15-40 ms apart during a fold over USB.
+- Real fold sweeps (2026-09-15, Pixel 11 Pro Fold, network adb, hard-cut mode, four open/close
+  cycles in the twin and in Fold View, read from the `fold:` trace): the sensor reports 0° shut
+  and tops out at **175°** flat, in 5° steps that become 10° steps on a fast sweep (a whole open
+  takes ~1 s). Postures switch at fixed angles in both directions: opening HALF_OPENED at 5°,
+  OPENED at ~135°; closing HALF_OPENED at ~120°, CLOSED at ~35°. Android hands the mirror
+  stream to the inner panel at **45–55° opening** (well after HALF_OPENED) and back to the cover
+  at 0–30° after CLOSED; each handover landed on the right glass. The Mac's easing trails the
+  sensor by 5–7° at a brisk open and up to 15° on a fast close, with no snap-back. Network adb
+  survived every shut.
 - Two-display streaming approach (one agent or two): _pending_ (the agent's StartVideoStream
   takes any display id; the outer panel is logical display 3 while open, and logical display 0
   swaps to the outer panel when CLOSED; not yet exercised)
@@ -131,6 +140,9 @@ rigid twin.
   grid (L / TOP / R, a circle and a diagonal across the crease), so the look can be tuned and
   screenshotted with nothing plugged in.
 - **Touch** through either half's glass maps to the whole inner display.
+- **Trace.** Every new hinge reading logs `fold: hinge N° (shown M°) <mode>` and every panel
+  handover `fold: stream is now the INNER/COVER panel W×H at hinge N°`, so a real sweep leaves
+  evidence in the log (a sweep is a few dozen lines). §5 records the first real sweeps.
 - **Not done:** streaming inner and cover displays at once (§2.1 item 4 — still "pending" on
   both clients), gyro attribution (`s`), the calibration export (`Export fold calibration…`) and
   the side-by-side capture of the three modes. The brief's acceptance items that need a real

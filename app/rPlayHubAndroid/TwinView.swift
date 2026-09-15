@@ -127,6 +127,10 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
     private var fakeClock: Double = 0
     private let fakeHinge = ProcessInfo.processInfo.environment["RPLAYHUB_FAKE_HINGE"]
     private var lastLabelUpdate: TimeInterval = 0
+    // The fold trace: each new sensor reading and each panel handover goes to the log, so a
+    // real sweep leaves evidence (the sensor steps in 5°, so a sweep is a few dozen lines).
+    private var lastLoggedHinge: Float = -1
+    private var lastPanelWasInner: Bool?
     // The pictures a fold needs: the newest inner-panel frame and the newest cover-panel frame,
     // each kept with its wrapper so the GPU's copy stays valid after the stream moves on.
     private var lastInner: (wrapper: CVMetalTexture, texture: MTLTexture)?
@@ -796,6 +800,11 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
         // Opening up, the last cover frame is kept so the NEXT fold has something to light the
         // cover with long before Android hands that stream over.
         let isInner = CGFloat(width) / CGFloat(height) >= Self.panelSplitAspect
+        if isInner != lastPanelWasInner {
+            lastPanelWasInner = isInner
+            AppBuild.log(String(format: "fold: stream is now the %@ panel %d×%d at hinge %.0f° (shown %.0f°)",
+                                isInner ? "INNER" : "COVER", width, height, hingeTarget, hingeShown))
+        }
         if isInner {
             lastInner = (wrapper, texture)
         } else {
@@ -831,6 +840,10 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
         } else if let h = hingeSource?() {
             hingeTarget = min(max(h, 0), 180)
             haveHinge = true
+            if abs(hingeTarget - lastLoggedHinge) >= 1 {
+                lastLoggedHinge = hingeTarget
+                AppBuild.log(String(format: "fold: hinge %.0f° (shown %.0f°) %@", hingeTarget, hingeShown, renderMode.title))
+            }
         } else {
             haveHinge = false
         }
