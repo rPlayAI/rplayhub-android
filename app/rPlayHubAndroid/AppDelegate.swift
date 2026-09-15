@@ -48,6 +48,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var twinActive = false
     private var twinDemo = false
     private var twinGateItem: NSMenuItem?
+    private var foldViewItem: NSMenuItem?
+    /// Set by View ▸ Show Fold in 3D: build the hinged model even if the device never said it
+    /// folds. Cleared when the 3D view is left.
+    private var forceFoldView = false
     private var twinOpenItem: NSMenuItem?
     private var twinDemoItem: NSMenuItem?
     private var twinBackImageItem: NSMenuItem?
@@ -503,7 +507,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         session?.stop()
         pictureLock.lock()
         newestPicture = nil
+        lastInnerPicture = nil
+        lastCoverPicture = nil
         pictureLock.unlock()
+        stopFoldClock()
         mirror.reset()
         mirror.autoReveal = reveal          // reset() set it true; a prepared session stays gated
         strip.setSessionActive(false)
@@ -722,12 +729,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.twin?.present(picture)   // one lock and out when the mode is off
             self.pictureLock.lock()
             self.newestPicture = picture   // kept for the hero renderer; newest wins
+            // A foldable's two panels are told apart by shape, the way the twin does it: the
+            // inner display is near square, the cover about half as wide. Each is kept, because
+            // the fold needs the last good INNER frame after Android has blanked that panel, and
+            // the last cover frame to light the cover before the stream moves there.
+            // Telling the panels apart by shape only means anything on a device that HAS two.
+            // A bar phone streams one tall panel, which the split would file as a cover frame,
+            // leaving the inner slot empty forever — and the fold, which folds the inner
+            // picture, would never have anything to show. On anything but a foldable the one
+            // panel is the inner one.
+            let w = CVPixelBufferGetWidth(picture), h = CVPixelBufferGetHeight(picture)
+            if h > 0 {
+                let twoPanels = self.session?.isFoldable ?? false
+                if !twoPanels || CGFloat(w) / CGFloat(h) >= 0.7 { self.lastInnerPicture = picture }
+                else { self.lastCoverPicture = picture }
+            }
             self.pictureLock.unlock()
         }
     }
 
     private let pictureLock = NSLock()
     private var newestPicture: CVPixelBuffer?
+    // A foldable's two panels, kept for the flat viewer's fold.
+    private var lastInnerPicture: CVPixelBuffer?
+    private var lastCoverPicture: CVPixelBuffer?
+    private var foldTimer: Timer?
+    private var foldClock: CFTimeInterval = 0
+    /// The images handed to the fold layer, and the buffers they were made from — so a frame is
+    /// converted once, when a fold starts, rather than every tick.
+    private var foldInnerImage: (buffer: CVPixelBuffer, image: CGImage)?
+    private var foldCoverImage: (buffer: CVPixelBuffer, image: CGImage)?
     /// The newest frame on the main stage, for anything that paints the screen on demand.
     private var latestPicture: CVPixelBuffer? {
         pictureLock.lock()
@@ -864,11 +895,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         session.control?.onDisplays = { [weak self] displays in
             self?.rebuildDisplaysMenu(displays)
         }
+        if ProcessInfo.processInfo.environment["RPLAYHUB_FAKE_HINGE"] != nil {
+            startFoldClock()
+        }
         // A foldable folding or unfolding: the logical display swaps panels and the stream
         // follows on its own; the twin, if it is up, is already reading the hinge. This is only
         // the word for the title bar, so the swap is not mistaken for a hiccup.
         session.control?.onDeviceState = { [weak self] name in
             guard let self, self.session === session else { return }
+            self.startFoldClock()
             let word = name == "CLOSED" ? "folded" : name == "OPENED" ? "unfolded"
                      : name == "HALF_OPENED" ? "half open" : name.lowercased()
             self.window.subtitle = "mirroring · \(word)"
@@ -890,6 +925,69 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let height: CGFloat = max(stage.bounds.height, 520)
         let wanted = min(max(520, height * aspect + 40), 900)
         stageRestingWidth?.constant = wanted
+    }
+
+    // MARK: - the fold, in the flat viewer
+
+    /// A foldable reports its hinge only while it moves, so the fold is eased on a clock of its
+    /// own rather than on sensor packets. Started when a device announces its postures, which
+    /// only a foldable does, and again for RPLAYHUB_FAKE_HINGE so the animation can be worked on
+    /// without a hinge to turn.
+    private func startFoldClock() {
+        guard foldTimer == nil else { return }
+        // Only a foldable sends device states, so without this the fake hinge — whose whole point
+        // is working on the fold with no foldable to hand — could never start the clock.
+        foldClock = CACurrentMediaTime()
+        foldTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60, repeats: true) { [weak self] _ in
+            self?.tickFold()
+        }
+        AppBuild.log("fold: flat-view fold clock started")
+    }
+
+    private func stopFoldClock() {
+        foldTimer?.invalidate()
+        foldTimer = nil
+        mirror.foldActive = false
+        foldInnerImage = nil
+        foldCoverImage = nil
+    }
+
+    private func tickFold() {
+        let now = CACurrentMediaTime()
+        let dt = min(max(now - foldClock, 0.001), 0.1)
+        foldClock = now
+
+        // The fake hinge stands in for the sensor: "1" sweeps, a number holds that angle.
+        var hinge: Float? = session?.sensor?.latestHinge
+        if let fake = ProcessInfo.processInfo.environment["RPLAYHUB_FAKE_HINGE"] {
+            let fixed = Float(fake) ?? 0
+            hinge = fixed > 1 ? min(max(fixed, 0), 180)
+                              : 90 + 90 * Float(cos(now * 0.7))
+        }
+        let fold = mirror.foldLayer
+        fold.setHinge(hinge)
+        let moving = fold.tick(dt)
+
+        // Nothing to draw while the phone is flat and settled — and the flat picture is the live
+        // one, which is always better than a still, so hand it back as soon as the fold is over.
+        guard fold.isFolding || moving else {
+            if mirror.foldActive { mirror.foldActive = false }
+            return
+        }
+
+        pictureLock.lock()
+        let inner = lastInnerPicture, cover = lastCoverPicture
+        pictureLock.unlock()
+        // Convert once per frame CHANGE, not per tick: these are stills for the length of a fold.
+        if let inner, foldInnerImage?.buffer !== inner, let image = FoldLayer.image(from: inner) {
+            foldInnerImage = (inner, image)
+        }
+        if let cover, foldCoverImage?.buffer !== cover, let image = FoldLayer.image(from: cover) {
+            foldCoverImage = (cover, image)
+        }
+        guard let innerImage = foldInnerImage?.image else { return }   // nothing to fold yet
+        fold.setPictures(inner: innerImage, cover: foldCoverImage?.image)
+        if !mirror.foldActive { mirror.foldActive = true }
     }
 
     // MARK: - virtual displays (scrcpy --new-display)
@@ -1740,6 +1838,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// The inspector's Hero tab: the live screen on a tilted phone over a gradient with a
     /// headline and badge — a store-listing shot, exported as PNGs or recorded as a video. It
     /// only reads frames, so it needs no sensor and sits outside the twin gate.
+    /// Open the 3D view with the two hinged halves, whatever the device is. On a foldable this
+    /// is just the twin; on anything else it is the fold model driven by the fake hinge, which is
+    /// how the fold can be looked at without a foldable to hand.
+    @objc private func showFoldView() {
+        forceFoldView = true
+        if twinActive { exitTwin() }
+        AppBuild.twinEnabled = true
+        toggleTwin()
+    }
+
     @objc private func showHero() {
         inspector.revealHero()
     }
@@ -1832,7 +1940,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         mirror.isHidden = true
         // A foldable gets two hinged halves. The device says so itself through its device-state
         // vocabulary; RPLAYHUB_FAKE_HINGE forces the fold model onto any phone for development.
-        let foldable = session.isFoldable || fakeHinge != nil
+        let foldable = session.isFoldable || fakeHinge != nil || forceFoldView
         tv.activate(displaySize: video.lastHeader?.displaySize ?? CGSize(width: 1080, height: 2400),
                     foldable: foldable)
         if let header = video.lastHeader { tv.apply(header: header) }
@@ -1950,6 +2058,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         mirror.isHidden = false
         twinActive = false
         twinDemo = false
+        forceFoldView = false
         mirror.setTwinActive(false)
         twinOpenItem?.title = "View Screen in 3D"
         if let session {
@@ -2355,6 +2464,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         twinToggle.state = AppBuild.twinEnabled ? .on : .off
         twinGateItem = twinToggle
         viewMenu.addItem(.separator())
+        // The fold in 3D, on demand. The twin picks the fold model up on its own for a device
+        // that reports its postures, but this asks for it outright — which is how you see the
+        // two halves on a phone that does not fold, and how you get back to it without hunting.
+        let foldItem = viewMenu.addItem(withTitle: "Show Fold in 3D", action: #selector(showFoldView),
+                                        keyEquivalent: "d")
+        foldItem.keyEquivalentModifierMask = [.command, .shift]
+        foldItem.target = self
+        foldViewItem = foldItem
+
         let heroItem = viewMenu.addItem(withTitle: "Hero Composer (Experimental)…",
                                         action: #selector(showHero), keyEquivalent: "h")
         heroItem.keyEquivalentModifierMask = [.command, .shift]
