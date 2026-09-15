@@ -59,6 +59,10 @@ final class AgentSession {
     private(set) var control: ControlSender?
     /// Device orientation, when the agent build has our sensor channel. Nil on older builds.
     private(set) var sensor: SensorStream?
+
+    /// True when the device announced device states over the control channel — which only a
+    /// foldable does. False before the channel is up.
+    var isFoldable: Bool { control?.isFoldable ?? false }
     /// Device audio playback, created on first use — see `setAudioForwarding`.
     private(set) var audio: AudioStream?
     let decoder = VideoDecoder()
@@ -440,6 +444,31 @@ final class ControlSender {
     /// The answer to a DisplayConfigurationRequest. Main queue.
     var onDisplays: (([DisplayDescriptor]) -> Void)?
 
+    // A foldable's posture. Empty on a phone that does not fold.
+    private let stateLock = NSLock()
+    private var deviceStates: [(id: Int, name: String)] = []
+    private var deviceStateId = -1
+    /// Main thread, with the posture name, whenever the device reports one (and once with the
+    /// initial state when the vocabulary arrives).
+    var onDeviceState: ((String) -> Void)?
+
+    /// True when the device announced device states — which only a foldable does.
+    var isFoldable: Bool {
+        stateLock.lock(); defer { stateLock.unlock() }
+        return !deviceStates.isEmpty
+    }
+
+    /// The current posture as the device names it: CLOSED, HALF_OPENED, OPENED, or "unknown".
+    var deviceStateName: String {
+        stateLock.lock(); defer { stateLock.unlock() }
+        return deviceStateNameLocked()
+    }
+
+    private func deviceStateNameLocked() -> String {
+        deviceStates.first(where: { $0.id == deviceStateId })?.name
+            ?? (deviceStateId < 0 ? "unknown" : String(deviceStateId))
+    }
+
     init(socket: TCPSocket) {
         self.socket = socket
     }
@@ -486,16 +515,36 @@ final class ControlSender {
                     notificationsReceived += 1
                     DispatchQueue.main.async { [weak self] in self?.onClipboardChanged?(text) }
                 case ControlMessage.typeSupportedDeviceStates:
+                    // Only a foldable sends this; a bar phone has no device states at all. The
+                    // list is the posture vocabulary (CLOSED, HALF_OPENED, OPENED, ...) and it
+                    // is what tells the twin to build two hinged halves instead of one slab.
                     let count = try readVarint()
+                    var states: [(id: Int, name: String)] = []
                     for _ in 0..<count {
-                        _ = try readVarint()                 // identifier
-                        _ = try readBytesString()            // name
+                        let id = try readVarint()
+                        let name = try readBytesString()
                         _ = try readVarint()                 // system properties
                         _ = try readVarint()                 // physical properties
+                        states.append((Int(id), name))
                     }
-                    _ = try readVarint()                     // current state id + 1
+                    let current = Int(try readVarint()) - 1  // the agent offsets by one so -1 fits a varint
+                    stateLock.lock()
+                    deviceStates = states
+                    deviceStateId = current
+                    let name = deviceStateNameLocked()
+                    stateLock.unlock()
+                    if !states.isEmpty {
+                        AppBuild.log("agent: foldable — \(states.count) device states, now \(name)")
+                    }
+                    DispatchQueue.main.async { [weak self] in self?.onDeviceState?(name) }
                 case ControlMessage.typeDeviceState:
-                    _ = try readVarint()
+                    let id = Int(try readVarint()) - 1
+                    stateLock.lock()
+                    deviceStateId = id
+                    let name = deviceStateNameLocked()
+                    stateLock.unlock()
+                    AppBuild.log("agent: device state → \(name)")
+                    DispatchQueue.main.async { [weak self] in self?.onDeviceState?(name) }
                 case ControlMessage.typeDisplayAddedOrChanged:
                     for _ in 0..<7 { _ = try readVarint() }
                 case ControlMessage.typeDisplayRemoved:

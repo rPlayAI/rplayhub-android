@@ -20,6 +20,16 @@
 //  game rotation vector fallback has arbitrary yaw anyway. Dragging orbits the camera; input
 //  injection stays with the flat view.
 //
+//  A foldable is two hinged halves (HeroComposer.makeFoldPhone). The hinge angle comes from the
+//  sensor channel and is eased, because the sensor reports in 5° steps; the picture is routed by
+//  shape — the inner panel is near-square, the cover panel about half as wide — so when Android
+//  moves the stream to the cover the last inner frame stays on the inner glass and the live one
+//  lands on the cover. Three render modes, after doc/rplayhub-fold-twin-brief.md, decide how the
+//  moving half is textured while it turns: hard cut (as Android draws it), locked (each fragment
+//  shows what the camera would see of the flat inner display fixed to the held half — the ground
+//  truth, done per fragment in a shader so it is the exact homography), and stylized (the alpha
+//  ramp and seam band a SurfaceFlinger approximation would use). Keys 1/2/3 switch them.
+//
 
 import AppKit
 import CoreVideo
@@ -30,6 +40,13 @@ import simd
 final class TwinView: NSView, SCNSceneRendererDelegate {
     /// Pulled once per rendered frame on the render thread; returns the newest device quaternion.
     var orientationSource: (() -> simd_quatf?)?
+    /// A foldable's hinge angle in degrees (0 shut, 180 flat), pulled once per frame. Nil when the
+    /// device has no hinge sensor, in which case a foldable holds flat.
+    var hingeSource: (() -> Float?)?
+    /// A foldable's two gyroscopes, rad/s, for attributing the fold to the half that actually
+    /// moved. Kept fresh here for the next step; the model currently assumes the held half is
+    /// still, as the Linux client does.
+    var gyroSource: ((Int) -> simd_float3?)?
     /// A touch on the phone's screen, already mapped to device pixels, with a MotionAction. Wired to
     /// the same injection path the flat viewer uses, so tapping the 3D screen taps the device.
     var onMotion: ((CGPoint, Int32) -> Void)?
@@ -64,6 +81,52 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
     private let geometryLock = NSLock()
     private var textureQuadrants = 0
 
+    // MARK: fold state
+
+    enum FoldMode: Int, CaseIterable {
+        case hardCut = 0, locked = 1, stylized = 2
+        var title: String {
+            switch self {
+            case .hardCut: return "1 Hard cut"
+            case .locked: return "2 Locked"
+            case .stylized: return "3 Stylized"
+            }
+        }
+    }
+
+    private(set) var foldable = false
+    private var pivotNode: SCNNode?
+    private var halfANode: SCNNode?
+    private var halfBNode: SCNNode?
+    private var screenA: SCNMaterial?
+    private var screenB: SCNMaterial?
+    private var coverMaterial: SCNMaterial?
+    private var contentPlaneNode: SCNNode?
+    private var seamA: SCNNode?
+    private var seamB: SCNNode?
+    private var panelWidth: CGFloat = 0
+    private var panelHeight: CGFloat = 0
+    private var renderMode: FoldMode = .hardCut
+    /// The stylized approximation's constants: the alpha ramp `1 − a·sin φ` on the moving half and
+    /// the seam band's width as a fraction of a half. Overridable with RPLAYHUB_FOLD_STYLE JSON.
+    private var stylizedA: Float = 0.35
+    private var stylizedW: Float = 0.12
+    // The hinge: what the sensor (or the fake) says, and what is shown after easing.
+    private var hingeTarget: Float = 180
+    private var hingeShown: Float = 180
+    private var haveHinge = false
+    private var lastTick: TimeInterval = 0
+    private var fakeClock: Double = 0
+    private let fakeHinge = ProcessInfo.processInfo.environment["RPLAYHUB_FAKE_HINGE"]
+    private var lastLabelUpdate: TimeInterval = 0
+    // The pictures a fold needs: the newest inner-panel frame and the newest cover-panel frame,
+    // each kept with its wrapper so the GPU's copy stays valid after the stream moves on.
+    private var lastInner: (wrapper: CVMetalTexture, texture: MTLTexture)?
+    private var lastOuter: (wrapper: CVMetalTexture, texture: MTLTexture)?
+    /// Inner panel vs cover panel, by shape: a Pixel Fold's inner is ~0.97 wide for its height, the
+    /// cover ~0.46. Anything at or above this is the inner panel, so landscape never trips it.
+    private static let panelSplitAspect: CGFloat = 0.7
+
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         build()
@@ -81,7 +144,8 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
         view.antialiasingMode = .multisampling4X
         view.delegate = self
         view.onRecenter = { [weak self] in self?.recenter() }
-        view.onPanelTouch = { [weak self] uv, action in self?.handlePanelTouch(uv, action) }
+        view.onPanelTouch = { [weak self] uv, half, action in self?.handlePanelTouch(uv, half, action) }
+        view.onMode = { [weak self] mode in self?.setRenderMode(mode) }
         view.translatesAutoresizingMaskIntoConstraints = false
         addSubview(view)
         NSLayoutConstraint.activate([
@@ -143,16 +207,44 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
             hint.bottomAnchor.constraint(equalTo: recenterButton.topAnchor, constant: -14),
             hint.widthAnchor.constraint(lessThanOrEqualTo: view.widthAnchor, multiplier: 0.9),
         ])
+
+        // The fold readout, top-left: render mode and hinge angle, only while a foldable is up.
+        modeLabel.isEditable = false
+        modeLabel.isBordered = false
+        modeLabel.drawsBackground = false
+        modeLabel.textColor = NSColor(calibratedWhite: 0.9, alpha: 0.9)
+        modeLabel.font = .monospacedSystemFont(ofSize: 12, weight: .medium)
+        modeLabel.isHidden = true
+        modeLabel.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(modeLabel)
+        NSLayoutConstraint.activate([
+            modeLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 12),
+            modeLabel.topAnchor.constraint(equalTo: view.topAnchor, constant: 10),
+        ])
+
+        if let m = ProcessInfo.processInfo.environment["RPLAYHUB_TWIN_MODE"].flatMap(Int.init),
+           let mode = FoldMode(rawValue: ((m % 3) + 3) % 3) {
+            renderMode = mode
+        }
+        if let json = ProcessInfo.processInfo.environment["RPLAYHUB_FOLD_STYLE"],
+           let data = json.data(using: .utf8),
+           let numbers = try? JSONSerialization.jsonObject(with: data) as? [String: Double] {
+            if let a = numbers["a"] { stylizedA = Float(a) }
+            if let w = numbers["w"] { stylizedW = Float(w) }
+        }
     }
 
     private let hint = NSTextField(labelWithString: "")
+    private let modeLabel = NSTextField(labelWithString: "")
 
     // MARK: - mode lifecycle
 
     /// `displaySize` is the display in its canonical (portrait) orientation; it sets the body's
     /// proportions — rebuilt on each activation because a different device may be mirrored now.
-    func activate(displaySize: CGSize) {
+    /// `foldable` builds two hinged halves; nil keeps whatever the last activation chose.
+    func activate(displaySize: CGSize, foldable: Bool? = nil) {
         deviceSize = displaySize
+        if let foldable { self.foldable = foldable }
         scnView.scene = buildScene(displaySize: displaySize)
         scnView.rendersContinuously = true       // orientation changes without scene mutations
         // Prefer the saved "facing me" calibration as the default; only capture a fresh one from
@@ -166,6 +258,11 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
         referenceSamples = []
         hint.isHidden = savedFacingMe != nil
         smoothed = nil
+        hingeShown = 180
+        hingeTarget = 180
+        lastTick = 0
+        fakeClock = 0
+        modeLabel.isHidden = !self.foldable
         window?.makeFirstResponder(scnView)
         frameLock.lock()
         isActive = true
@@ -181,7 +278,19 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
         scnView.scene = nil
         phoneNode = nil
         screenMaterial = nil
+        pivotNode = nil
+        halfANode = nil
+        halfBNode = nil
+        screenA = nil
+        screenB = nil
+        coverMaterial = nil
+        contentPlaneNode = nil
+        seamA = nil
+        seamB = nil
         heldTextures = []
+        lastInner = nil
+        lastOuter = nil
+        modeLabel.isHidden = true
     }
 
     // MARK: - inputs
@@ -207,14 +316,21 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
         recenterRequested = true
     }
 
+    func setRenderMode(_ mode: FoldMode) {
+        renderMode = mode
+        AppBuild.log("twin: fold render mode \(mode.title)")
+    }
+
     /// Map a screen-plane hit (texture UV, origin bottom-left) to a canonical device pixel and
     /// forward it. The panel geometry is the physical glass, so this holds at any rotation: touch
     /// coordinates live in the canonical portrait frame regardless of what the screen is showing.
-    private func handlePanelTouch(_ uv: CGPoint, _ action: Int32) {
+    /// On a foldable each half's plane covers half the glass, so its u is folded into the whole.
+    private func handlePanelTouch(_ uv: CGPoint, _ half: Int, _ action: Int32) {
         guard deviceSize.width > 0, deviceSize.height > 0 else { return }
         // The panel's texture UV is top-left origin (v=0 at the top), matching the device's own
         // top-left pixel origin — so both axes map straight through, no flip.
-        let x = (uv.x * deviceSize.width).rounded()
+        let u = half < 0 ? uv.x : (half == 0 ? uv.x * 0.5 : 0.5 + uv.x * 0.5)
+        let x = (u * deviceSize.width).rounded()
         let y = (uv.y * deviceSize.height).rounded()
         onMotion?(CGPoint(x: x, y: y), action)
     }
@@ -228,10 +344,47 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
     private func buildScene(displaySize: CGSize) -> SCNScene {
         let scene = SCNScene()
         scene.background.contents = Self.studioBackdrop()   // a soft spotlight, premium on camera
-        let built = Self.makePhone(displaySize: displaySize)
-        scene.rootNode.addChildNode(built.node)
-        phoneNode = built.node
-        screenMaterial = built.screen
+        if foldable {
+            let built = HeroComposer.makeFoldPhone(displaySize: displaySize, finish: .graphite)
+            scene.rootNode.addChildNode(built.node)
+            phoneNode = built.node
+            pivotNode = built.pivot
+            halfANode = built.halfA
+            halfBNode = built.halfB
+            screenA = built.screenA
+            screenB = built.screenB
+            coverMaterial = built.cover
+            contentPlaneNode = built.contentPlane
+            panelWidth = built.panelWidth
+            panelHeight = built.panelHeight
+            screenMaterial = nil
+            // A test grid until the first frame: a fold with nothing on the glass is unreadable,
+            // and the grid is what makes the locked mode's mapping across the crease checkable.
+            let grid = Self.testGrid(size: displaySize)
+            for m in [built.screenA, built.screenB, built.cover] {
+                m.diffuse.contents = grid
+                m.diffuse.wrapS = .clamp
+                m.diffuse.wrapT = .clamp
+            }
+            built.screenA.diffuse.contentsTransform = halfTransform(side: 0)
+            built.screenB.diffuse.contentsTransform = halfTransform(side: 1)
+            built.cover.diffuse.contentsTransform = Self.middleHalfTransform
+            built.screenB.shaderModifiers = [.surface: Self.lockedSurfaceModifier]
+            built.screenB.setValue(NSNumber(value: 0), forKey: "locked")
+            // Seam band: a dark gradient along the crease on each half, scaled with the fold.
+            let hd = built.halfDepth / 2
+            let (a, b) = Self.makeSeams(panelHeight: built.panelHeight, hd: hd)
+            built.halfA.addChildNode(a)
+            built.halfB.addChildNode(b)
+            seamA = a
+            seamB = b
+        } else {
+            let built = Self.makePhone(displaySize: displaySize)
+            scene.rootNode.addChildNode(built.node)
+            phoneNode = built.node
+            screenMaterial = built.screen
+            pivotNode = nil
+        }
         addCameraAndLights(scene)
         return scene
     }
@@ -312,6 +465,164 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
         ambient.light!.intensity = 350
         scene.rootNode.addChildNode(ambient)
     }
+
+    // MARK: - fold pieces
+
+    /// The seam band for the stylized mode: a dark gradient along the crease, darkest at the
+    /// crease and clear a band-width out, on each half. Scaled with the fold angle each frame.
+    private static func makeSeams(panelHeight: CGFloat, hd: CGFloat) -> (SCNNode, SCNNode) {
+        func seam(darkOnRight: Bool) -> SCNNode {
+            let plane = SCNPlane(width: 1, height: panelHeight)
+            // Black, with the gradient's alpha in `transparent` — the channel SceneKit blends
+            // by. Alpha in the diffuse image alone is ignored, as the screen masks already know.
+            let m = SCNMaterial()
+            m.lightingModel = .constant
+            m.diffuse.contents = NSColor.black
+            m.transparent.contents = seamImage(darkOnRight: darkOnRight)
+            m.transparencyMode = .aOne
+            m.transparent.mipFilter = .none
+            m.blendMode = .alpha
+            m.writesToDepthBuffer = false
+            m.isDoubleSided = false
+            plane.materials = [m]
+            let n = SCNNode(geometry: plane)
+            n.position = SCNVector3(0, 0, hd + 0.006)
+            n.scale = SCNVector3(0.0001, 1, 1)
+            return n
+        }
+        // Half A is to the left of the crease: its band is darkest at its RIGHT edge.
+        return (seam(darkOnRight: true), seam(darkOnRight: false))
+    }
+
+    private static func seamImage(darkOnRight: Bool) -> NSImage {
+        let size = NSSize(width: 256, height: 8)
+        let img = NSImage(size: size)
+        img.lockFocus()
+        NSColor.clear.setFill()
+        NSRect(origin: .zero, size: size).fill()
+        let g = NSGradient(colors: [NSColor(calibratedWhite: 0, alpha: 0.55), NSColor(calibratedWhite: 0, alpha: 0)])
+        g?.draw(in: NSRect(origin: .zero, size: size), angle: darkOnRight ? 180 : 0)
+        img.unlockFocus()
+        return img
+    }
+
+    /// What a foldable's glass shows before any frame arrives, and what the fold rig shows with
+    /// no phone: a grid with a big circle across the crease, so continuity of the picture from
+    /// the held half to the moving half can be read directly. The crease is the vertical line
+    /// through the middle.
+    private static func testGrid(size: CGSize) -> NSImage {
+        let w = 1024, h = Int((1024 * max(size.height, 1) / max(size.width, 1)).rounded())
+        let img = NSImage(size: NSSize(width: w, height: h))
+        img.lockFocus()
+        NSColor(calibratedRed: 0.10, green: 0.12, blue: 0.18, alpha: 1).setFill()
+        NSRect(x: 0, y: 0, width: w, height: h).fill()
+        // A subtle left/right tint, so the two halves are told apart at a glance.
+        NSColor(calibratedRed: 0.12, green: 0.20, blue: 0.30, alpha: 1).setFill()
+        NSRect(x: w / 2, y: 0, width: w / 2, height: h).fill()
+        NSColor(calibratedWhite: 1, alpha: 0.18).setStroke()
+        let step = 64
+        for x in stride(from: 0, through: w, by: step) {
+            let p = NSBezierPath(); p.move(to: NSPoint(x: x, y: 0)); p.line(to: NSPoint(x: x, y: h)); p.lineWidth = 1; p.stroke()
+        }
+        for y in stride(from: 0, through: h, by: step) {
+            let p = NSBezierPath(); p.move(to: NSPoint(x: 0, y: y)); p.line(to: NSPoint(x: w, y: y)); p.lineWidth = 1; p.stroke()
+        }
+        // The circle across the crease: at 180° it must be one round circle; in locked mode it
+        // must stay round from the camera's seat as the phone folds.
+        NSColor(calibratedRed: 1.0, green: 0.75, blue: 0.2, alpha: 0.95).setStroke()
+        let r = CGFloat(min(w, h)) * 0.28
+        let circle = NSBezierPath(ovalIn: NSRect(x: CGFloat(w) / 2 - r, y: CGFloat(h) / 2 - r, width: 2 * r, height: 2 * r))
+        circle.lineWidth = 10
+        circle.stroke()
+        // A diagonal, for the same reason: a straight line must stay straight in locked mode.
+        NSColor(calibratedRed: 0.4, green: 0.9, blue: 1.0, alpha: 0.95).setStroke()
+        let diag = NSBezierPath(); diag.move(to: NSPoint(x: 0, y: 0)); diag.line(to: NSPoint(x: w, y: h)); diag.lineWidth = 8; diag.stroke()
+        // The crease itself.
+        NSColor(calibratedWhite: 1, alpha: 0.6).setFill()
+        NSRect(x: w / 2 - 2, y: 0, width: 4, height: h).fill()
+        // Labels, so up and left/right are unambiguous.
+        let attrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 96, weight: .black),
+                                                    .foregroundColor: NSColor(calibratedWhite: 1, alpha: 0.85)]
+        NSAttributedString(string: "L", attributes: attrs).draw(at: NSPoint(x: 40, y: h - 140))
+        NSAttributedString(string: "R", attributes: attrs).draw(at: NSPoint(x: w - 110, y: h - 140))
+        NSAttributedString(string: "TOP", attributes: attrs).draw(at: NSPoint(x: w / 2 - 110, y: h - 140))
+        img.unlockFocus()
+        return img
+    }
+
+    /// Half `side` (0 left, 1 right) of the picture, then the panel counter-rotation.
+    private func halfTransform(side: Int) -> SCNMatrix4 {
+        var h = SCNMatrix4Identity
+        h.m11 = 0.5
+        h.m41 = side == 0 ? 0 : 0.5
+        return Self.composed(first: h, then: textureTransform())
+    }
+
+    /// The middle half of the inner picture — what the cover shows when no cover frame exists
+    /// yet. The cover panel is about half as wide as the inner one and shows the same screen, so
+    /// this reads as the content carrying over rather than jumping.
+    private static var middleHalfTransform: SCNMatrix4 {
+        var h = SCNMatrix4Identity
+        h.m11 = 0.5
+        h.m41 = 0.25
+        return h
+    }
+
+    /// Two hand-written texture affines composed (`first` applied, then `second`), written
+    /// out element by element. The SCNMatrix4 concatenation helpers were paid for once already
+    /// (see textureTransform); this never goes near them.
+    /// u' = m11·u + m21·v + m41 ; v' = m12·u + m22·v + m42.
+    private static func composed(first a: SCNMatrix4, then b: SCNMatrix4) -> SCNMatrix4 {
+        var m = SCNMatrix4Identity
+        m.m11 = b.m11 * a.m11 + b.m21 * a.m12
+        m.m21 = b.m11 * a.m21 + b.m21 * a.m22
+        m.m41 = b.m11 * a.m41 + b.m21 * a.m42 + b.m41
+        m.m12 = b.m12 * a.m11 + b.m22 * a.m12
+        m.m22 = b.m12 * a.m21 + b.m22 * a.m22
+        m.m42 = b.m12 * a.m41 + b.m22 * a.m42 + b.m42
+        return m
+    }
+
+    /// Locked mode, per fragment. The content plane is the flat inner display fixed to the held
+    /// half; a fragment on the moving half's glass shows whatever the camera would see of that
+    /// plane through it — the intersection of the camera→fragment ray with the plane, turned
+    /// into a texture coordinate. Both are planar, so this is the exact homography the
+    /// SurfaceFlinger approximation is trying to reach; here it is the ground truth. Fragments
+    /// whose ray misses the display clamp to its edge, as the reference implementation does; a
+    /// plane behind the camera goes black.
+    ///
+    /// `planeToView` is the content plane's frame in view space (camera at the origin): columns
+    /// are x, y, normal and origin. `texXform` is the panel counter-rotation as a 4×4 on
+    /// (u, v, 0, 1); `locked` switches the whole thing on. All set per frame from updateFold.
+    private static let lockedSurfaceModifier = """
+    #pragma arguments
+    float4x4 planeToView;
+    float4x4 texXform;
+    float planeW;
+    float planeH;
+    float locked;
+    #pragma body
+    if (locked > 0.5) {
+        float3 dir = normalize(_surface.position);
+        float3 p0 = planeToView[3].xyz;
+        float3 ax = normalize(planeToView[0].xyz);
+        float3 ay = normalize(planeToView[1].xyz);
+        float3 n = normalize(planeToView[2].xyz);
+        float denom = dot(n, dir);
+        float4 shown = float4(0.0, 0.0, 0.0, 1.0);
+        if (abs(denom) > 1e-6) {
+            float t = dot(n, p0) / denom;
+            if (t > 0.0) {
+                float3 hit = dir * t - p0;
+                float u = clamp(dot(hit, ax) / planeW + 0.5, 0.0, 1.0);
+                float v = clamp(0.5 - dot(hit, ay) / planeH, 0.0, 1.0);
+                float2 tuv = (texXform * float4(u, v, 0.0, 1.0)).xy;
+                shown = u_diffuseTexture.sample(u_diffuseTextureSampler, tuv);
+            }
+        }
+        _surface.diffuse = shown;
+    }
+    """
 
     // MARK: - user-supplied back image
 
@@ -395,6 +706,7 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
     func renderer(_ renderer: SCNSceneRenderer, updateAtTime time: TimeInterval) {
         updateTexture()
         updateOrientation()
+        if foldable { updateFold(renderer, time: time) }
     }
 
     private func updateTexture() {
@@ -408,17 +720,104 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
         }
 
         var wrapper: CVMetalTexture?
+        let width = CVPixelBufferGetWidth(frame), height = CVPixelBufferGetHeight(frame)
         let status = CVMetalTextureCacheCreateTextureFromImage(
-            kCFAllocatorDefault, cache, frame, nil, .bgra8Unorm_srgb,
-            CVPixelBufferGetWidth(frame), CVPixelBufferGetHeight(frame), 0, &wrapper)
+            kCFAllocatorDefault, cache, frame, nil, .bgra8Unorm_srgb, width, height, 0, &wrapper)
         guard status == kCVReturnSuccess, let wrapper,
               let texture = CVMetalTextureGetTexture(wrapper) else { return }
 
-        heldTextures.append(wrapper)
-        if heldTextures.count > 3 { heldTextures.removeFirst() }
+        if !foldable {
+            heldTextures.append(wrapper)
+            if heldTextures.count > 3 { heldTextures.removeFirst() }
+            screenMaterial?.diffuse.contents = texture
+            screenMaterial?.diffuse.contentsTransform = textureTransform()
+            return
+        }
 
-        screenMaterial?.diffuse.contents = texture
-        screenMaterial?.diffuse.contentsTransform = textureTransform()
+        // A foldable: the panels are told apart by shape. When Android folds the phone it turns
+        // the inner display off and the stream moves to the cover; the last inner frame stays on
+        // the inner glass (which is turning away anyway) and the live one lights the cover.
+        // Opening up, the last cover frame is kept so the NEXT fold has something to light the
+        // cover with long before Android hands that stream over.
+        let isInner = CGFloat(width) / CGFloat(height) >= Self.panelSplitAspect
+        if isInner {
+            lastInner = (wrapper, texture)
+        } else {
+            lastOuter = (wrapper, texture)
+        }
+        if let inner = lastInner {
+            screenA?.diffuse.contents = inner.texture
+            screenB?.diffuse.contents = inner.texture
+        }
+        screenA?.diffuse.contentsTransform = halfTransform(side: 0)
+        screenB?.diffuse.contentsTransform = halfTransform(side: 1)
+        if let outer = lastOuter {
+            coverMaterial?.diffuse.contents = outer.texture
+            coverMaterial?.diffuse.contentsTransform = SCNMatrix4Identity
+        } else if let inner = lastInner {
+            coverMaterial?.diffuse.contents = inner.texture
+            coverMaterial?.diffuse.contentsTransform = Self.middleHalfTransform
+        }
+    }
+
+    /// The hinge, eased, and everything that rides on it: the pivot, the locked mode's uniforms,
+    /// the stylized mode's alpha ramp and seam band, and the readout.
+    private func updateFold(_ renderer: SCNSceneRenderer, time: TimeInterval) {
+        let dt = lastTick == 0 ? 1.0 / 60 : min(max(time - lastTick, 0.001), 0.1)
+        lastTick = time
+
+        if let fake = fakeHinge {
+            // "1" sweeps shut ↔ open; any other number holds that angle, for screenshots.
+            fakeClock += dt
+            let fixed = Float(fake) ?? 0
+            hingeTarget = fixed > 1 ? min(max(fixed, 0), 180) : 90 + 90 * Float(cos(fakeClock * 0.7))
+            haveHinge = true
+        } else if let h = hingeSource?() {
+            hingeTarget = min(max(h, 0), 180)
+            haveHinge = true
+        } else {
+            haveHinge = false
+        }
+        // The sensor reports in 5° steps ~20 ms apart: ease toward it so the motion reads as one
+        // sweep. Without a sensor the same ease is the whole animation, slower.
+        let rate: Float = haveHinge ? 30 : 9
+        hingeShown += (hingeTarget - hingeShown) * min(1, Float(dt) * rate)
+        if abs(hingeTarget - hingeShown) < 0.05 { hingeShown = hingeTarget }
+        let phi = (180 - hingeShown) * .pi / 180          // 0 flat, π shut
+        pivotNode?.eulerAngles = SCNVector3(0, CGFloat(-phi), 0)
+
+        // Locked: hand the shader the content plane in view space. Both nodes' presentation
+        // transforms are what is on screen this frame; the camera is whatever the orbit left.
+        if let screenB {
+            let locked = renderMode == .locked
+            screenB.setValue(NSNumber(value: locked ? 1 : 0), forKey: "locked")
+            if locked, let plane = contentPlaneNode, let pov = renderer.pointOfView {
+                let camera = pov.presentation.simdWorldTransform
+                let planeWorld = plane.presentation.simdWorldTransform
+                let planeToView = simd_inverse(camera) * planeWorld
+                screenB.setValue(NSValue(scnMatrix4: SCNMatrix4(planeToView)), forKey: "planeToView")
+                screenB.setValue(NSValue(scnMatrix4: textureTransform()), forKey: "texXform")
+                screenB.setValue(NSNumber(value: Float(panelWidth)), forKey: "planeW")
+                screenB.setValue(NSNumber(value: Float(panelHeight)), forKey: "planeH")
+            }
+            // Stylized: the moving half fades with the fold; otherwise fully opaque.
+            screenB.transparency = renderMode == .stylized
+                ? CGFloat(max(0, 1 - stylizedA * sin(phi))) : 1
+        }
+        // The seam band widens as the phone closes, and only exists in stylized mode.
+        let band = renderMode == .stylized ? CGFloat(stylizedW) * (panelWidth / 2) * CGFloat(min(1, phi)) : 0
+        for (seam, sign) in [(seamA, CGFloat(-1)), (seamB, CGFloat(1))] {
+            guard let seam else { continue }
+            seam.isHidden = band <= 0.0002
+            seam.scale = SCNVector3(max(band, 0.0001), 1, 1)
+            seam.position = SCNVector3(sign * band / 2, 0, seam.position.z)
+        }
+
+        if time - lastLabelUpdate > 0.1 {
+            lastLabelUpdate = time
+            let text = String(format: "%@   hinge %.0f°   (1/2/3 to switch)", renderMode.title, hingeShown)
+            DispatchQueue.main.async { [weak self] in self?.modeLabel.stringValue = text }
+        }
     }
 
     /// The panel counter-rotation from `apply(header:)`, as explicit affine maps of the unit
@@ -567,31 +966,36 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
     }
 }
 
-/// An SCNView that treats R as "re-centre", turns a click on the phone's screen into a touch, and
-/// hands everything else (a drag on empty space) to the camera controller to orbit.
+/// An SCNView that treats R as "re-centre", 1/2/3 as the fold render modes, turns a click on the
+/// phone's screen into a touch, and hands everything else (a drag on empty space) to the camera
+/// controller to orbit.
 private final class TwinSCNView: SCNView {
     var onRecenter: (() -> Void)?
-    /// (texture UV, MotionAction) when the click lands on the screen; nil-hit falls through to orbit.
-    var onPanelTouch: ((CGPoint, Int32) -> Void)?
+    var onMode: ((TwinView.FoldMode) -> Void)?
+    /// (texture UV, half, MotionAction) when the click lands on the screen; half is -1 for the
+    /// rigid phone's single panel, 0 and 1 for a foldable's. A nil hit falls through to orbit.
+    var onPanelTouch: ((CGPoint, Int, Int32) -> Void)?
 
     private var touching = false
-    private var lastUV: CGPoint?
+    private var last: (CGPoint, Int)?
 
     override var acceptsFirstResponder: Bool { true }
 
     override func keyDown(with event: NSEvent) {
-        if event.charactersIgnoringModifiers?.lowercased() == "r" {
-            onRecenter?()
-        } else {
-            super.keyDown(with: event)
+        switch event.charactersIgnoringModifiers?.lowercased() {
+        case "r": onRecenter?()
+        case "1": onMode?(.hardCut)
+        case "2": onMode?(.locked)
+        case "3": onMode?(.stylized)
+        default: super.keyDown(with: event)
         }
     }
 
     override func mouseDown(with event: NSEvent) {
-        if let uv = panelUV(for: event) {
+        if let hit = panelUV(for: event) {
             touching = true
-            lastUV = uv
-            onPanelTouch?(uv, MotionAction.down)
+            last = hit
+            onPanelTouch?(hit.0, hit.1, MotionAction.down)
         } else {
             touching = false
             super.mouseDown(with: event)          // empty space — orbit the camera
@@ -600,27 +1004,34 @@ private final class TwinSCNView: SCNView {
 
     override func mouseDragged(with event: NSEvent) {
         guard touching else { super.mouseDragged(with: event); return }
-        if let uv = panelUV(for: event) {
-            lastUV = uv
-            onPanelTouch?(uv, MotionAction.move)
+        if let hit = panelUV(for: event) {
+            last = hit
+            onPanelTouch?(hit.0, hit.1, MotionAction.move)
         }
     }
 
     override func mouseUp(with event: NSEvent) {
         guard touching else { super.mouseUp(with: event); return }
-        if let uv = panelUV(for: event) ?? lastUV {
-            onPanelTouch?(uv, MotionAction.up)     // a drag off the screen still has to release
+        if let hit = panelUV(for: event) ?? last {
+            onPanelTouch?(hit.0, hit.1, MotionAction.up)     // a drag off the screen still has to release
         }
         touching = false
     }
 
-    /// The screen plane's texture UV under the pointer, or nil if the screen is not the nearest
-    /// surface there — so you can only tap the screen while it faces you, and a click on the body
-    /// or the empty stage orbits instead.
-    private func panelUV(for event: NSEvent) -> CGPoint? {
+    /// The screen plane's texture UV under the pointer and which panel it is, or nil if the
+    /// screen is not the nearest surface there — so you can only tap the screen while it faces
+    /// you, and a click on the body or the empty stage orbits instead.
+    private func panelUV(for event: NSEvent) -> (CGPoint, Int)? {
         let p = convert(event.locationInWindow, from: nil)
-        guard let hit = hitTest(p, options: nil).first, hit.node.name == "panel" else { return nil }
+        guard let hit = hitTest(p, options: nil).first else { return nil }
+        let half: Int
+        switch hit.node.name {
+        case "panel": half = -1
+        case "panelA": half = 0
+        case "panelB": half = 1
+        default: return nil
+        }
         let tc = hit.textureCoordinates(withMappingChannel: 0)
-        return CGPoint(x: tc.x, y: tc.y)
+        return (CGPoint(x: tc.x, y: tc.y), half)
     }
 }

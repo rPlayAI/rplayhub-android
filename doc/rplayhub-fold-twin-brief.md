@@ -90,3 +90,44 @@ What the twin cannot do: prototype latency. The mirror stream and the on-device 
 - Default constants (`d`, `a`, `r_max`, `k`, `w`): _pending_
 - Angle below which `stylized` diverges from `locked`: _pending_
 - Path of the exported calibration JSON handed to the SF agent: _pending_
+
+---
+
+## 6. macOS implementation status (2026-09-14)
+
+The twin on the Mac now builds a foldable as two hinged halves (`HeroComposer.makeFoldPhone`,
+used by `TwinView` when the device announces device states over the control channel, or when
+`RPLAYHUB_FAKE_HINGE` is set). Verified against the fake hinge with a test grid on the glass; a
+Pixel Fold has not yet been attached to the Mac, so the live hinge, posture and cover-stream
+paths are wired but unexercised.
+
+- **Hinge.** Tag 2 from the sensor channel (28-byte tagged packets since 2026-09-11), eased at
+  the same rate as the Linux client so the 5° steps read as one sweep. Tags 3/4 (the two
+  gyroscopes) are read and exposed (`SensorStream.latestGyro`) but the model still assumes
+  `s = 1`: half B moves, half A is held. §2.2's attribution is the next step.
+- **Textures.** Panels told apart by shape (aspect ≥ 0.7 is the inner panel). The last inner
+  frame stays on the inner glass once the stream moves to the cover; the last cover frame is kept
+  so the next fold lights the cover before Android hands it over; before any cover frame exists
+  the cover shows the middle half of the inner picture. Same policy as the Linux client.
+- **Render modes** (keys 1/2/3, `RPLAYHUB_TWIN_MODE` for screenshots):
+  `hardcut` as Android draws it; `locked` as a **per-fragment** Metal shader modifier on the
+  moving half (camera ray → content plane fixed to the held half → texture coordinate), i.e.
+  the exact homography rather than the 6×16 per-vertex grid of the Linux pass — verified: a
+  circle across the crease stays round and a diagonal stays straight at 120°; `stylized` with the
+  alpha ramp `1 − a·sin φ` and a seam band of width `w` (defaults a=0.35, w=0.12,
+  `RPLAYHUB_FOLD_STYLE='{"a":..,"w":..}'` to override). The inspector sliders and the JSON
+  round-trip of §2.2 are not built yet; the env override stands in.
+- **Fake hinge.** `RPLAYHUB_FAKE_HINGE=1` sweeps shut↔open, `=<degrees>` holds. With no phone at
+  all, View ▸ View Screen in 3D still opens the rig on a 2076×2152 inner display showing a test
+  grid (L / TOP / R, a circle and a diagonal across the crease), so the look can be tuned and
+  screenshotted with nothing plugged in.
+- **Touch** through either half's glass maps to the whole inner display.
+- **Not done:** streaming inner and cover displays at once (§2.1 item 4 — still "pending" on
+  both clients), gyro attribution (`s`), the calibration export (`Export fold calibration…`) and
+  the side-by-side capture of the three modes. The brief's acceptance items that need a real
+  Fold are open until one is on the Mac.
+
+Trap recorded on the way: the Mac's `SensorStream` had kept the old 24-byte layout after the
+agent moved to tagged 28-byte packets; it worked only because the bundled agent predated the
+change. The two are now in step, and `tools/build-agent.sh` passes the locally installed NDK
+version to Gradle so the same source builds on the Mac and the Linux host.
