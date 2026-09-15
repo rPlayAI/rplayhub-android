@@ -475,6 +475,7 @@ final class HeroComposer {
         screen.isDoubleSided = false
         panel.materials = [screen]
         let panelNode = SCNNode(geometry: panel)
+        panelNode.name = "panel"                       // the twin hit-tests this name for touch
         panelNode.position = SCNVector3(0, 0, depth / 2 + 0.004)
         phone.addChildNode(panelNode)
 
@@ -553,6 +554,196 @@ final class HeroComposer {
                                                 depth: depth, finish: finish))
         }
         return (phone, screen, bodyWidth, bodyHeight, depth)
+    }
+
+    /// A foldable, for the twin: the same chassis split into two halves hinged on a vertical
+    /// crease. Half A (x < 0) is the held half and carries the pose; half B (x > 0) hangs from
+    /// `pivot`, a node on the crease in the plane of the inner glass, so turning the pivot about
+    /// y by −(180° − hinge) swings B's inner face toward A's — flat at 180°, shut at 0°.
+    ///
+    /// Each half is rounded on its two outer corners and square at the crease, thinner than a
+    /// bar phone (a shut foldable is two of them stacked), and carries half the inner screen:
+    /// `screenA` samples the left of the inner picture and `screenB` the right. The cover display
+    /// is a plane on B's OUTER face (when shut, B lies on top of A with that face up), textured by
+    /// `cover`. The camera island sits on A's outer face, where the Fold wears its lenses.
+    ///
+    /// `contentPlane` is a marker node on the root at the crease in the inner-glass plane, the
+    /// frame the "locked" render mode samples against: the flat inner display as it would lie if
+    /// the phone were open, fixed to the held half.
+    static func makeFoldPhone(displaySize: CGSize, finish: HeroFinish = .graphite)
+        -> (node: SCNNode, pivot: SCNNode, screenA: SCNMaterial, screenB: SCNMaterial,
+            cover: SCNMaterial, contentPlane: SCNNode, halfA: SCNNode, halfB: SCNNode,
+            panelWidth: CGFloat, panelHeight: CGFloat, halfDepth: CGFloat) {
+        // The inner display of a Pixel Fold is close to square (about 0.97), which is what
+        // arrives here; a bar phone's portrait size would make two very tall slivers.
+        let aspect = displaySize.width > 0 && displaySize.height > 0
+            ? displaySize.width / displaySize.height : 2076.0 / 2152.0
+        let panelHeight: CGFloat = 1.5
+        let panelWidth = panelHeight * aspect
+        let bezel = panelWidth * 0.022
+        let halfPanel = panelWidth / 2
+        let halfBody = halfPanel + bezel               // each half: bezel on the outer edge only
+        let bodyHeight = panelHeight + 2 * bezel
+        let fullWidth = panelWidth + 2 * bezel
+        // Each half is a little over half a bar phone's thickness: a shut Fold is ~10 mm across
+        // 77 mm, so one half is ~5.2 mm, about 0.068 of the open width.
+        let halfDepth = fullWidth * 0.068
+        let corner = fullWidth * 0.06
+        let hd = halfDepth / 2                          // inner glass sits at +hd of each half
+
+        func pbr(_ color: NSColor, metalness: CGFloat, roughness: CGFloat) -> SCNMaterial {
+            let m = SCNMaterial()
+            m.lightingModel = .physicallyBased
+            m.diffuse.contents = color
+            m.metalness.contents = metalness
+            m.roughness.contents = roughness
+            return m
+        }
+        let rail = pbr(finish.rail, metalness: 0.98, roughness: 0.08)
+        let face = pbr(finish.body, metalness: 0.15, roughness: 0.55)
+        let edge = pbr(finish.chamfer, metalness: 1.0, roughness: 0.04)
+
+        // Build one half in its own frame: the crease at x = 0, the half extending to `sign`.
+        func makeHalf(sign: CGFloat) -> (node: SCNNode, screen: SCNMaterial) {
+            let half = SCNNode()
+            let path = Self.halfPath(width: halfBody, height: bodyHeight, corner: corner, sign: sign)
+            let body = SCNShape(path: path, extrusionDepth: halfDepth)
+            body.chamferMode = .both
+            body.chamferRadius = halfDepth * 0.26
+            body.materials = [face, face, rail, edge, edge]
+            half.addChildNode(SCNNode(geometry: body))
+
+            // Black glass over the inner face, inset from the outer three edges only; it runs
+            // right up to the crease so the two panes meet there like one sheet.
+            let inset = halfDepth * 0.30
+            let glassPath = Self.halfPath(width: halfBody - inset, height: bodyHeight - 2 * inset,
+                                          corner: corner - inset, sign: sign)
+            let glass = SCNShape(path: glassPath, extrusionDepth: 0.002)
+            let glassMat = pbr(NSColor(calibratedWhite: 0.02, alpha: 1), metalness: 0, roughness: 0.15)
+            glass.materials = [glassMat]
+            let glassNode = SCNNode(geometry: glass)
+            glassNode.position = SCNVector3(0, 0, hd + 0.001)
+            half.addChildNode(glassNode)
+
+            // This half's share of the inner screen: half the width, sampling half the picture.
+            let panel = SCNPlane(width: halfPanel, height: panelHeight)
+            let screen = SCNMaterial()
+            screen.lightingModel = .constant
+            screen.diffuse.contents = NSColor.black
+            screen.transparent.contents = Self.halfMask(width: halfPanel, height: panelHeight,
+                                                        radius: corner - bezel, sign: sign)
+            screen.transparencyMode = .aOne
+            screen.transparent.mipFilter = .none
+            screen.transparent.magnificationFilter = .linear
+            screen.isDoubleSided = false
+            panel.materials = [screen]
+            let panelNode = SCNNode(geometry: panel)
+            panelNode.name = sign < 0 ? "panelA" : "panelB"
+            panelNode.position = SCNVector3(sign * halfPanel / 2, 0, hd + 0.004)
+            half.addChildNode(panelNode)
+            return (half, screen)
+        }
+
+        let root = SCNNode()
+        let a = makeHalf(sign: -1)
+        root.addChildNode(a.node)
+
+        // Half B hangs from the pivot on the crease at the inner glass plane. B's own frame is
+        // the same as A's (crease at its x = 0), so it is placed −hd below the pivot: at pivot
+        // angle 0 its inner face is coplanar with A's, and turning the pivot folds it over.
+        let pivot = SCNNode()
+        pivot.name = "hinge"
+        pivot.position = SCNVector3(0, 0, hd)
+        root.addChildNode(pivot)
+        let b = makeHalf(sign: 1)
+        b.node.position = SCNVector3(0, 0, -hd)
+        pivot.addChildNode(b.node)
+
+        // The cover display on B's outer face. A plane turned to face −z has its +u toward −x,
+        // which is the viewer's right when seen from behind, so the picture reads unmirrored.
+        let coverPlane = SCNPlane(width: halfBody - 2 * bezel, height: bodyHeight - 2 * bezel)
+        let cover = SCNMaterial()
+        cover.lightingModel = .constant
+        cover.diffuse.contents = NSColor.black
+        // Seen from behind, the cover's local +x points at the crease, so it is masked like the
+        // LEFT half: rounded on its left (outer) corners, square along its right (crease) edge.
+        cover.transparent.contents = Self.halfMask(width: halfBody - 2 * bezel, height: bodyHeight - 2 * bezel,
+                                                   radius: corner - bezel, sign: -1)
+        cover.transparencyMode = .aOne
+        cover.transparent.mipFilter = .none
+        cover.isDoubleSided = false
+        coverPlane.materials = [cover]
+        let coverNode = SCNNode(geometry: coverPlane)
+        coverNode.name = "cover"
+        coverNode.position = SCNVector3(halfBody / 2, 0, -hd - 0.003)
+        coverNode.eulerAngles = SCNVector3(0, CGFloat.pi, 0)
+        b.node.addChildNode(coverNode)
+
+        // Lenses on A's outer face, centred on that half, sized to it.
+        let islandHost = SCNNode()
+        islandHost.position = SCNVector3(-halfBody / 2, 0, 0)
+        islandHost.addChildNode(makeCameraIsland(bodyWidth: halfBody, bodyHeight: bodyHeight,
+                                                 depth: halfDepth, finish: finish))
+        a.node.addChildNode(islandHost)
+
+        // The content plane for locked mode: the crease, in the plane of the inner glass, on
+        // the root so it follows the pose but never the fold.
+        let contentPlane = SCNNode()
+        contentPlane.name = "contentPlane"
+        contentPlane.position = SCNVector3(0, 0, hd + 0.004)
+        root.addChildNode(contentPlane)
+
+        return (root, pivot, a.screen, b.screen, cover, contentPlane, a.node, b.node,
+                panelWidth, panelHeight, halfDepth)
+    }
+
+    /// One half of a rounded rectangle: `width` wide from the crease at x = 0 toward `sign`,
+    /// rounded on its two outer corners, square along the crease. Counter-clockwise.
+    private static func halfPath(width: CGFloat, height: CGFloat, corner: CGFloat, sign: CGFloat) -> NSBezierPath {
+        let r = max(0, min(corner, min(width, height / 2) - 0.0001))
+        let xOut = sign * width, hh = height / 2
+        let path = NSBezierPath()
+        if sign < 0 {
+            // crease bottom → outer bottom (arc) → outer top (arc) → crease top
+            path.move(to: NSPoint(x: 0, y: -hh))
+            path.line(to: NSPoint(x: xOut + r, y: -hh))
+            path.appendArc(withCenter: NSPoint(x: xOut + r, y: -hh + r), radius: r, startAngle: 270, endAngle: 180, clockwise: true)
+            path.line(to: NSPoint(x: xOut, y: hh - r))
+            path.appendArc(withCenter: NSPoint(x: xOut + r, y: hh - r), radius: r, startAngle: 180, endAngle: 90, clockwise: true)
+            path.line(to: NSPoint(x: 0, y: hh))
+        } else {
+            path.move(to: NSPoint(x: 0, y: hh))
+            path.line(to: NSPoint(x: xOut - r, y: hh))
+            path.appendArc(withCenter: NSPoint(x: xOut - r, y: hh - r), radius: r, startAngle: 90, endAngle: 0, clockwise: true)
+            path.line(to: NSPoint(x: xOut, y: -hh + r))
+            path.appendArc(withCenter: NSPoint(x: xOut - r, y: -hh + r), radius: r, startAngle: 0, endAngle: -90, clockwise: true)
+            path.line(to: NSPoint(x: 0, y: -hh))
+        }
+        path.close()
+        path.flatness = 0.0005
+        return path
+    }
+
+    /// The transparency mask for one half's screen: white over the half, rounded on the two outer
+    /// corners only. Drawn in a frame whose x = 0 is the half's own centre.
+    private static func halfMask(width: CGFloat, height: CGFloat, radius: CGFloat, sign: CGFloat) -> NSImage {
+        let px = CGSize(width: 1024, height: (1024 * height / width).rounded())
+        let k = px.width / width
+        let image = NSImage(size: px)
+        image.lockFocus()
+        NSColor.clear.setFill()
+        NSRect(origin: .zero, size: px).fill()
+        NSColor.white.setFill()
+        // The half path is built with the crease at x = 0; shift so the crease lands on the
+        // inner edge of this image (left edge for B, right edge for A).
+        let t = NSAffineTransform()
+        t.translateX(by: sign < 0 ? px.width : 0, yBy: px.height / 2)
+        t.scale(by: k)
+        let path = halfPath(width: width, height: height, corner: radius, sign: sign)
+        path.transform(using: t as AffineTransform)
+        path.fill()
+        image.unlockFocus()
+        return image
     }
 
     /// The camera island on the back, as a current Pixel wears it: a raised pill inset from both

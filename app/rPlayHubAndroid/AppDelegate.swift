@@ -863,6 +863,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         session.control?.onDisplays = { [weak self] displays in
             self?.rebuildDisplaysMenu(displays)
         }
+        // A foldable folding or unfolding: the logical display swaps panels and the stream
+        // follows on its own; the twin, if it is up, is already reading the hinge. This is only
+        // the word for the title bar, so the swap is not mistaken for a hiccup.
+        session.control?.onDeviceState = { [weak self] name in
+            guard let self, self.session === session else { return }
+            let word = name == "CLOSED" ? "folded" : name == "OPENED" ? "unfolded"
+                     : name == "HALF_OPENED" ? "half open" : name.lowercased()
+            self.window.subtitle = "mirroring · \(word)"
+        }
         session.control?.send(ControlMessage.displayConfigurationRequest())
     }
 
@@ -1770,7 +1779,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if twinActive { exitTwin(); return }
         twinDemo = demo
         guard AppBuild.twinEnabled else { return }
+        let fakeHinge = ProcessInfo.processInfo.environment["RPLAYHUB_FAKE_HINGE"]
         guard let session, let video = session.video else {
+            // Dev entry: with a fake hinge and no phone at all, open the twin on a Pixel Fold's
+            // inner display anyway. The fold model, its render modes and the fake hinge sweep can
+            // then be worked on and screenshotted with nothing plugged in; the screen carries a
+            // test grid so the locked mode's mapping across the crease can be read by eye.
+            if fakeHinge != nil {
+                let tv = twinView()
+                tv.isHidden = false
+                mirror.isHidden = true
+                tv.activate(displaySize: CGSize(width: 2076, height: 2152), foldable: true)
+                tv.orientationSource = { nil }        // face-on and still; the fold is the subject
+                twinActive = true
+                mirror.setTwinActive(true)
+                twinOpenItem?.title = "Exit 3D View"
+                AppBuild.log("twin: fold rig with no session (RPLAYHUB_FAKE_HINGE)")
+                return
+            }
             present(message: "No live session", detail: "Start mirroring first, then View in 3D.")
             return
         }
@@ -1779,29 +1805,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         session.decoder.outputBGRA = true
         restartVideoStream()
 
-        let tv = twin ?? {
-            let created = TwinView()
-            created.translatesAutoresizingMaskIntoConstraints = false
-            // Tapping the 3D screen injects a touch through the flat viewer's same send path.
-            created.onMotion = { [weak self] point, action in
-                self?.mirror.injectMotion(point, action: action)
-            }
-            twin = created
-            return created
-        }()
-        if tv.superview == nil {
-            stage.addSubview(tv)
-            NSLayoutConstraint.activate([
-                tv.topAnchor.constraint(equalTo: mirror.topAnchor),
-                tv.leadingAnchor.constraint(equalTo: mirror.leadingAnchor),
-                tv.trailingAnchor.constraint(equalTo: mirror.trailingAnchor),
-                tv.bottomAnchor.constraint(equalTo: mirror.bottomAnchor),
-            ])
-        }
+        let tv = twinView()
         tv.isHidden = false
         mirror.isHidden = true
-        tv.activate(displaySize: video.lastHeader?.displaySize ?? CGSize(width: 1080, height: 2400))
+        // A foldable gets two hinged halves. The device says so itself through its device-state
+        // vocabulary; RPLAYHUB_FAKE_HINGE forces the fold model onto any phone for development.
+        let foldable = session.isFoldable || fakeHinge != nil
+        tv.activate(displaySize: video.lastHeader?.displaySize ?? CGSize(width: 1080, height: 2400),
+                    foldable: foldable)
         if let header = video.lastHeader { tv.apply(header: header) }
+        tv.hingeSource = { [weak self] in self?.session?.sensor?.latestHinge }
+        tv.gyroSource = { [weak self] which in self?.session?.sensor?.latestGyro(which) }
+        if foldable {
+            AppBuild.log("twin: fold model (\(session.isFoldable ? "device reports states" : "fake hinge"))")
+        }
 
         // Choose the orientation source AFTER activate(), which resets the reference — otherwise
         // the demo's own reference (its base pose) would be overwritten and the choreography would
@@ -1827,6 +1844,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if session.sensor == nil {
             AppBuild.log("twin: no sensor channel in this session — static pose until reconnect")
         }
+    }
+
+    /// The one TwinView, created on first use and parked in the stage between uses.
+    private func twinView() -> TwinView {
+        let tv = twin ?? {
+            let created = TwinView()
+            created.translatesAutoresizingMaskIntoConstraints = false
+            // Tapping the 3D screen injects a touch through the flat viewer's same send path.
+            created.onMotion = { [weak self] point, action in
+                self?.mirror.injectMotion(point, action: action)
+            }
+            twin = created
+            return created
+        }()
+        if tv.superview == nil {
+            stage.addSubview(tv)
+            NSLayoutConstraint.activate([
+                tv.topAnchor.constraint(equalTo: mirror.topAnchor),
+                tv.leadingAnchor.constraint(equalTo: mirror.leadingAnchor),
+                tv.trailingAnchor.constraint(equalTo: mirror.trailingAnchor),
+                tv.bottomAnchor.constraint(equalTo: mirror.bottomAnchor),
+            ])
+        }
+        return tv
     }
 
     /// Fake gyro for verifying the orientation math without a hand on the phone. The base pose
