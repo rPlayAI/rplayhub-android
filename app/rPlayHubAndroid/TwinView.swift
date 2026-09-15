@@ -106,6 +106,9 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
     private var seamB: SCNNode?
     private var panelWidth: CGFloat = 0
     private var panelHeight: CGFloat = 0
+    /// The pivot's resting z (the inner glass plane), kept so the fold can slide the model
+    /// sideways without disturbing where the hinge sits in depth.
+    private var pivotZ: CGFloat = 0
     /// The model's size in scene units, so the camera can be framed to it. A bar phone is about
     /// 0.7 by 1.5; a foldable opens to roughly 1.55 square and needs the camera further back.
     private var modelExtent = CGSize(width: 0.75, height: 1.55)
@@ -334,7 +337,9 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
         guard deviceSize.width > 0, deviceSize.height > 0 else { return }
         // The panel's texture UV is top-left origin (v=0 at the top), matching the device's own
         // top-left pixel origin — so both axes map straight through, no flip.
-        let u = half < 0 ? uv.x : (half == 0 ? uv.x * 0.5 : 0.5 + uv.x * 0.5)
+        // Within a half, u runs from its outer edge to the crease for the left half and from
+        // the crease outward for the right one. A is the right half now.
+        let u = half < 0 ? uv.x : (half == 0 ? 0.5 + uv.x * 0.5 : uv.x * 0.5)
         let x = (u * deviceSize.width).rounded()
         let y = (uv.y * deviceSize.height).rounded()
         onMotion?(CGPoint(x: x, y: y), action)
@@ -365,6 +370,7 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
             // Open, the two halves span the full inner display plus their bezels.
             modelExtent = CGSize(width: built.panelWidth * 1.06, height: built.panelHeight * 1.06)
             modelDepth = built.halfDepth * 2
+            pivotZ = built.halfDepth / 2
             screenMaterial = nil
             // A test grid until the first frame: a fold with nothing on the glass is unreadable,
             // and the grid is what makes the locked mode's mapping across the crease checkable.
@@ -374,8 +380,9 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
                 m.diffuse.wrapS = .clamp
                 m.diffuse.wrapT = .clamp
             }
-            built.screenA.diffuse.contentsTransform = halfTransform(side: 0)
-            built.screenB.diffuse.contentsTransform = halfTransform(side: 1)
+            // A is the right half of the phone, so it carries the right half of the picture.
+            built.screenA.diffuse.contentsTransform = halfTransform(side: 1)
+            built.screenB.diffuse.contentsTransform = halfTransform(side: 0)
             built.cover.diffuse.contentsTransform = Self.middleHalfTransform
             built.screenB.shaderModifiers = [.surface: Self.lockedSurfaceModifier]
             built.screenB.setValue(NSNumber(value: 0), forKey: "locked")
@@ -526,8 +533,9 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
             n.scale = SCNVector3(0.0001, 1, 1)
             return n
         }
-        // Half A is to the left of the crease: its band is darkest at its RIGHT edge.
-        return (seam(darkOnRight: true), seam(darkOnRight: false))
+        // Half A is to the RIGHT of the crease: its band is darkest at its LEFT edge, and B's,
+        // to the left of the crease, at its right.
+        return (seam(darkOnRight: false), seam(darkOnRight: true))
     }
 
     private static func seamImage(darkOnRight: Bool) -> NSImage {
@@ -785,8 +793,8 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
             screenA?.diffuse.contents = inner.texture
             screenB?.diffuse.contents = inner.texture
         }
-        screenA?.diffuse.contentsTransform = halfTransform(side: 0)
-        screenB?.diffuse.contentsTransform = halfTransform(side: 1)
+        screenA?.diffuse.contentsTransform = halfTransform(side: 1)
+        screenB?.diffuse.contentsTransform = halfTransform(side: 0)
         if let outer = lastOuter {
             coverMaterial?.diffuse.contents = outer.texture
             coverMaterial?.diffuse.contentsTransform = SCNMatrix4Identity
@@ -820,7 +828,19 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
         hingeShown += (hingeTarget - hingeShown) * min(1, Float(dt) * rate)
         if abs(hingeTarget - hingeShown) < 0.05 { hingeShown = hingeTarget }
         let phi = (180 - hingeShown) * .pi / 180          // 0 flat, π shut
-        pivotNode?.eulerAngles = SCNVector3(0, CGFloat(-phi), 0)
+        // B is the left half, so a POSITIVE turn about y brings its outer edge toward the
+        // viewer and over onto A — the way a cover opens off a book whose spine is on the left.
+        pivotNode?.eulerAngles = SCNVector3(0, CGFloat(phi), 0)
+
+        // Only one half moves, so the body the eye sees shrinks onto the held half as the phone
+        // shuts and would walk off to the right. Slide the model back by half of what the moving
+        // half gives up, so a fold happens in place instead of drifting. Open, the shift is zero;
+        // shut, it is half a half. Both the held half and the hinge move, so the assembly
+        // translates in the phone's own frame and the shift turns with the pose.
+        let halfBody = modelExtent.width / 2
+        let shift = -halfBody * (1 - max(CGFloat(cos(phi)), 0)) / 2
+        halfANode?.position = SCNVector3(shift, 0, 0)
+        pivotNode?.position = SCNVector3(shift, 0, pivotZ)
 
         // Locked: hand the shader the content plane in view space. Both nodes' presentation
         // transforms are what is on screen this frame; the camera is whatever the orbit left.
@@ -842,7 +862,7 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
         }
         // The seam band widens as the phone closes, and only exists in stylized mode.
         let band = renderMode == .stylized ? CGFloat(stylizedW) * (panelWidth / 2) * CGFloat(min(1, phi)) : 0
-        for (seam, sign) in [(seamA, CGFloat(-1)), (seamB, CGFloat(1))] {
+        for (seam, sign) in [(seamA, CGFloat(1)), (seamB, CGFloat(-1))] {
             guard let seam else { continue }
             seam.isHidden = band <= 0.0002
             seam.scale = SCNVector3(max(band, 0.0001), 1, 1)
