@@ -106,6 +106,11 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
     private var seamB: SCNNode?
     private var panelWidth: CGFloat = 0
     private var panelHeight: CGFloat = 0
+    /// The model's size in scene units, so the camera can be framed to it. A bar phone is about
+    /// 0.7 by 1.5; a foldable opens to roughly 1.55 square and needs the camera further back.
+    private var modelExtent = CGSize(width: 0.75, height: 1.55)
+    private var modelDepth: CGFloat = 0.1
+    private var cameraNode: SCNNode?
     private var renderMode: FoldMode = .hardCut
     /// The stylized approximation's constants: the alpha ramp `1 − a·sin φ` on the moving half and
     /// the seam band's width as a fraction of a half. Overridable with RPLAYHUB_FOLD_STYLE JSON.
@@ -357,6 +362,9 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
             contentPlaneNode = built.contentPlane
             panelWidth = built.panelWidth
             panelHeight = built.panelHeight
+            // Open, the two halves span the full inner display plus their bezels.
+            modelExtent = CGSize(width: built.panelWidth * 1.06, height: built.panelHeight * 1.06)
+            modelDepth = built.halfDepth * 2
             screenMaterial = nil
             // A test grid until the first frame: a fold with nothing on the glass is unreadable,
             // and the grid is what makes the locked mode's mapping across the crease checkable.
@@ -384,6 +392,10 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
             phoneNode = built.node
             screenMaterial = built.screen
             pivotNode = nil
+            let aspect = displaySize.width > 0 && displaySize.height > 0
+                ? displaySize.width / displaySize.height : 9.0 / 19.5
+            modelExtent = CGSize(width: 1.5 * aspect * 1.06, height: 1.5 * 1.06)
+            modelDepth = 1.5 * aspect * 1.06 * 0.116
         }
         addCameraAndLights(scene)
         return scene
@@ -447,10 +459,12 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
     private func addCameraAndLights(_ scene: SCNScene) {
         let camera = SCNCamera()
         camera.fieldOfView = 40
-        let cameraNode = SCNNode()
-        cameraNode.camera = camera
-        cameraNode.position = SCNVector3(0, 0, 3.1)
-        scene.rootNode.addChildNode(cameraNode)
+        let node = SCNNode()
+        node.camera = camera
+        node.position = SCNVector3(0, 0, 3.1)
+        scene.rootNode.addChildNode(node)
+        cameraNode = node
+        frameCamera()
 
         let key = SCNNode()
         key.light = SCNLight()
@@ -464,6 +478,28 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
         ambient.light!.type = .ambient
         ambient.light!.intensity = 350
         scene.rootNode.addChildNode(ambient)
+    }
+
+    /// Pull the camera back just far enough to hold the whole model, on whichever axis is tight.
+    /// A fixed distance was chosen for a bar phone, which is narrow: a foldable opens to roughly
+    /// square and is then width-bound in this tall stage, so it sat small in the middle of it.
+    /// The field of view is vertical, so the horizontal one follows the view's aspect ratio.
+    private func frameCamera() {
+        guard let cameraNode, let camera = cameraNode.camera else { return }
+        let viewAspect = bounds.height > 1 ? bounds.width / bounds.height : 0.75
+        let fovY = camera.fieldOfView * .pi / 180
+        let tanY = tan(fovY / 2)
+        let tanX = tanY * max(viewAspect, 0.1)
+        let margin: CGFloat = 1.12                     // a little air around the phone
+        let needV = (modelExtent.height / 2) * margin / tanY
+        let needH = (modelExtent.width / 2) * margin / tanX
+        // Turning the phone swings its corners toward the camera, so leave the depth as clearance.
+        cameraNode.position = SCNVector3(0, 0, max(needV, needH) + modelDepth)
+    }
+
+    override func layout() {
+        super.layout()
+        frameCamera()
     }
 
     // MARK: - fold pieces
