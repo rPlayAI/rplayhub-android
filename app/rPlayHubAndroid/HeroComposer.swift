@@ -646,14 +646,18 @@ final class HeroComposer {
             screen.isDoubleSided = false
             panel.materials = [screen]
             let panelNode = SCNNode(geometry: panel)
-            panelNode.name = sign < 0 ? "panelA" : "panelB"
+            panelNode.name = sign > 0 ? "panelA" : "panelB"
             panelNode.position = SCNVector3(sign * halfPanel / 2, 0, hd + 0.004)
             half.addChildNode(panelNode)
             return (half, screen)
         }
 
+        // The hinge is on the LEFT, as a book's spine is and as a Fold's is when you hold it
+        // shut: the held half A is the RIGHT one, and the moving half B is the left one, which
+        // swings toward the viewer and lands on top of A. Shut, the stack sits to the right of
+        // the crease, so the axis is its left edge.
         let root = SCNNode()
-        let a = makeHalf(sign: -1)
+        let a = makeHalf(sign: 1)
         root.addChildNode(a.node)
 
         // Half B hangs from the pivot on the crease at the inner glass plane. B's own frame is
@@ -663,7 +667,7 @@ final class HeroComposer {
         pivot.name = "hinge"
         pivot.position = SCNVector3(0, 0, hd)
         root.addChildNode(pivot)
-        let b = makeHalf(sign: 1)
+        let b = makeHalf(sign: -1)
         b.node.position = SCNVector3(0, 0, -hd)
         pivot.addChildNode(b.node)
 
@@ -673,23 +677,25 @@ final class HeroComposer {
         let cover = SCNMaterial()
         cover.lightingModel = .constant
         cover.diffuse.contents = NSColor.black
-        // Seen from behind, the cover's local +x points at the crease, so it is masked like the
-        // LEFT half: rounded on its left (outer) corners, square along its right (crease) edge.
+        // B is the left half, so its crease is at its +x and its outer edge at −x. The cover is
+        // turned to face out the back, which maps its local +x onto the parent's −x — the outer
+        // edge — leaving the crease at its local −x. So it is masked like the RIGHT half: square
+        // along the crease, rounded on the outer corners.
         cover.transparent.contents = Self.halfMask(width: halfBody - 2 * bezel, height: bodyHeight - 2 * bezel,
-                                                   radius: corner - bezel, sign: -1)
+                                                   radius: corner - bezel, sign: 1)
         cover.transparencyMode = .aOne
         cover.transparent.mipFilter = .none
         cover.isDoubleSided = false
         coverPlane.materials = [cover]
         let coverNode = SCNNode(geometry: coverPlane)
         coverNode.name = "cover"
-        coverNode.position = SCNVector3(halfBody / 2, 0, -hd - 0.003)
+        coverNode.position = SCNVector3(-halfBody / 2, 0, -hd - 0.003)
         coverNode.eulerAngles = SCNVector3(0, CGFloat.pi, 0)
         b.node.addChildNode(coverNode)
 
         // Lenses on A's outer face, centred on that half, sized to it.
         let islandHost = SCNNode()
-        islandHost.position = SCNVector3(-halfBody / 2, 0, 0)
+        islandHost.position = SCNVector3(halfBody / 2, 0, 0)
         islandHost.addChildNode(makeCameraIsland(bodyWidth: halfBody, bodyHeight: bodyHeight,
                                                  depth: halfDepth, finish: finish))
         a.node.addChildNode(islandHost)
