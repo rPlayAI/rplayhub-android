@@ -567,13 +567,18 @@ final class HeroComposer {
     /// is a plane on B's OUTER face (when shut, B lies on top of A with that face up), textured by
     /// `cover`. The camera island sits on A's outer face, where the Fold wears its lenses.
     ///
-    /// `contentPlane` is a marker node on the root at the crease in the inner-glass plane, the
-    /// frame the "locked" render mode samples against: the flat inner display as it would lie if
-    /// the phone were open, fixed to the held half.
+    /// `contentPlane` is a marker node on the held half at the crease in the inner-glass plane,
+    /// the frame the "locked" render mode samples against: the flat inner display as it would lie
+    /// if the phone were open, fixed to the held half. `coverPlane` is its twin for the cover: the
+    /// cover display as it lies when the phone is SHUT, on top of the held half, with its origin
+    /// at the cover's hinge-side edge — so the cover's content can be locked in space while the
+    /// cover half swings open, the way the iPhone Duo does it.
     static func makeFoldPhone(displaySize: CGSize, finish: HeroFinish = .graphite)
         -> (node: SCNNode, pivot: SCNNode, screenA: SCNMaterial, screenB: SCNMaterial,
-            cover: SCNMaterial, contentPlane: SCNNode, halfA: SCNNode, halfB: SCNNode,
-            panelWidth: CGFloat, panelHeight: CGFloat, halfDepth: CGFloat) {
+            cover: SCNMaterial, contentPlane: SCNNode, coverPlane: SCNNode,
+            halfA: SCNNode, halfB: SCNNode,
+            panelWidth: CGFloat, panelHeight: CGFloat, halfDepth: CGFloat,
+            coverWidth: CGFloat, coverHeight: CGFloat, bezel: CGFloat) {
         // The inner display of a Pixel Fold is close to square (about 0.97), which is what
         // arrives here; a bar phone's portrait size would make two very tall slivers.
         var aspect = displaySize.width > 0 && displaySize.height > 0
@@ -701,14 +706,23 @@ final class HeroComposer {
         a.node.addChildNode(islandHost)
 
         // The content plane for locked mode: the crease, in the plane of the inner glass, on
-        // the root so it follows the pose but never the fold.
+        // the held half so it follows the pose and the fold's sideways slide but never the fold.
         let contentPlane = SCNNode()
         contentPlane.name = "contentPlane"
         contentPlane.position = SCNVector3(0, 0, hd + 0.004)
-        root.addChildNode(contentPlane)
+        a.node.addChildNode(contentPlane)
 
-        return (root, pivot, a.screen, b.screen, cover, contentPlane, a.node, b.node,
-                panelWidth, panelHeight, halfDepth)
+        // The cover's content plane: where the cover lies when B is folded over onto A. B's
+        // outer face lands at z = 2·hd, and the cover's hinge-side edge — B-local x = −bezel,
+        // which the fold turns into +bezel — is the origin, so u runs 0 at the hinge to 1 at
+        // the free edge, the same way as the cover's own texture.
+        let coverPlaneMarker = SCNNode()
+        coverPlaneMarker.name = "coverPlane"
+        coverPlaneMarker.position = SCNVector3(bezel, 0, halfDepth + 0.003)
+        a.node.addChildNode(coverPlaneMarker)
+
+        return (root, pivot, a.screen, b.screen, cover, contentPlane, coverPlaneMarker, a.node, b.node,
+                panelWidth, panelHeight, halfDepth, halfBody - 2 * bezel, bodyHeight - 2 * bezel, bezel)
     }
 
     /// One half of a rounded rectangle: `width` wide from the crease at x = 0 toward `sign`,

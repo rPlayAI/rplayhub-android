@@ -49,6 +49,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var twinDemo = false
     private var twinGateItem: NSMenuItem?
     private var foldViewItem: NSMenuItem?
+    private var foldLookItems: [NSMenuItem] = []
     /// Set by View ▸ Show Fold in 3D: build the hinged model even if the device never said it
     /// folds. Cleared when the 3D view is left.
     private var forceFoldView = false
@@ -1765,6 +1766,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         inspector.revealHero()
     }
 
+    /// A fold look from the menu: the 3D view must be up for it to show, so bring the fold
+    /// view up when nothing 3D is showing, then set the mode.
+    @objc private func chooseFoldLook(_ sender: NSMenuItem) {
+        guard let mode = TwinView.FoldMode(rawValue: sender.tag) else { return }
+        if !twinActive { showFoldView() }
+        twinView().setRenderMode(mode)
+        for item in foldLookItems { item.state = item.tag == mode.rawValue ? .on : .off }
+    }
+
     @objc private func toggleTwinGate() {
         AppBuild.twinEnabled.toggle()
         let enabled = AppBuild.twinEnabled
@@ -2391,6 +2401,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         foldItem.keyEquivalentModifierMask = [.command, .shift]
         foldItem.target = self
         foldViewItem = foldItem
+        // The three fold looks. The 1/2/3 keys do the same when the 3D view has focus, which
+        // nobody discovers; the menu says so and shows which is on.
+        let lookItem = NSMenuItem(title: "Fold Look", action: nil, keyEquivalent: "")
+        let lookMenu = NSMenu(title: "Fold Look")
+        // No key equivalents: a bare digit would be stolen from typing into the phone.
+        for (mode, title) in [(TwinView.FoldMode.hardCut, "Hard Cut — as Android draws it (key 1)"),
+                              (.locked, "Locked — content fixed in space (key 2)"),
+                              (.stylized, "Stylized — iPhone Duo look (key 3)")] {
+            let item = lookMenu.addItem(withTitle: title, action: #selector(chooseFoldLook(_:)),
+                                        keyEquivalent: "")
+            item.target = self
+            item.tag = mode.rawValue
+            foldLookItems.append(item)
+        }
+        lookItem.submenu = lookMenu
+        viewMenu.addItem(lookItem)
 
         let heroItem = viewMenu.addItem(withTitle: "Hero Composer (Experimental)…",
                                         action: #selector(showHero), keyEquivalent: "h")

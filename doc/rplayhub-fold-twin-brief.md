@@ -127,14 +127,19 @@ rigid twin.
   frame stays on the inner glass once the stream moves to the cover; the last cover frame is kept
   so the next fold lights the cover before Android hands it over; before any cover frame exists
   the cover shows the middle half of the inner picture. Same policy as the Linux client.
-- **Render modes** (keys 1/2/3, `RPLAYHUB_TWIN_MODE` for screenshots):
-  `hardcut` as Android draws it; `locked` as a **per-fragment** Metal shader modifier on the
-  moving half (camera ray → content plane fixed to the held half → texture coordinate), i.e.
-  the exact homography rather than the 6×16 per-vertex grid of the Linux pass — verified: a
-  circle across the crease stays round and a diagonal stays straight at 120°; `stylized` with the
-  alpha ramp `1 − a·sin φ` and a seam band of width `w` (defaults a=0.35, w=0.12,
-  `RPLAYHUB_FOLD_STYLE='{"a":..,"w":..}'` to override). The inspector sliders and the JSON
-  round-trip of §2.2 are not built yet; the env override stands in.
+- **Render modes** (View ▸ Fold Look, keys 1/2/3 with the 3D view focused, `RPLAYHUB_TWIN_MODE`
+  for screenshots): `hardcut` as Android draws it; `locked` as a **per-fragment** Metal shader
+  modifier on the moving half's inner glass AND on the cover (eye ray → content plane fixed to
+  the held half → texture coordinate; the cover's plane is the cover as it lies when shut,
+  anchored at its hinge-side edge), i.e. the exact homography rather than the 6×16 per-vertex
+  grid of the Linux pass — verified: a circle across the crease stays round and a diagonal stays
+  straight at 100°/140°, and the cover's lock screen stays put at 40°; `stylized` is the iPhone
+  Duo look of §7 (2026-09-15): the same projection from a front-on eye fixed to the held half,
+  plus the blur-and-darken gradient from the crease toward the moving edge, `smoothstep` gated
+  over the 90° nearest each panel's home state. Defaults blur=72 px, gamma=1.35, dark=0.2,
+  gain=2, seam band w=0 (`RPLAYHUB_FOLD_STYLE='{"blur":..,"gamma":..,"dark":..,"gain":..,"w":..}'`
+  to override). The inspector sliders and the JSON round-trip of §2.2 are not built yet; the
+  env override stands in. `RPLAYHUB_FOLD_DEBUG=1` paints the projected (u, v) on the glass.
 - **Fake hinge.** `RPLAYHUB_FAKE_HINGE=1` sweeps shut↔open, `=<degrees>` holds. With no phone at
   all, View ▸ View Screen in 3D still opens the rig on a 2076×2152 inner display showing a test
   grid (L / TOP / R, a circle and a diagonal across the crease), so the look can be tuned and
@@ -185,7 +190,13 @@ camera. The two coincide in Fold View.
    the handover can be pixel-continuous; a Pixel Fold's cover runs a different layout, so the
    blur is what has to hide the crossover.
 
-**Plan.** Replace `stylized` with the Duo shader (blur+darken gradient, smoothstep gating, fixed
-reference eye) on the existing per-fragment Metal modifier, extend it to the cover face with the
-hinge-edge anchor, and make `72 / 1.35 / 0.2 / 2×` the inspector's sliders. Verify live at a
-held 90° with the `fold:` trace.
+**Done the same day.** `stylized` is now the Duo shader (blur+darken gradient, smoothstep
+gating, fixed reference eye) on the per-fragment Metal modifier, which also projects the cover
+with the hinge-edge anchor in both locked and stylized; `72 / 1.35 / 0.2 / 2×` are env
+overrides until the inspector exists. Verified against the fake hinge at 100°, 140° and 40°
+with the test grid and the live cover. Two things the port taught: the treatment is faint near
+90° because a front-on eye sees only a sliver of the moving half there — it peaks mid-sweep
+(~135°), which is the reference's behaviour too; and the frames have no mip chain, so the blur
+is a 9×9 binomial tap at a quarter of the radius instead of the reference's mip-level trick.
+Still open: a real sweep with eyes on stylized, and item 5 (the Pixel's cover runs its own
+layout, so the crossover is never pixel-continuous).
