@@ -591,9 +591,11 @@ final class HeroComposer {
         let halfBody = halfPanel + bezel               // each half: bezel on the outer edge only
         let bodyHeight = panelHeight + 2 * bezel
         let fullWidth = panelWidth + 2 * bezel
-        // Each half is a little over half a bar phone's thickness: a shut Fold is ~10 mm across
-        // 77 mm, so one half is ~5.2 mm, about 0.068 of the open width.
-        let halfDepth = fullWidth * 0.068
+        // A Pixel Fold is ~5.1 mm per half against an OPEN width of ~150 mm, so a half is about
+        // 0.034 of the open width — a foldable half is strikingly thin, half a bar phone. The
+        // first cut of this measured the 5.1 mm against the FOLDED width of ~77 mm instead and
+        // came out at 0.068, which drew rails twice as deep as the real thing.
+        let halfDepth = fullWidth * 0.034
         let corner = fullWidth * 0.06
         let hd = halfDepth / 2                          // inner glass sits at +hd of each half
 
