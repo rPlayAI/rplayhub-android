@@ -52,6 +52,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Set by View ▸ Show Fold in 3D: build the hinged model even if the device never said it
     /// folds. Cleared when the 3D view is left.
     private var forceFoldView = false
+    /// Fold View, as opposed to the full twin: the hinge without the gyroscope.
+    private var foldOnlyView = false
     private var twinOpenItem: NSMenuItem?
     private var twinDemoItem: NSMenuItem?
     private var twinBackImageItem: NSMenuItem?
@@ -1753,6 +1755,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// how the fold can be looked at without a foldable to hand.
     @objc private func showFoldView() {
         forceFoldView = true
+        foldOnlyView = true
         if twinActive { exitTwin() }
         AppBuild.twinEnabled = true
         toggleTwin()
@@ -1829,6 +1832,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 let tv = twinView()
                 tv.isHidden = false
                 mirror.isHidden = true
+                tv.foldOnly = foldOnlyView
                 tv.activate(displaySize: CGSize(width: 2076, height: 2152), foldable: true)
                 tv.orientationSource = { nil }        // face-on and still; the fold is the subject
                 twinActive = true
@@ -1851,6 +1855,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // A foldable gets two hinged halves. The device says so itself through its device-state
         // vocabulary; RPLAYHUB_FAKE_HINGE forces the fold model onto any phone for development.
         let foldable = session.isFoldable || fakeHinge != nil || forceFoldView
+        tv.foldOnly = foldOnlyView
         tv.activate(displaySize: video.lastHeader?.displaySize ?? CGSize(width: 1080, height: 2400),
                     foldable: foldable)
         if let header = video.lastHeader { tv.apply(header: header) }
@@ -1972,6 +1977,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         twinActive = false
         twinDemo = false
         forceFoldView = false
+        foldOnlyView = false
         mirror.setTwinActive(false)
         twinOpenItem?.title = "View Screen in 3D"
         if let session {
@@ -2380,7 +2386,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // The fold in 3D, on demand. The twin picks the fold model up on its own for a device
         // that reports its postures, but this asks for it outright — which is how you see the
         // two halves on a phone that does not fold, and how you get back to it without hunting.
-        let foldItem = viewMenu.addItem(withTitle: "Show Fold in 3D", action: #selector(showFoldView),
+        let foldItem = viewMenu.addItem(withTitle: "Fold View", action: #selector(showFoldView),
                                         keyEquivalent: "d")
         foldItem.keyEquivalentModifierMask = [.command, .shift]
         foldItem.target = self
