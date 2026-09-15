@@ -576,8 +576,14 @@ final class HeroComposer {
             panelWidth: CGFloat, panelHeight: CGFloat, halfDepth: CGFloat) {
         // The inner display of a Pixel Fold is close to square (about 0.97), which is what
         // arrives here; a bar phone's portrait size would make two very tall slivers.
-        let aspect = displaySize.width > 0 && displaySize.height > 0
+        var aspect = displaySize.width > 0 && displaySize.height > 0
             ? displaySize.width / displaySize.height : 2076.0 / 2152.0
+        // The size handed in is whichever panel is streaming, and while the phone is shut that is
+        // the COVER: on a Pixel Fold 1080x2342, aspect 0.46, against the inner display's near
+        // square 2076x2152. Building the open model from that gives a tall narrow bar instead of
+        // a tablet. The open display is about twice the cover's width — one cover on each half —
+        // so a cover-shaped aspect is doubled to get back to the open shape.
+        if aspect < 0.7 { aspect *= 2 }
         let panelHeight: CGFloat = 1.5
         let panelWidth = panelHeight * aspect
         let bezel = panelWidth * 0.022
