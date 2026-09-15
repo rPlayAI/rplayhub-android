@@ -152,3 +152,40 @@ Trap recorded on the way: the Mac's `SensorStream` had kept the old 24-byte layo
 agent moved to tagged 28-byte packets; it worked only because the bundled agent predated the
 change. The two are now in step, and `tools/build-agent.sh` passes the locally installed NDK
 version to Gradle so the same source builds on the Mac and the Linux host.
+
+---
+
+## 7. Against the iPhone Duo animation (2026-09-15)
+
+Apple's iPhone Duo (announced 2026-09-09) ships the effect this brief prototypes: content stays
+locked in space while the phone reorients around it, blurring toward the moving edge. Apple
+documents nothing beyond "content reacts as it folds"; the best public spec is the Three.js
+recreation at github.com/chuspeeism/iphone-duo (built on Apple's USDZ model), read line by line.
+
+**Matches.** Rear/camera half held, cover half rotates, hinge on the left, cover on the moving
+half's outer face — our `makeFoldPhone`. Their inner-screen shader intersects an eye→fragment ray
+with the flat inner plane and samples there — our `locked` mode's homography. They use a FIXED
+front-on reference eye (what a phone can ship, since it cannot know the viewer); we use the live
+camera. The two coincide in Fold View.
+
+**Differs — and this is the signature of the look.**
+1. Blur + darkening gradient from the crease toward the free edge, no transparency:
+   `radius = 72px · motion · edge^1.35`, `color *= 1 − min(1, 2·motion·((edge−0.2)/0.8)^1.35)`;
+   at 90° the outer ~third of the moving half is black, the hinge side stays crisp and continuous
+   with the held half, and the held half is untouched. Ours: a uniform `1 − a·sin φ` alpha fade
+   and a seam band; no blur, no darkening.
+2. `motion = smoothstep` over the 90° nearest the home state: inner crisp at flat and fully
+   treated by 90° and beyond; cover crisp shut, fully treated by 90°, OFF at flat. Ours peaks at
+   90° and recovers toward shut (`sin φ`).
+3. Their cover is projected too — anchored at its hinge-side edge, sampled through the same eye,
+   then blurred/darkened outward. Our cover face is always hard-cut (Android's own stream and
+   its 45–55° handover).
+4. They bend a crease strip (~4% of the width, Hermite); ours is a sharp hinge line.
+5. The Duo's two displays share an aspect ratio, so the cover is a crop of the inner layout and
+   the handover can be pixel-continuous; a Pixel Fold's cover runs a different layout, so the
+   blur is what has to hide the crossover.
+
+**Plan.** Replace `stylized` with the Duo shader (blur+darken gradient, smoothstep gating, fixed
+reference eye) on the existing per-fragment Metal modifier, extend it to the cover face with the
+hinge-edge anchor, and make `72 / 1.35 / 0.2 / 2×` the inspector's sliders. Verify live at a
+held 90° with the `fold:` trace.
