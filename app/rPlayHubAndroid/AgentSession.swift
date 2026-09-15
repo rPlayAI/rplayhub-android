@@ -452,10 +452,17 @@ final class ControlSender {
     /// initial state when the vocabulary arrives).
     var onDeviceState: ((String) -> Void)?
 
-    /// True when the device announced device states — which only a foldable does.
+    /// True when the device's posture vocabulary is a fold's. Not merely "non-empty": a Pixel 9a
+    /// reports one state named DEFAULT, so a bare phone can have a list too. A fold is a device
+    /// with more than one posture, or one that names the postures a hinge produces.
     var isFoldable: Bool {
         stateLock.lock(); defer { stateLock.unlock() }
-        return !deviceStates.isEmpty
+        return Self.isFoldVocabulary(deviceStates.map(\.name))
+    }
+
+    static func isFoldVocabulary(_ names: [String]) -> Bool {
+        let fold: Set<String> = ["CLOSED", "HALF_OPENED", "OPENED", "FLIPPED", "REAR_DISPLAY_STATE"]
+        return names.count > 1 || names.contains(where: fold.contains)
     }
 
     /// The current posture as the device names it: CLOSED, HALF_OPENED, OPENED, or "unknown".
@@ -534,7 +541,8 @@ final class ControlSender {
                     let name = deviceStateNameLocked()
                     stateLock.unlock()
                     if !states.isEmpty {
-                        AppBuild.log("agent: foldable — \(states.count) device states, now \(name)")
+                        // Named, so the log answers "how do we know it folds" by itself.
+                        AppBuild.log("agent: foldable — device states \(states.map(\.name).joined(separator: ", ")); now \(name)")
                     }
                     DispatchQueue.main.async { [weak self] in self?.onDeviceState?(name) }
                 case ControlMessage.typeDeviceState:
