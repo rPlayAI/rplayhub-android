@@ -3,7 +3,10 @@ plugins {
 }
 
 android {
-    ndkVersion = "27.0.12077973"   // the NDK installed on the Linux build host; AGP would otherwise fetch 28.x
+    // The NDK varies by build host and sdkDownload is off, so a single pinned version breaks
+    // whichever host does not have it installed. tools/build-agent.sh passes the NDK installed
+    // locally as -PrplayhubNdkVersion; a bare gradle run keeps the Linux build host's version.
+    ndkVersion = (findProperty("rplayhubNdkVersion") as String?) ?: "27.0.12077973"
   namespace = "com.android.tools.screensharing"
   compileSdk = 36
 

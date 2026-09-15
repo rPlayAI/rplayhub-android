@@ -44,13 +44,19 @@ sdk="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/opt/homebrew/share/android-commandline
 [ -d "$sdk" ] || die "no Android SDK — set ANDROID_HOME (looked in $sdk)"
 [ -d "$sdk/ndk" ] || die "no NDK under $sdk/ndk — install one via sdkmanager"
 
+# The build file cannot pin one NDK: SDK downloads are off and each build host has its own.
+# Use RPLAYHUB_NDK_VERSION if set, otherwise the newest NDK installed here.
+ndk="${RPLAYHUB_NDK_VERSION:-$(ls "$sdk/ndk" | sort -V | tail -1)}"
+[ -n "$ndk" ] && [ -d "$sdk/ndk/$ndk" ] || die "no NDK $ndk under $sdk/ndk"
+
 echo "build-agent: SDK  $sdk"
+echo "build-agent: NDK  $ndk"
 echo "build-agent: src  $src"
 
 # The vendored tree has no local.properties (it is gitignored upstream); Gradle needs one.
 [ -f "$src/local.properties" ] || echo "sdk.dir=$sdk" > "$src/local.properties"
 
-( cd "$src" && ./gradlew --no-daemon assembleDebug )
+( cd "$src" && ./gradlew --no-daemon assembleDebug -PrplayhubNdkVersion="$ndk" )
 
 apk="$(find "$src/app/build/outputs/apk" -name '*.apk' -print -quit)"
 [ -n "$apk" ] || die "gradle produced no apk"
