@@ -60,9 +60,20 @@ final class AgentSession {
     /// Device orientation, when the agent build has our sensor channel. Nil on older builds.
     private(set) var sensor: SensorStream?
 
-    /// True when the device announced device states over the control channel — which only a
-    /// foldable does. False before the channel is up.
-    var isFoldable: Bool { control?.isFoldable ?? false }
+    /// True when this device folds. Two signals, either of which is conclusive, and neither
+    /// costing a round trip because both already arrive with the session.
+    ///
+    /// The posture vocabulary on the control channel is one: a fold names CLOSED, HALF_OPENED
+    /// and so on, where a bar phone reports a single state called DEFAULT. The hinge is the
+    /// other and the plainer of the two — the agent enumerates the sensors and streams
+    /// ASENSOR_TYPE_HINGE_ANGLE as tag 2, so a hinge reading having arrived at all means the
+    /// device has a hinge.
+    ///
+    /// There is no system PROPERTY that answers this: ro.build.characteristics reads "nosdcard"
+    /// on a Pixel Fold and a Pixel 9a alike. The feature flag android.hardware.sensor.hinge_angle
+    /// does distinguish them, but it needs a shell round trip to read and tells us nothing the
+    /// hinge packets do not already.
+    var isFoldable: Bool { (control?.isFoldable ?? false) || sensor?.latestHinge != nil }
     /// Device audio playback, created on first use — see `setAudioForwarding`.
     private(set) var audio: AudioStream?
     let decoder = VideoDecoder()
