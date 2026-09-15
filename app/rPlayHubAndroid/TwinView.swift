@@ -173,8 +173,9 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
         // "Set Facing Me", not "Re-centre": the button's job is to declare the current pose as
         // the face-on default, and it persists that for later sessions. Styled as a clear filled
         // pill — a default rounded button vanishes into the dark 3D scene and reads as plain text.
-        let recenterButton = NSButton(title: "Set Facing Me  (R)", target: self,
-                                      action: #selector(recenterPressed))
+        recenterButton.title = "Set Facing Me  (R)"
+        recenterButton.target = self
+        recenterButton.action = #selector(recenterPressed)
         recenterButton.isBordered = false
         recenterButton.wantsLayer = true
         recenterButton.contentTintColor = .white
@@ -243,6 +244,13 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
     }
 
     private let hint = NSTextField(labelWithString: "")
+    private let recenterButton = NSButton()
+
+    /// The fold on its own: the hinge is the subject, so the phone sits face-on, the rotation
+    /// vector is not consulted at all, and there is nothing to orbit or calibrate. This is what
+    /// the Linux client's flat fold view is, once the toolkit differences are set aside — and
+    /// without the gyro there is no reference pose, so the picture never tilts away from you.
+    var foldOnly = false
     private let modeLabel = NSTextField(labelWithString: "")
 
     // MARK: - mode lifecycle
@@ -264,7 +272,11 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
         // Only pressing "Set Facing Me" captures. With a saved reference it tracks right away.
         recenterRequested = false
         referenceSamples = []
-        hint.isHidden = savedFacingMe != nil
+        // Fold-only strips the twin back to the hinge: no orbit, no calibration, no gyro.
+        scnView.allowsCameraControl = !foldOnly
+        recenterButton.isHidden = foldOnly
+        hint.isHidden = foldOnly || savedFacingMe != nil
+        if foldOnly { phoneNode?.simdOrientation = simd_quatf(angle: 0, axis: SIMD3<Float>(0, 1, 0)) }
         smoothed = nil
         hingeShown = 180
         hingeTarget = 180
@@ -905,6 +917,8 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
     }
 
     private func updateOrientation() {
+        // Fold-only: the phone holds face-on and only the hinge moves.
+        if foldOnly { return }
         guard let q = orientationSource?() else { return }
         if recenterRequested {
             // Average a short burst rather than trust one packet: a hand is never perfectly still
