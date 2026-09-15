@@ -27,8 +27,11 @@
 //  lands on the cover. Three render modes, after doc/rplayhub-fold-twin-brief.md, decide how the
 //  moving half is textured while it turns: hard cut (as Android draws it), locked (each fragment
 //  shows what the camera would see of the flat inner display fixed to the held half — the ground
-//  truth, done per fragment in a shader so it is the exact homography), and stylized (the alpha
-//  ramp and seam band a SurfaceFlinger approximation would use). Keys 1/2/3 switch them.
+//  truth, done per fragment in a shader so it is the exact homography), and stylized (the iPhone
+//  Duo look: the same projection from a front-on eye fixed to the held half — the eye a phone can
+//  assume, since it cannot know where the viewer is — with a blur-and-darken gradient from the
+//  crease toward the moving edge). Locked and stylized treat the cover the same way, locking its
+//  content to where it lay when shut. Keys 1/2/3 switch them, as does View ▸ Fold Look.
 //
 
 import AppKit
@@ -102,10 +105,15 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
     private var screenB: SCNMaterial?
     private var coverMaterial: SCNMaterial?
     private var contentPlaneNode: SCNNode?
+    private var coverPlaneNode: SCNNode?
     private var seamA: SCNNode?
     private var seamB: SCNNode?
     private var panelWidth: CGFloat = 0
     private var panelHeight: CGFloat = 0
+    private var coverWidth: CGFloat = 0
+    private var coverHeight: CGFloat = 0
+    private var halfDepth: CGFloat = 0
+    private var bezel: CGFloat = 0
     /// The pivot's resting z (the inner glass plane), kept so the fold can slide the model
     /// sideways without disturbing where the hinge sits in depth.
     private var pivotZ: CGFloat = 0
@@ -114,11 +122,17 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
     private var modelExtent = CGSize(width: 0.75, height: 1.55)
     private var modelDepth: CGFloat = 0.1
     private var cameraNode: SCNNode?
-    private var renderMode: FoldMode = .hardCut
-    /// The stylized approximation's constants: the alpha ramp `1 − a·sin φ` on the moving half and
-    /// the seam band's width as a fraction of a half. Overridable with RPLAYHUB_FOLD_STYLE JSON.
-    private var stylizedA: Float = 0.35
-    private var stylizedW: Float = 0.12
+    private(set) var renderMode: FoldMode = .hardCut
+    /// The stylized look's constants, after the iPhone Duo recreation (brief §7): blur radius in
+    /// source pixels at the moving edge, the gradient's exponent, where along the half the
+    /// darkening starts (0 crease, 1 free edge) and how hard it goes to black, plus the seam
+    /// band's width as a fraction of a half — zero, because the Duo's crease stays bright.
+    /// Overridable with RPLAYHUB_FOLD_STYLE JSON: {"blur","gamma","dark","gain","w"}.
+    private var duoBlur: Float = 72
+    private var duoGamma: Float = 1.35
+    private var duoDarkStart: Float = 0.2
+    private var duoDarkGain: Float = 2
+    private var stylizedW: Float = 0
     // The hinge: what the sensor (or the fake) says, and what is shown after easing.
     private var hingeTarget: Float = 180
     private var hingeShown: Float = 180
@@ -130,6 +144,8 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
     // The fold trace: each new sensor reading and each panel handover goes to the log, so a
     // real sweep leaves evidence (the sensor steps in 5°, so a sweep is a few dozen lines).
     private var lastLoggedHinge: Float = -1
+    /// RPLAYHUB_FOLD_DEBUG=1 paints the projected (u, v) on the projected glass, =2 the raw ray.
+    private static let debugUV = Float(ProcessInfo.processInfo.environment["RPLAYHUB_FOLD_DEBUG"] ?? "") ?? 0
     private var lastPanelWasInner: Bool?
     // The pictures a fold needs: the newest inner-panel frame and the newest cover-panel frame,
     // each kept with its wrapper so the GPU's copy stays valid after the stream moves on.
@@ -242,8 +258,11 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
         if let json = ProcessInfo.processInfo.environment["RPLAYHUB_FOLD_STYLE"],
            let data = json.data(using: .utf8),
            let numbers = try? JSONSerialization.jsonObject(with: data) as? [String: Double] {
-            if let a = numbers["a"] { stylizedA = Float(a) }
-            if let w = numbers["w"] { stylizedW = Float(w) }
+            if let v = numbers["blur"] { duoBlur = Float(v) }
+            if let v = numbers["gamma"] { duoGamma = Float(v) }
+            if let v = numbers["dark"] { duoDarkStart = Float(v) }
+            if let v = numbers["gain"] { duoDarkGain = Float(v) }
+            if let v = numbers["w"] { stylizedW = Float(v) }
         }
     }
 
@@ -381,8 +400,13 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
             screenB = built.screenB
             coverMaterial = built.cover
             contentPlaneNode = built.contentPlane
+            coverPlaneNode = built.coverPlane
             panelWidth = built.panelWidth
             panelHeight = built.panelHeight
+            coverWidth = built.coverWidth
+            coverHeight = built.coverHeight
+            halfDepth = built.halfDepth
+            bezel = built.bezel
             // Open, the two halves span the full inner display plus their bezels.
             modelExtent = CGSize(width: built.panelWidth * 1.06, height: built.panelHeight * 1.06)
             modelDepth = built.halfDepth * 2
@@ -400,8 +424,12 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
             built.screenA.diffuse.contentsTransform = halfTransform(side: 1)
             built.screenB.diffuse.contentsTransform = halfTransform(side: 0)
             built.cover.diffuse.contentsTransform = Self.middleHalfTransform
-            built.screenB.shaderModifiers = [.surface: Self.lockedSurfaceModifier]
-            built.screenB.setValue(NSNumber(value: 0), forKey: "locked")
+            // The moving half's inner glass and the cover both carry the projecting shader; off
+            // until a mode asks for it.
+            for m in [built.screenB, built.cover] {
+                m.shaderModifiers = [.surface: Self.projectedSurfaceModifier]
+                m.setValue(NSNumber(value: 0), forKey: "project")
+            }
             // Seam band: a dark gradient along the crease on each half, scaled with the fold.
             let hd = built.halfDepth / 2
             let (a, b) = Self.makeSeams(panelHeight: built.panelHeight, hd: hd)
@@ -643,44 +671,97 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
         return m
     }
 
-    /// Locked mode, per fragment. The content plane is the flat inner display fixed to the held
-    /// half; a fragment on the moving half's glass shows whatever the camera would see of that
-    /// plane through it — the intersection of the camera→fragment ray with the plane, turned
-    /// into a texture coordinate. Both are planar, so this is the exact homography the
-    /// SurfaceFlinger approximation is trying to reach; here it is the ground truth. Fragments
-    /// whose ray misses the display clamp to its edge, as the reference implementation does; a
-    /// plane behind the camera goes black.
+    /// Locked and stylized modes, per fragment, on the moving half's inner glass and on the
+    /// cover. The content plane is the display as it lies with the phone at rest, fixed to the
+    /// held half (the flat inner display; the cover as it sits when shut); a fragment on the
+    /// moving glass shows whatever an eye would see of that plane through it — the intersection
+    /// of the eye→fragment ray with the plane, turned into a texture coordinate. Both are planar,
+    /// so this is the exact homography the SurfaceFlinger approximation is trying to reach. In
+    /// locked mode the eye is the camera (ground truth); in stylized mode it is a front-on eye
+    /// fixed to the held half, which is all a phone can assume. A ray that misses the display
+    /// goes black; a plane behind the eye goes black.
     ///
-    /// `planeToView` is the content plane's frame in view space (camera at the origin): columns
-    /// are x, y, normal and origin. `texXform` is the panel counter-rotation as a 4×4 on
-    /// (u, v, 0, 1); `locked` switches the whole thing on. All set per frame from updateFold.
-    private static let lockedSurfaceModifier = """
+    /// Stylized adds the iPhone Duo treatment (brief §7): along the half, from the crease
+    /// (`gradient0`) to the free edge (`gradient1`), a blur whose radius grows as
+    /// `blurPx · motion · edge^gamma` and a darkening `1 − min(1, gain · motion · ((edge −
+    /// darkStart)/(1 − darkStart))^gamma)`; `motion` is the fold's progress, eased, set per
+    /// frame. The blur is a 9×9 binomial tap at a quarter of the radius — the frames have no
+    /// mip chain, so the reference's mip-level trick is not available.
+    ///
+    /// `planeToRef` is the content plane's frame in the eye's space (eye at the origin, columns
+    /// x, y, normal, origin); `viewToRef` takes a view-space fragment there (identity when the
+    /// eye is the camera). `texXform` is the material's texture affine as a 4×4 on (u, v, 0, 1);
+    /// `uOffset` places the plane's origin in u (0.5 for the crease of the inner display, the
+    /// projected hinge edge for the cover). `project` switches it all on; `treat` the look.
+    private static let projectedSurfaceModifier = """
     #pragma arguments
-    float4x4 planeToView;
+    float4x4 planeToRef;
+    float4x4 viewToRef;
     float4x4 texXform;
     float planeW;
     float planeH;
-    float locked;
+    float uOffset;
+    float gradient0;
+    float gradient1;
+    float project;
+    float treat;
+    float motion;
+    float blurPx;
+    float gammaK;
+    float darkStart;
+    float darkGain;
+    float debugUV;
     #pragma body
-    if (locked > 0.5) {
-        float3 dir = normalize(_surface.position);
-        float3 p0 = planeToView[3].xyz;
-        float3 ax = normalize(planeToView[0].xyz);
-        float3 ay = normalize(planeToView[1].xyz);
-        float3 n = normalize(planeToView[2].xyz);
+    if (project > 0.5) {
+        float3 frag = (viewToRef * float4(_surface.position, 1.0)).xyz;
+        float3 dir = normalize(frag);
+        float3 p0 = planeToRef[3].xyz;
+        float3 ax = normalize(planeToRef[0].xyz);
+        float3 ay = normalize(planeToRef[1].xyz);
+        float3 n = normalize(planeToRef[2].xyz);
         float denom = dot(n, dir);
-        float4 shown = float4(0.0, 0.0, 0.0, 1.0);
+        float3 color = float3(0.0);
+        if (debugUV > 0.5) color = float3(0.3, 0.0, 0.0);   // ray parallel
         if (abs(denom) > 1e-6) {
             float t = dot(n, p0) / denom;
+            if (debugUV > 0.5) color = float3(0.0, 0.0, 0.3);   // plane behind
             if (t > 0.0) {
                 float3 hit = dir * t - p0;
-                float u = clamp(dot(hit, ax) / planeW + 0.5, 0.0, 1.0);
-                float v = clamp(0.5 - dot(hit, ay) / planeH, 0.0, 1.0);
-                float2 tuv = (texXform * float4(u, v, 0.0, 1.0)).xy;
-                shown = u_diffuseTexture.sample(u_diffuseTextureSampler, tuv);
+                float u = dot(hit, ax) / planeW + uOffset;
+                float v = 0.5 - dot(hit, ay) / planeH;
+                float inside = (u >= 0.0 && u <= 1.0 && v >= 0.0 && v <= 1.0) ? 1.0 : 0.0;
+                float2 tuv = (texXform * float4(clamp(u, 0.0, 1.0), clamp(v, 0.0, 1.0), 0.0, 1.0)).xy;
+                color = u_diffuseTexture.sample(u_diffuseTextureSampler, tuv).rgb * inside;
+                if (debugUV > 1.5) {
+                    color = float3(dir.x * 0.5 + 0.5, dir.y * 0.5 + 0.5, fract(t));
+                } else if (debugUV > 0.5) {
+                    color = float3(fract(u), fract(v), inside);
+                } else if (treat > 0.5) {
+                    float edge = clamp((u - gradient0) / (gradient1 - gradient0), 0.0, 1.0);
+                    float radius = blurPx * motion * pow(edge, gammaK);
+                    if (radius > 0.5) {
+                        float2 texel = float2(1.0 / float(u_diffuseTexture.get_width()),
+                                              1.0 / float(u_diffuseTexture.get_height()));
+                        float2 step = texel * radius * 0.25;
+                        float3 sum = float3(0.0);
+                        for (int y = -4; y <= 4; y++) {
+                            int ay_ = abs(y);
+                            float wy = ay_ == 0 ? 70.0 : (ay_ == 1 ? 56.0 : (ay_ == 2 ? 28.0 : (ay_ == 3 ? 8.0 : 1.0)));
+                            for (int x = -4; x <= 4; x++) {
+                                int ax_ = abs(x);
+                                float wx = ax_ == 0 ? 70.0 : (ax_ == 1 ? 56.0 : (ax_ == 2 ? 28.0 : (ax_ == 3 ? 8.0 : 1.0)));
+                                float2 suv = clamp(tuv + float2(float(x), float(y)) * step, 0.0, 1.0);
+                                sum += u_diffuseTexture.sample(u_diffuseTextureSampler, suv).rgb * (wx * wy);
+                            }
+                        }
+                        color = sum / 65536.0 * inside;
+                    }
+                    float dark = darkGain * motion * pow(clamp((edge - darkStart) / (1.0 - darkStart), 0.0, 1.0), gammaK);
+                    color *= 1.0 - min(1.0, dark);
+                }
             }
         }
-        _surface.diffuse = shown;
+        _surface.diffuse = float4(color, 1.0);
     }
     """
 
@@ -867,24 +948,7 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
         halfANode?.position = SCNVector3(shift, 0, 0)
         pivotNode?.position = SCNVector3(shift, 0, pivotZ)
 
-        // Locked: hand the shader the content plane in view space. Both nodes' presentation
-        // transforms are what is on screen this frame; the camera is whatever the orbit left.
-        if let screenB {
-            let locked = renderMode == .locked
-            screenB.setValue(NSNumber(value: locked ? 1 : 0), forKey: "locked")
-            if locked, let plane = contentPlaneNode, let pov = renderer.pointOfView {
-                let camera = pov.presentation.simdWorldTransform
-                let planeWorld = plane.presentation.simdWorldTransform
-                let planeToView = simd_inverse(camera) * planeWorld
-                screenB.setValue(NSValue(scnMatrix4: SCNMatrix4(planeToView)), forKey: "planeToView")
-                screenB.setValue(NSValue(scnMatrix4: textureTransform()), forKey: "texXform")
-                screenB.setValue(NSNumber(value: Float(panelWidth)), forKey: "planeW")
-                screenB.setValue(NSNumber(value: Float(panelHeight)), forKey: "planeH")
-            }
-            // Stylized: the moving half fades with the fold; otherwise fully opaque.
-            screenB.transparency = renderMode == .stylized
-                ? CGFloat(max(0, 1 - stylizedA * sin(phi))) : 1
-        }
+        updateProjection(renderer, phi: phi)
         // The seam band widens as the phone closes, and only exists in stylized mode.
         let band = renderMode == .stylized ? CGFloat(stylizedW) * (panelWidth / 2) * CGFloat(min(1, phi)) : 0
         for (seam, sign) in [(seamA, CGFloat(1)), (seamB, CGFloat(-1))] {
@@ -899,6 +963,88 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
             let text = String(format: "%@   hinge %.0f°   (1/2/3 to switch)", renderMode.title, hingeShown)
             DispatchQueue.main.async { [weak self] in self?.modeLabel.stringValue = text }
         }
+    }
+
+    /// Locked and stylized: hand the shader each content plane in the eye's space. Both nodes'
+    /// presentation transforms are what is on screen this frame. The eye is the camera (wherever
+    /// the orbit left it) in locked mode, and in stylized mode a front-on eye fixed to the held
+    /// half at the camera's distance — in Fold View the two coincide.
+    private func updateProjection(_ renderer: SCNSceneRenderer, phi: Float) {
+        guard let screenB, let coverMaterial else { return }
+        let project = renderMode != .hardCut
+        screenB.setValue(NSNumber(value: project ? 1 : 0), forKey: "project")
+        coverMaterial.setValue(NSNumber(value: project ? 1 : 0), forKey: "project")
+        guard project, let pov = renderer.pointOfView, let inner = contentPlaneNode,
+              let coverPlane = coverPlaneNode, let phone = phoneNode, let halfB = halfBNode else { return }
+
+        let camera = pov.presentation.simdWorldTransform
+        let stylized = renderMode == .stylized
+        var eye = camera
+        if stylized {
+            var ahead = matrix_identity_float4x4
+            ahead.columns.3 = SIMD4<Float>(0, 0, Float(cameraNode?.position.z ?? 3.1), 1)
+            eye = phone.presentation.simdWorldTransform * ahead
+        }
+        let eyeInverse = simd_inverse(eye)
+        let viewToRef = NSValue(scnMatrix4: SCNMatrix4(eyeInverse * camera))
+
+        // The fold's progress, eased the way the reference does: the inner glass is untouched
+        // flat and fully treated by 90° and beyond; the cover is untouched shut and fully treated
+        // by 90° and beyond.
+        func motion(_ p: Float) -> Float { let c = min(max(p, 0), 1); return c * c * (3 - 2 * c) }
+        let halfTurn = Float.pi / 2
+
+        let innerToRef = eyeInverse * inner.presentation.simdWorldTransform
+        screenB.setValue(NSValue(scnMatrix4: SCNMatrix4(innerToRef)), forKey: "planeToRef")
+        screenB.setValue(viewToRef, forKey: "viewToRef")
+        screenB.setValue(NSValue(scnMatrix4: textureTransform()), forKey: "texXform")
+        screenB.setValue(NSNumber(value: Float(panelWidth)), forKey: "planeW")
+        screenB.setValue(NSNumber(value: Float(panelHeight)), forKey: "planeH")
+        screenB.setValue(NSNumber(value: 0.5), forKey: "uOffset")
+        screenB.setValue(NSNumber(value: 0.5), forKey: "gradient0")
+        screenB.setValue(NSNumber(value: 0), forKey: "gradient1")
+        screenB.setValue(NSNumber(value: motion(phi / halfTurn)), forKey: "motion")
+
+        // The cover's content is anchored at its hinge-side edge: wherever that edge projects
+        // onto the shut-cover plane this frame is u = 0, so the picture stays attached to the
+        // hinge while the free edge lifts away and foreshortens.
+        let coverToRef = eyeInverse * coverPlane.presentation.simdWorldTransform
+        let hingeEdgeLocal = SIMD4<Float>(Float(-bezel), 0, Float(-halfDepth / 2 - 0.003), 1)
+        let hingeEdgeRef = (eyeInverse * halfB.presentation.simdWorldTransform * hingeEdgeLocal)
+        let anchorU = Self.planeU(of: SIMD3(hingeEdgeRef.x, hingeEdgeRef.y, hingeEdgeRef.z),
+                                  planeToRef: coverToRef, width: Float(coverWidth)) ?? 0
+        coverMaterial.setValue(NSValue(scnMatrix4: SCNMatrix4(coverToRef)), forKey: "planeToRef")
+        coverMaterial.setValue(viewToRef, forKey: "viewToRef")
+        coverMaterial.setValue(NSValue(scnMatrix4: coverMaterial.diffuse.contentsTransform), forKey: "texXform")
+        coverMaterial.setValue(NSNumber(value: Float(coverWidth)), forKey: "planeW")
+        coverMaterial.setValue(NSNumber(value: Float(coverHeight)), forKey: "planeH")
+        coverMaterial.setValue(NSNumber(value: -anchorU), forKey: "uOffset")
+        coverMaterial.setValue(NSNumber(value: 0), forKey: "gradient0")
+        coverMaterial.setValue(NSNumber(value: 1), forKey: "gradient1")
+        coverMaterial.setValue(NSNumber(value: motion((Float.pi - phi) / halfTurn)), forKey: "motion")
+
+        for m in [screenB, coverMaterial] {
+            m.setValue(NSNumber(value: stylized ? 1 : 0), forKey: "treat")
+            m.setValue(NSNumber(value: duoBlur), forKey: "blurPx")
+            m.setValue(NSNumber(value: duoGamma), forKey: "gammaK")
+            m.setValue(NSNumber(value: duoDarkStart), forKey: "darkStart")
+            m.setValue(NSNumber(value: duoDarkGain), forKey: "darkGain")
+            m.setValue(NSNumber(value: Self.debugUV), forKey: "debugUV")
+        }
+    }
+
+    /// Where the ray from the eye (at the origin) through `point` meets the plane, as a fraction
+    /// of the plane's width from its origin; nil when the ray misses or the plane is behind.
+    private static func planeU(of point: SIMD3<Float>, planeToRef: simd_float4x4, width: Float) -> Float? {
+        let dir = simd_normalize(point)
+        let p0 = SIMD3(planeToRef.columns.3.x, planeToRef.columns.3.y, planeToRef.columns.3.z)
+        let ax = simd_normalize(SIMD3(planeToRef.columns.0.x, planeToRef.columns.0.y, planeToRef.columns.0.z))
+        let n = simd_normalize(SIMD3(planeToRef.columns.2.x, planeToRef.columns.2.y, planeToRef.columns.2.z))
+        let denom = simd_dot(n, dir)
+        guard abs(denom) > 1e-6 else { return nil }
+        let t = simd_dot(n, p0) / denom
+        guard t > 0 else { return nil }
+        return simd_dot(dir * t - p0, ax) / width
     }
 
     /// The panel counter-rotation from `apply(header:)`, as explicit affine maps of the unit
