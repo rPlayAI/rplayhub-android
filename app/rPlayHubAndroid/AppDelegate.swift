@@ -226,7 +226,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             minWidth.isActive = true
             // Kept so a naked window can drop it: this floor (460pt) otherwise stops the window
             // from shrinking to the phone's true aspect, letterboxing the picture.
-            if pane === middle { stageMinWidth = minWidth }
+            if pane === middle { stageMinWidth = minWidth; stageRestingWidth = resting }
         }
 
         // A soft shadow cast outward from each side pane, in place of a divider line — the same
@@ -836,6 +836,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.mirror.apply(header: header)
             self.twin?.apply(header: header)
             self.inspector.hero.apply(header: header)
+            self.fitStage(to: header.displaySize)
         }
         // Both closures check the stream is still the current one: after a reconnect, a stale
         // stream's last gasp arrives on the main queue behind the new session's startup and
@@ -873,6 +874,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.window.subtitle = "mirroring · \(word)"
         }
         session.control?.send(ControlMessage.displayConfigurationRequest())
+    }
+
+    /// Give the stage a resting width that suits the display being mirrored. A tall phone is
+    /// happy in the 520pt column the window opens with; a foldable's near-square inner display
+    /// would be squeezed by it, so the column grows with the picture's aspect. Only the resting
+    /// preference moves — the user's own drag still wins, and the window is not resized.
+    private func fitStage(to displaySize: CGSize) {
+        guard displaySize.width > 0, displaySize.height > 0 else { return }
+        let aspect = displaySize.width / displaySize.height
+        guard abs(aspect - stageWidthAspect) > 0.01 else { return }
+        stageWidthAspect = aspect
+        // What the picture needs to fill the stage's height, clamped so one odd display cannot
+        // push the side panes out of the window.
+        let height: CGFloat = max(stage.bounds.height, 520)
+        let wanted = min(max(520, height * aspect + 40), 900)
+        stageRestingWidth?.constant = wanted
     }
 
     // MARK: - virtual displays (scrcpy --new-display)
@@ -914,6 +931,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var stripMinHeight: NSLayoutConstraint?
     private var stripZeroHeight: NSLayoutConstraint?
     private var stageMinWidth: NSLayoutConstraint?
+    /// The stage's preferred width. A foldable's inner display is near square rather than tall,
+    /// so the stage is width-bound on one and the picture ends up small in a column sized for a
+    /// phone; it is widened to suit whatever is being mirrored.
+    private var stageRestingWidth: NSLayoutConstraint?
+    private var stageWidthAspect: CGFloat = 0
     private var stripTopToMirror: NSLayoutConstraint?
     private var mirrorBottomToStage: NSLayoutConstraint?
 
