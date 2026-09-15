@@ -1856,9 +1856,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let header = video.lastHeader { tv.apply(header: header) }
         tv.hingeSource = { [weak self] in self?.session?.sensor?.latestHinge }
         tv.gyroSource = { [weak self] which in self?.session?.sensor?.latestGyro(which) }
-        if foldable {
-            AppBuild.log("twin: fold model (\(session.isFoldable ? "device reports states" : "fake hinge"))")
-        }
+        // Name the device and the reason: a log line that says only "fold model" cannot be
+        // attributed to a run, which made a two-device check unfalsifiable.
+        let why = session.control?.isFoldable == true ? "posture vocabulary"
+                : session.sensor?.latestHinge != nil ? "hinge sensor"
+                : forceFoldView ? "asked for" : "fake hinge"
+        AppBuild.log("twin: \(session.serial) -> \(foldable ? "FOLD model (\(why))" : "rigid model")")
 
         // Choose the orientation source AFTER activate(), which resets the reference — otherwise
         // the demo's own reference (its base pose) would be overwritten and the choreography would
