@@ -123,7 +123,8 @@ footer{border-top:1px solid var(--line); color:var(--faint); font-size:12.5px;
   <div class="grp">Features</div>
   <a href="#device">Device features</a>
   <a href="#displays">Virtual displays</a>
-  <a href="#twin">3D Device Twin</a>
+  <a href="#emulators">Emulators</a>
+  <a href="#twin">3D Device Twin &amp; foldables</a>
   <a href="#panels">Inspector panels</a>
   <div class="grp">Reference</div>
   <a href="#shortcuts">Shortcuts</a>
@@ -133,7 +134,8 @@ footer{border-top:1px solid var(--line); color:var(--faint); font-size:12.5px;
 <main>
 <h1>rPlayHub Android Help</h1>
 <p class="lede">Mirror and control your Android phone from the Mac — screen, touch, audio and
-clipboard — with a gyroscope-tracked 3D twin and app windows on virtual displays. Nothing is
+clipboard — with a gyroscope-tracked 3D twin that folds with your foldable, and app windows on
+virtual displays. Nothing is
 installed on the phone: a small agent runs over adb for the session and leaves with it.</p>
 
 <section id="start">
@@ -155,7 +157,7 @@ installed on the phone: a small agent runs over adb for the session and leaves w
 (check “Always allow from this computer” to skip it next time).</p></div>
 </section>
 
-<section id="window">
+<section id="emulators">
 <h2>Emulators</h2>
 <p>A running <b>Android Emulator</b> is a device like any other here: it appears in the sidebar
 under its own <b>Emulators</b> group, named after its AVD (“Emulator · Pixel_9”), and everything —
@@ -258,7 +260,8 @@ while already running.</p></div>
 screen and <b>tracking the real phone’s orientation from its gyroscope</b>. Turn the phone in
 your hand and the model turns with it.</p>
 <ul>
-  <li>Enable the mode from the View menu, with a live session running.</li>
+  <li>View ▸ <b>View Screen in 3D</b> (<kbd>⌘3</kbd>) with a live session running; the same
+      item, now named <b>Exit 3D View</b>, returns to the flat mirror.</li>
   <li>Hold the phone facing you and press <b>Set Facing Me</b> (<kbd>R</kbd>) once — that pose
       becomes “facing you” and is remembered for later sessions.</li>
   <li>The twin’s screen is touchable: click it to tap the phone, drag to scroll.</li>
@@ -267,6 +270,31 @@ your hand and the model turns with it.</p>
       a procedural Pixel-style back (camera bar and G) is drawn.</li>
   <li>View ▸ <b>Show 3D Demo</b> plays a scripted rotation reel — nice for videos.</li>
 </ul>
+
+<h3>Foldables</h3>
+<p>A foldable — Pixel Fold, Galaxy Z Fold and the like — gets <b>two hinged halves that follow
+the real hinge</b>: open the phone and the model opens, shut it and the cover display lights up
+on the outside. Two views and three looks:</p>
+<div class="kv">
+  <div class="row"><div class="k">View Screen in 3D</div><div class="v">The gyroscope-tracked twin,
+    folding as you fold (<kbd>⌘3</kbd>).</div></div>
+  <div class="row"><div class="k">Fold View</div><div class="v">The fold on its own, face-on, no
+    gyroscope and nothing to calibrate — the view for a clean recording (<kbd>⇧⌘D</kbd>).</div></div>
+  <div class="row"><div class="k">Fold Look ▸ Hard Cut</div><div class="v">What Android itself does:
+    the cover picture until the phone is far enough open, then the inner picture.</div></div>
+  <div class="row"><div class="k">Fold Look ▸ Locked</div><div class="v">The content stays fixed in
+    space while the phone moves around it — the moving half shows exactly what you would see of
+    the flat picture through it.</div></div>
+  <div class="row"><div class="k">Fold Look ▸ Stylized</div><div class="v">The iPhone Duo look:
+    locked content, plus the moving half turning to frosted glass as it swings — blurring and
+    darkening toward its edge, the other half showing through — and solid again when flat or shut.</div></div>
+</div>
+<p>The looks also switch with <kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> while the 3D view has the
+focus. The readout at the top-left (look and hinge angle) fades a few seconds after a change so a
+recording stays clean.</p>
+<div class="callout note"><span class="lbl">Tip</span>
+<p>Over Wi-Fi the phone’s sensors arrive in bursts; the twin smooths them with a short buffer, but
+a USB cable gives the steadiest fold and the fastest picture handover between the two displays.</p></div>
 </section>
 
 <section id="panels">
@@ -291,6 +319,9 @@ your hand and the model turns with it.</p>
   <div class="row"><div class="k"><kbd>⇧⌘F</kbd></div><div class="v">Open the selected app on a virtual display (Fusion)</div></div>
   <div class="row"><div class="k"><kbd>⇧⌘E</kbd></div><div class="v">Show the phone’s files in Finder</div></div>
   <div class="row"><div class="k"><kbd>⌘N</kbd></div><div class="v">Open the screen in its own window</div></div>
+  <div class="row"><div class="k"><kbd>⌘3</kbd></div><div class="v">View Screen in 3D / Exit 3D View</div></div>
+  <div class="row"><div class="k"><kbd>⇧⌘D</kbd></div><div class="v">Fold View (foldables)</div></div>
+  <div class="row"><div class="k"><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd></div><div class="v">Fold Look: Hard Cut / Locked / Stylized (in the 3D view)</div></div>
   <div class="row"><div class="k"><kbd>R</kbd></div><div class="v">Set Facing Me (in the 3D twin)</div></div>
   <div class="row"><div class="k"><kbd>⌘?</kbd></div><div class="v">This help page</div></div>
 </div>
