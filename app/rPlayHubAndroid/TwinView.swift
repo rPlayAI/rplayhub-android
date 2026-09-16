@@ -127,7 +127,7 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
     /// source pixels at the moving edge, the gradient's exponent, where along the half the
     /// darkening starts (0 crease, 1 free edge) and how hard it goes to black, plus the seam
     /// band's width as a fraction of a half — zero, because the Duo's crease stays bright.
-    /// Overridable with RPLAYHUB_FOLD_STYLE JSON: {"blur","gamma","dark","gain","w"}.
+    /// Overridable with RPLAYHUB_FOLD_STYLE JSON: {"blur","gamma","dark","gain","glass","lock","w"}.
     private var duoBlur: Float = 72
     private var duoGamma: Float = 1.35
     private var duoDarkStart: Float = 0.2
@@ -137,6 +137,9 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
     /// body and both its screens): opaque flat and shut, a frosted pane in between, through
     /// which the held half's content shows.
     private var stylizedGlass: Float = 0.1
+    /// How far the projected content is locked in space (1, the Duo) versus glued to the moving
+    /// glass (0, as Android draws it). Applies to locked and stylized alike.
+    private var lockAmount: Float = 1
     private var halfBMaterials: [SCNMaterial] = []
     /// The readout shows for a few seconds after activation or a mode change, then leaves the
     /// stage clean for a recording.
@@ -273,6 +276,7 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
             if let v = numbers["gain"] { duoDarkGain = Float(v) }
             if let v = numbers["w"] { stylizedW = Float(v) }
             if let v = numbers["glass"] { stylizedGlass = Float(v) }
+            if let v = numbers["lock"] { lockAmount = Float(v) }
         }
     }
 
@@ -726,6 +730,7 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
     float darkStart;
     float darkGain;
     float debugUV;
+    float lockAmount;
     #pragma body
     if (project > 0.5) {
         float3 frag = (viewToRef * float4(_surface.position, 1.0)).xyz;
@@ -746,6 +751,10 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
                 float v = 0.5 - dot(hit, ay) / planeH;
                 float inside = (u >= 0.0 && u <= 1.0 && v >= 0.0 && v <= 1.0) ? 1.0 : 0.0;
                 float2 tuv = (texXform * float4(clamp(u, 0.0, 1.0), clamp(v, 0.0, 1.0), 0.0, 1.0)).xy;
+                // lockAmount 1: the content fixed in space (the Duo); 0: glued to the glass, as
+                // Android draws it; between: the glass carries the picture part of the way.
+                tuv = mix(_surface.diffuseTexcoord, tuv, lockAmount);
+                inside = mix(1.0, inside, lockAmount);
                 color = u_diffuseTexture.sample(u_diffuseTextureSampler, tuv).rgb * inside;
                 if (debugUV > 1.5) {
                     color = float3(dir.x * 0.5 + 0.5, dir.y * 0.5 + 0.5, fract(t));
@@ -1061,6 +1070,7 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
             m.setValue(NSNumber(value: duoDarkStart), forKey: "darkStart")
             m.setValue(NSNumber(value: duoDarkGain), forKey: "darkGain")
             m.setValue(NSNumber(value: Self.debugUV), forKey: "debugUV")
+            m.setValue(NSNumber(value: lockAmount), forKey: "lockAmount")
         }
     }
 
