@@ -87,6 +87,15 @@ Recorded here so a resync can reapply them:
   ActivityThread reflection, scrcpy-style). The host titles fusion windows with it. No agent
   runtime involvement; on a resync, re-add the file.
 
+- **Encoder start retry (ours, 2026-09-15):** `display_streamer.{h,cc}` — `StartCodecUnlocked`
+  returns false on `AMEDIACODEC_ERROR_INSUFFICIENT_RESOURCE` and `Run` deletes the codec, waits
+  100 ms and rebuilds it (up to 20 times) instead of `Log::Fatal`. Seen on the Pixel 11 Pro Fold at
+  every cover↔inner panel swap once the phone was warm: the previous hardware encoder instance
+  is still tearing down when the next is started, the resource manager tries to reclaim from the
+  agent's own pid and refuses, `AMediaCodec_start` returns 1100, the agent exited and (a second
+  bug, unfixed) segfaulted releasing the already-released virtual display on the way out. Worth
+  upstreaming; on a resync re-apply.
+
 ## Refetch
 
     B=refs/heads/mirror-goog-studio-main

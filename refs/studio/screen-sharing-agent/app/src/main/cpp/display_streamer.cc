@@ -306,7 +306,23 @@ void DisplayStreamer::Run() {
         int32_t y = (video_size.height - height) / 2;
         SurfaceControl::ConfigureProjection(jni, display_token_, surface, display_info, { 0, y, video_size.width, height });
       }
-      StartCodecUnlocked();
+      if (!StartCodecUnlocked()) {
+        // rPlayHub (see PROVENANCE.md): the hardware encoder's previous instance — the one this
+        // streamer just stopped for a display change, a foldable's panel swap above all — is
+        // still being torn down, and the resource manager refuses a second one. That is a
+        // matter of tens of milliseconds, not a fatal condition: drop what was built and go
+        // round again.
+        if (++start_retries_ > 20) {
+          Log::Fatal(VIDEO_ENCODER_START_ERROR, "Display %d: video encoder would not start after %d attempts",
+                     display_id_, start_retries_);
+        }
+        Log::W("Display %d: video encoder busy, retrying (%d)", display_id_, start_retries_);
+        DeleteCodec();
+        lock.unlock();
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        continue;
+      }
+      start_retries_ = 0;
       codec_running_ = true;
       Size display_size = display_info.NaturalSize();  // The display dimensions in the canonical orientation.
       packet_header.display_width = display_size.width;
@@ -518,13 +534,17 @@ void DisplayStreamer::DeleteCodec() {
   }
 }
 
-void DisplayStreamer::StartCodecUnlocked() {
+bool DisplayStreamer::StartCodecUnlocked() {
   Log::D("Display %d: starting codec", display_id_);
   media_status_t status = AMediaCodec_start(codec_);
+  if (status == AMEDIACODEC_ERROR_INSUFFICIENT_RESOURCE) {
+    return false;  // rPlayHub: transient; the caller retries.
+  }
   if (status != AMEDIA_OK) {
     Log::Fatal(VIDEO_ENCODER_START_ERROR, "Display %d: AMediaCodec_start returned %d", display_id_, status);
   }
   codec_running_ = true;
+  return true;
 }
 
 void DisplayStreamer::StopCodec() {
