@@ -576,7 +576,7 @@ final class HeroComposer {
     static func makeFoldPhone(displaySize: CGSize, finish: HeroFinish = .graphite)
         -> (node: SCNNode, pivot: SCNNode, screenA: SCNMaterial, screenB: SCNMaterial,
             cover: SCNMaterial, contentPlane: SCNNode, coverPlane: SCNNode,
-            halfA: SCNNode, halfB: SCNNode,
+            halfA: SCNNode, halfB: SCNNode, halfBMaterials: [SCNMaterial],
             panelWidth: CGFloat, panelHeight: CGFloat, halfDepth: CGFloat,
             coverWidth: CGFloat, coverHeight: CGFloat, bezel: CGFloat) {
         // The inner display of a Pixel Fold is close to square (about 0.97), which is what
@@ -617,13 +617,18 @@ final class HeroComposer {
         let edge = pbr(finish.chamfer, metalness: 1.0, roughness: 0.04)
 
         // Build one half in its own frame: the crease at x = 0, the half extending to `sign`.
-        func makeHalf(sign: CGFloat) -> (node: SCNNode, screen: SCNMaterial) {
+        // Each half gets its own copies of the body materials, so the moving half can be turned
+        // to glass (transparency) mid-fold without the held half following.
+        func makeHalf(sign: CGFloat) -> (node: SCNNode, screen: SCNMaterial, body: [SCNMaterial]) {
             let half = SCNNode()
             let path = Self.halfPath(width: halfBody, height: bodyHeight, corner: corner, sign: sign)
             let body = SCNShape(path: path, extrusionDepth: halfDepth)
             body.chamferMode = .both
             body.chamferRadius = halfDepth * 0.26
-            body.materials = [face, face, rail, edge, edge]
+            let faceH = face.copy() as! SCNMaterial
+            let railH = rail.copy() as! SCNMaterial
+            let edgeH = edge.copy() as! SCNMaterial
+            body.materials = [faceH, faceH, railH, edgeH, edgeH]
             half.addChildNode(SCNNode(geometry: body))
 
             // Black glass over the inner face, inset from the outer three edges only; it runs
@@ -654,7 +659,7 @@ final class HeroComposer {
             panelNode.name = sign > 0 ? "panelA" : "panelB"
             panelNode.position = SCNVector3(sign * halfPanel / 2, 0, hd + 0.004)
             half.addChildNode(panelNode)
-            return (half, screen)
+            return (half, screen, [faceH, railH, edgeH, glassMat])
         }
 
         // The hinge is on the LEFT, as a book's spine is and as a Fold's is when you hold it
@@ -675,6 +680,9 @@ final class HeroComposer {
         let b = makeHalf(sign: -1)
         b.node.position = SCNVector3(0, 0, -hd)
         pivot.addChildNode(b.node)
+        // B draws after A, so that when B turns to glass it blends over A's content rather
+        // than being sorted by chance.
+        b.node.enumerateHierarchy { node, _ in node.renderingOrder = 10 }
 
         // The cover display on B's outer face. A plane turned to face −z has its +u toward −x,
         // which is the viewer's right when seen from behind, so the picture reads unmirrored.
@@ -698,12 +706,10 @@ final class HeroComposer {
         coverNode.eulerAngles = SCNVector3(0, CGFloat.pi, 0)
         b.node.addChildNode(coverNode)
 
-        // Lenses on A's outer face, centred on that half, sized to it.
-        let islandHost = SCNNode()
-        islandHost.position = SCNVector3(halfBody / 2, 0, 0)
-        islandHost.addChildNode(makeCameraIsland(bodyWidth: halfBody, bodyHeight: bodyHeight,
+        // The Fold's camera block on A's outer face: the stacked pair of pills in the corner
+        // away from the hinge, not the bar phone's wide visor.
+        a.node.addChildNode(makeFoldCameraIsland(halfWidth: halfBody, bodyHeight: bodyHeight,
                                                  depth: halfDepth, finish: finish))
-        a.node.addChildNode(islandHost)
 
         // The content plane for locked mode: the crease, in the plane of the inner glass, on
         // the held half so it follows the pose and the fold's sideways slide but never the fold.
@@ -722,7 +728,7 @@ final class HeroComposer {
         a.node.addChildNode(coverPlaneMarker)
 
         return (root, pivot, a.screen, b.screen, cover, contentPlane, coverPlaneMarker, a.node, b.node,
-                panelWidth, panelHeight, halfDepth, halfBody - 2 * bezel, bodyHeight - 2 * bezel, bezel)
+                b.body, panelWidth, panelHeight, halfDepth, halfBody - 2 * bezel, bodyHeight - 2 * bezel, bezel)
     }
 
     /// One half of a rounded rectangle: `width` wide from the crease at x = 0 toward `sign`,
@@ -781,6 +787,121 @@ final class HeroComposer {
     ///
     /// It is built here rather than in the twin so both views share it. A hero shot swinging
     /// past the back sees the same phone the twin does when you turn it over.
+    /// The Pixel Fold's back, read off the Pixel 11 Pro Fold press render (Notebookcheck,
+    /// 2026-09): two pills stacked in the upper corner of the held half, away from the hinge,
+    /// each about 0.56 of the half's width and 0.12 of its height, in one polished frame. The
+    /// upper pill carries the flash on the outer side and the telephoto window on the hinge
+    /// side; the lower one the wide and main lenses on the outer side and a small sensor dot
+    /// on the hinge side. The G sits in the middle of the back. Seen from the back, the half's
+    /// outer edge (local +x) is on the LEFT, which is where the render shows the block.
+    private static func makeFoldCameraIsland(halfWidth: CGFloat, bodyHeight: CGFloat,
+                                             depth: CGFloat, finish: HeroFinish) -> SCNNode {
+        func pbr(_ color: NSColor, _ metalness: CGFloat, _ roughness: CGFloat) -> SCNMaterial {
+            let m = SCNMaterial()
+            m.lightingModel = .physicallyBased
+            m.diffuse.contents = color
+            m.metalness.contents = metalness
+            m.roughness.contents = roughness
+            return m
+        }
+        let island = SCNNode()
+        let pw = halfWidth * 0.56
+        let ph = bodyHeight * 0.12
+        let islandD = depth * 0.45                 // a foldable's half is thin; the block is not
+        let backZ = -depth / 2
+        let cx = halfWidth * 0.67                  // block centre, toward the outer edge
+        let upperY = bodyHeight / 2 - bodyHeight * 0.03 - ph / 2
+        let lowerY = upperY - ph
+        let shell = pbr(NSColor(calibratedWhite: 0.045, alpha: 1), 0.65, 0.22)
+        let rim = pbr(finish.chamfer, 1.0, 0.05)
+        let glassMat = pbr(NSColor(calibratedWhite: 0.015, alpha: 1), 0.0, 0.06)
+
+        for y in [upperY, lowerY] {
+            let path = NSBezierPath(roundedRect: NSRect(x: -pw / 2, y: -ph / 2, width: pw, height: ph),
+                                    xRadius: ph * 0.42, yRadius: ph * 0.42)
+            path.flatness = 0.0005
+            let pill = SCNShape(path: path, extrusionDepth: islandD)
+            pill.chamferMode = .both
+            pill.chamferRadius = islandD * 0.30
+            pill.materials = [shell, shell, shell, rim, rim]
+            let pillNode = SCNNode(geometry: pill)
+            pillNode.position = SCNVector3(cx, y, backZ - islandD / 2)
+            island.addChildNode(pillNode)
+
+            let inset = ph * 0.08
+            let glassPath = NSBezierPath(roundedRect: NSRect(x: -pw / 2 + inset, y: -ph / 2 + inset,
+                                                             width: pw - 2 * inset, height: ph - 2 * inset),
+                                         xRadius: (ph - 2 * inset) * 0.42, yRadius: (ph - 2 * inset) * 0.42)
+            glassPath.flatness = 0.0005
+            let glass = SCNShape(path: glassPath, extrusionDepth: 0.002)
+            glass.materials = [glassMat]
+            let glassNode = SCNNode(geometry: glass)
+            glassNode.position = SCNVector3(cx, y, backZ - islandD - 0.001)
+            island.addChildNode(glassNode)
+        }
+
+        let ringMetal = pbr(NSColor(calibratedWhite: 0.22, alpha: 1), 0.9, 0.16)
+        let lensGlass = pbr(NSColor(srgbRed: 0.02, green: 0.03, blue: 0.06, alpha: 1), 0.35, 0.03)
+        let coating = pbr(NSColor(srgbRed: 0.30, green: 0.45, blue: 0.85, alpha: 1), 0.2, 0.02)
+        func lens(x: CGFloat, y: CGFloat, r: CGFloat) {
+            let ring = SCNTube(innerRadius: r * 0.88, outerRadius: r, height: islandD * 0.42)
+            ring.materials = [ringMetal]
+            let ringNode = SCNNode(geometry: ring)
+            ringNode.eulerAngles = SCNVector3(CGFloat.pi / 2, 0, 0)
+            ringNode.position = SCNVector3(x, y, backZ - islandD - islandD * 0.20)
+            island.addChildNode(ringNode)
+            let dome = SCNSphere(radius: r * 0.88)
+            dome.materials = [lensGlass]
+            let domeNode = SCNNode(geometry: dome)
+            domeNode.scale = SCNVector3(1, 1, 0.26)
+            domeNode.position = SCNVector3(x, y, backZ - islandD - islandD * 0.12)
+            island.addChildNode(domeNode)
+            let glint = SCNSphere(radius: r * 0.20)
+            glint.materials = [coating]
+            let glintNode = SCNNode(geometry: glint)
+            glintNode.scale = SCNVector3(1, 1, 0.30)
+            glintNode.position = SCNVector3(x - r * 0.28, y + r * 0.28, backZ - islandD - islandD * 0.26)
+            island.addChildNode(glintNode)
+        }
+        func disc(x: CGFloat, y: CGFloat, r: CGFloat, _ material: SCNMaterial) {
+            let s = SCNSphere(radius: r)
+            s.materials = [material]
+            let n = SCNNode(geometry: s)
+            n.scale = SCNVector3(1, 1, 0.16)
+            n.position = SCNVector3(x, y, backZ - islandD - 0.002)
+            island.addChildNode(n)
+        }
+        // Upper pill: flash outer, telephoto window hinge-side.
+        disc(x: cx + pw * 0.26, y: upperY, r: pw * 0.08,
+             pbr(NSColor(srgbRed: 0.99, green: 0.98, blue: 0.94, alpha: 1), 0.0, 0.22))
+        let teleW = pw * 0.114, teleH = pw * 0.143
+        let telePath = NSBezierPath(roundedRect: NSRect(x: -teleW / 2, y: -teleH / 2, width: teleW, height: teleH),
+                                    xRadius: teleW * 0.18, yRadius: teleW * 0.18)
+        let tele = SCNShape(path: telePath, extrusionDepth: 0.002)
+        tele.materials = [pbr(NSColor(srgbRed: 0.10, green: 0.10, blue: 0.16, alpha: 1), 0.3, 0.08)]
+        let teleNode = SCNNode(geometry: tele)
+        teleNode.position = SCNVector3(cx - pw * 0.26, upperY, backZ - islandD - 0.002)
+        island.addChildNode(teleNode)
+        // Lower pill: two lenses outer and centre, the sensor dot hinge-side.
+        lens(x: cx + pw * 0.26, y: lowerY, r: pw * 0.10)
+        lens(x: cx - pw * 0.07, y: lowerY, r: pw * 0.086)
+        disc(x: cx - pw * 0.27, y: lowerY, r: pw * 0.023, pbr(NSColor(calibratedWhite: 0.06, alpha: 1), 0.0, 0.30))
+
+        // The G in the middle of the back.
+        let gSize = halfWidth * 0.19
+        let gPlane = SCNPlane(width: gSize, height: gSize)
+        let gMaterial = SCNMaterial()
+        gMaterial.lightingModel = .constant
+        gMaterial.diffuse.contents = TwinView.googleGImage(side: 512)
+        gMaterial.isDoubleSided = false
+        gPlane.materials = [gMaterial]
+        let gNode = SCNNode(geometry: gPlane)
+        gNode.position = SCNVector3(halfWidth / 2, bodyHeight * 0.016, backZ - 0.001)
+        gNode.eulerAngles = SCNVector3(0, CGFloat.pi, 0)
+        island.addChildNode(gNode)
+        return island
+    }
+
     private static func makeCameraIsland(bodyWidth: CGFloat, bodyHeight: CGFloat,
                                          depth: CGFloat, finish: HeroFinish) -> SCNNode {
         func pbr(_ color: NSColor, _ metalness: CGFloat, _ roughness: CGFloat) -> SCNMaterial {

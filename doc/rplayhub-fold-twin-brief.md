@@ -136,9 +136,13 @@ rigid twin.
   straight at 100°/140°, and the cover's lock screen stays put at 40°; `stylized` is the iPhone
   Duo look of §7 (2026-09-15): the same projection from a front-on eye fixed to the held half,
   plus the blur-and-darken gradient from the crease toward the moving edge, `smoothstep` gated
-  over the 90° nearest each panel's home state. Defaults blur=72 px, gamma=1.35, dark=0.2,
-  gain=2, seam band w=0 (`RPLAYHUB_FOLD_STYLE='{"blur":..,"gamma":..,"dark":..,"gain":..,"w":..}'`
-  to override). The inspector sliders and the JSON round-trip of §2.2 are not built yet; the
+  over the 90° nearest each panel's home state, and — beyond the Duo — the moving half turns
+  to glass while it moves: `glass · sin φ` of transparency on its body, inner screen and cover,
+  so the held half's content shows through the frosted pane, opaque again flat and shut (its
+  body materials are its own copies; it renders after the held half). Defaults blur=72 px,
+  gamma=1.35, dark=0.2, gain=2, glass=0.45, seam band w=0
+  (`RPLAYHUB_FOLD_STYLE='{"blur":..,"gamma":..,"dark":..,"gain":..,"glass":..,"w":..}'` to
+  override). The readout hides itself 4 s after a mode change so a recording is clean. The inspector sliders and the JSON round-trip of §2.2 are not built yet; the
   env override stands in. `RPLAYHUB_FOLD_DEBUG=1` paints the projected (u, v) on the glass.
 - **Fake hinge.** `RPLAYHUB_FAKE_HINGE=1` sweeps shut↔open, `=<degrees>` holds. With no phone at
   all, View ▸ View Screen in 3D still opens the rig on a 2076×2152 inner display showing a test
@@ -198,5 +202,8 @@ with the test grid and the live cover. Two things the port taught: the treatment
 90° because a front-on eye sees only a sliver of the moving half there — it peaks mid-sweep
 (~135°), which is the reference's behaviour too; and the frames have no mip chain, so the blur
 is a 9×9 binomial tap at a quarter of the radius instead of the reference's mip-level trick.
-Still open: a real sweep with eyes on stylized, and item 5 (the Pixel's cover runs its own
+Same evening: the moving half also turns to translucent glass mid-fold (`glass`), and the
+model's back is the Pixel 11 Pro Fold's — stacked camera pills in the corner away from the
+hinge, read off the press render (`HeroComposer.makeFoldCameraIsland`). Still open: a real
+sweep with eyes on stylized, and item 5 (the Pixel's cover runs its own
 layout, so the crossover is never pixel-continuous).

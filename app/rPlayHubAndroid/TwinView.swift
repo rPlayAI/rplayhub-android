@@ -133,6 +133,15 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
     private var duoDarkStart: Float = 0.2
     private var duoDarkGain: Float = 2
     private var stylizedW: Float = 0
+    /// How far the moving half turns to glass mid-fold (`glass · sin φ` of transparency on its
+    /// body and both its screens): opaque flat and shut, a frosted pane in between, through
+    /// which the held half's content shows.
+    private var stylizedGlass: Float = 0.45
+    private var halfBMaterials: [SCNMaterial] = []
+    /// The readout shows for a few seconds after activation or a mode change, then leaves the
+    /// stage clean for a recording.
+    private var readoutShownAt: TimeInterval = 0
+    private var readoutHidden = false
     // The hinge: what the sensor (or the fake) says, and what is shown after easing.
     private var hingeTarget: Float = 180
     private var hingeShown: Float = 180
@@ -263,6 +272,7 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
             if let v = numbers["dark"] { duoDarkStart = Float(v) }
             if let v = numbers["gain"] { duoDarkGain = Float(v) }
             if let v = numbers["w"] { stylizedW = Float(v) }
+            if let v = numbers["glass"] { stylizedGlass = Float(v) }
         }
     }
 
@@ -306,6 +316,8 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
         lastTick = 0
         fakeClock = 0
         modeLabel.isHidden = !self.foldable
+        readoutShownAt = 0
+        readoutHidden = false
         window?.makeFirstResponder(scnView)
         frameLock.lock()
         isActive = true
@@ -361,6 +373,8 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
 
     func setRenderMode(_ mode: FoldMode) {
         renderMode = mode
+        readoutShownAt = 0
+        readoutHidden = false
         AppBuild.log("twin: fold render mode \(mode.title)")
     }
 
@@ -401,6 +415,7 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
             coverMaterial = built.cover
             contentPlaneNode = built.contentPlane
             coverPlaneNode = built.coverPlane
+            halfBMaterials = built.halfBMaterials
             panelWidth = built.panelWidth
             panelHeight = built.panelHeight
             coverWidth = built.coverWidth
@@ -949,6 +964,13 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
         pivotNode?.position = SCNVector3(shift, 0, pivotZ)
 
         updateProjection(renderer, phi: phi)
+
+        // Stylized: the moving half turns to glass while it moves. Its body, its inner screen
+        // and its cover all take the same transparency; flat and shut it is solid again.
+        let glass = renderMode == .stylized ? CGFloat(max(0, min(1, stylizedGlass * sin(phi)))) : 0
+        for m in halfBMaterials { m.transparency = 1 - glass }
+        screenB?.transparency = 1 - glass
+        coverMaterial?.transparency = 1 - glass
         // The seam band widens as the phone closes, and only exists in stylized mode.
         let band = renderMode == .stylized ? CGFloat(stylizedW) * (panelWidth / 2) * CGFloat(min(1, phi)) : 0
         for (seam, sign) in [(seamA, CGFloat(1)), (seamB, CGFloat(-1))] {
@@ -958,10 +980,17 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
             seam.position = SCNVector3(sign * band / 2, 0, seam.position.z)
         }
 
-        if time - lastLabelUpdate > 0.1 {
+        if readoutShownAt == 0 { readoutShownAt = time }
+        let hideReadout = time - readoutShownAt > 4
+        if time - lastLabelUpdate > 0.1 || hideReadout != readoutHidden {
             lastLabelUpdate = time
-            let text = String(format: "%@   hinge %.0f°   (1/2/3 to switch)", renderMode.title, hingeShown)
-            DispatchQueue.main.async { [weak self] in self?.modeLabel.stringValue = text }
+            readoutHidden = hideReadout
+            let text = String(format: "%@   hinge %.0f°   (View ▸ Fold Look, or 1/2/3)", renderMode.title, hingeShown)
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.modeLabel.stringValue = text
+                self.modeLabel.isHidden = !self.foldable || hideReadout
+            }
         }
     }
 

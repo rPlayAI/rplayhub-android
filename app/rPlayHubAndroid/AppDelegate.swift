@@ -1844,7 +1844,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 mirror.isHidden = true
                 tv.foldOnly = foldOnlyView
                 tv.activate(displaySize: CGSize(width: 2076, height: 2152), foldable: true)
-                tv.orientationSource = { nil }        // face-on and still; the fold is the subject
+                // Face-on and still — the fold is the subject — unless the fake gyro is asked
+                // for, which is how the BACK of the model gets screenshotted with no phone.
+                let fake = ProcessInfo.processInfo.environment["RPLAYHUB_FAKE_GYRO"]
+                if fake == "1" || fake?.hasPrefix("sweep:") == true {
+                    let start = Date()
+                    let axis = fake?.hasPrefix("sweep:") == true ? String(fake!.dropFirst(6)) : ""
+                    tv.orientationSource = { Self.fakeGyro(Float(Date().timeIntervalSince(start)), sweep: axis) }
+                    tv.recenter()
+                } else {
+                    tv.orientationSource = { nil }
+                }
                 twinActive = true
                 mirror.setTwinActive(true)
                 twinOpenItem?.title = "Exit 3D View"
