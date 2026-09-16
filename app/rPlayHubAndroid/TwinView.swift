@@ -136,7 +136,7 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
     /// How far the moving half turns to glass mid-fold (`glass · sin φ` of transparency on its
     /// body and both its screens): opaque flat and shut, a frosted pane in between, through
     /// which the held half's content shows.
-    private var stylizedGlass: Float = 0.45
+    private var stylizedGlass: Float = 0.1
     private var halfBMaterials: [SCNMaterial] = []
     /// The readout shows for a few seconds after activation or a mode change, then leaves the
     /// stage clean for a recording.

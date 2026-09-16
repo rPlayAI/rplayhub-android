@@ -140,7 +140,7 @@ rigid twin.
   to glass while it moves: `glass · sin φ` of transparency on its body, inner screen and cover,
   so the held half's content shows through the frosted pane, opaque again flat and shut (its
   body materials are its own copies; it renders after the held half). Defaults blur=72 px,
-  gamma=1.35, dark=0.2, gain=2, glass=0.45, seam band w=0
+  gamma=1.35, dark=0.2, gain=2, glass=0.1, seam band w=0
   (`RPLAYHUB_FOLD_STYLE='{"blur":..,"gamma":..,"dark":..,"gain":..,"glass":..,"w":..}'` to
   override). The readout hides itself 4 s after a mode change so a recording is clean. The inspector sliders and the JSON round-trip of §2.2 are not built yet; the
   env override stands in. `RPLAYHUB_FOLD_DEBUG=1` paints the projected (u, v) on the glass.
