@@ -1015,16 +1015,15 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
         screenB.setValue(NSNumber(value: project ? 1 : 0), forKey: "project")
         coverMaterial.setValue(NSNumber(value: project ? 1 : 0), forKey: "project")
         guard project, let pov = renderer.pointOfView, let inner = contentPlaneNode,
-              let coverPlane = coverPlaneNode, let phone = phoneNode, let halfB = halfBNode else { return }
+              let coverPlane = coverPlaneNode, let halfB = halfBNode else { return }
 
         let camera = pov.presentation.simdWorldTransform
         let stylized = renderMode == .stylized
-        var eye = camera
-        if stylized {
-            var ahead = matrix_identity_float4x4
-            ahead.columns.3 = SIMD4<Float>(0, 0, Float(cameraNode?.position.z ?? 3.1), 1)
-            eye = phone.presentation.simdWorldTransform * ahead
-        }
+        // The eye is the camera in both looks. A front-on eye fixed to the phone (what a phone
+        // itself would have to assume) is the same thing in Fold View, but in the gyro 3D view
+        // the camera sits wherever the phone's turn puts it, and a picture projected for the
+        // wrong eye stretches — icons on the moving half balloon. Seen 2026-09-16.
+        let eye = camera
         let eyeInverse = simd_inverse(eye)
         let viewToRef = NSValue(scnMatrix4: SCNMatrix4(eyeInverse * camera))
 

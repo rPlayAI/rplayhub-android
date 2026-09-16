@@ -11,10 +11,10 @@
 //  The timestamps matter. Over Wi-Fi the packets arrive in clumps — a fold's 5° steps land three
 //  or four at a time, tens of ms late — and rendering "the newest value" turns a smooth motion
 //  into stutter-and-catch-up. So the stream keeps a short history of samples keyed by the
-//  SENSOR's clock, estimates the phone→Mac clock offset from the least-delayed recent packet
-//  (the 50 Hz rotation vector refreshes that every window), and answers `hinge(delay:)` and
-//  `orientation(delay:)` by interpolating at "now, minus a small fixed delay" in sensor time —
-//  a jitter buffer, as a video player has. Constant small latency instead of variable jerks.
+//  SENSOR's clock, estimates the phone→Mac clock offset from the least-delayed packet (allowed
+//  to creep up slowly for drift), and answers `hinge()` and `orientation()` by interpolating at
+//  "now, minus the jitter the link shows" in sensor time — a jitter buffer, as a video player
+//  has. The render clock runs at real speed and slews to a changed buffer size; it never jumps.
 //  A jitter line goes to the log every few seconds so the link can be judged in numbers.
 //
 //  The format changed from an untagged 24-byte quaternion on 2026-09-11 when the agent learned
@@ -32,9 +32,13 @@ final class SensorStream {
     private static let tagGyroA: UInt32 = 3
     private static let tagGyroB: UInt32 = 4
     private static let historyLimit = 96
-    /// The clock-offset window: the minimum delay over the current and previous windows is the
-    /// offset, so a burst of late packets never drags it and a drift is followed within 2 s.
-    private static let offsetWindow: TimeInterval = 2
+    /// How fast a clock offset may creep upward, seconds per second. Packets can only arrive late,
+    /// never early, so the smallest delay seen is the offset; letting it rise this slowly follows
+    /// a drift between the two clocks without ever stepping.
+    private static let offsetDrift: TimeInterval = 0.002
+    /// How much faster or slower than real time the render clock may run while it catches up to
+    /// a changed target. 10%: a 150 ms change in the buffer takes 1.5 s and is invisible.
+    private static let slewRate: TimeInterval = 0.10
 
     private struct Sample<T> {
         let stamp: TimeInterval        // sensor clock, seconds
@@ -57,21 +61,17 @@ final class SensorStream {
     // fused rotation vector can stamp differently from a raw gyro — and one offset for all of
     // them would put the hinge's samples in the wrong place on the render clock.
     private struct Clock {
-        var current: TimeInterval?
-        var previous: TimeInterval?
-        var windowStart: TimeInterval = 0
+        var offset: TimeInterval?
+        var lastArrival: TimeInterval = 0
         var delays: [TimeInterval] = []
         /// The 95th-percentile delay beyond the offset over the last logged window — what the
         /// jitter buffer must cover to stay smooth on this link.
         var recentP95: TimeInterval = 0
-        var offset: TimeInterval? {
-            switch (current, previous) {
-            case let (c?, p?): return min(c, p)
-            case let (c?, nil): return c
-            case let (nil, p?): return p
-            default: return nil
-            }
-        }
+        /// The render clock: the sensor time last rendered and the host time it was rendered at.
+        /// It advances with the host and slews toward its target; it never jumps or runs back,
+        /// which is what made the model hop when the buffer resized.
+        var renderSensor: TimeInterval?
+        var renderHost: TimeInterval = 0
     }
     private var clocks: [UInt32: Clock] = [:]
     private var jitterLoggedAt: TimeInterval = 0
@@ -122,11 +122,30 @@ final class SensorStream {
 
     /// `delay` nil means adaptive: the measured p95 jitter plus a margin, between 60 and 250 ms,
     /// so a quiet USB link renders close to live and a bursty Wi-Fi link trades a little latency
-    /// for no freezes.
+    /// for no freezes. The returned time is continuous: see Clock.renderSensor.
     private func renderTimeLocked(tag: UInt32, delay: TimeInterval?) -> TimeInterval? {
-        guard let clock = clocks[tag], let offset = clock.offset else { return nil }
+        guard var clock = clocks[tag], var offset = clock.offset else { return nil }
+        // The sensors share the phone's boot clock in practice; a sensor that has reported little
+        // (the hinge, on change only) borrows the rotation vector's better offset when the two agree.
+        if tag != Self.tagRotation, let rot = clocks[Self.tagRotation]?.offset, abs(rot - offset) < 1 {
+            offset = min(offset, rot)
+        }
+        let now = ProcessInfo.processInfo.systemUptime
         let d = delay ?? min(0.25, max(0.06, clock.recentP95 + 0.03))
-        return ProcessInfo.processInfo.systemUptime - offset - d
+        let target = now - offset - d
+        var t = target
+        if let last = clock.renderSensor {
+            let dt = max(0, now - clock.renderHost)
+            let advanced = last + dt
+            let err = target - advanced
+            if abs(err) < 0.5 {
+                t = max(last, advanced + min(max(err, -Self.slewRate * dt), Self.slewRate * dt))
+            }
+        }
+        clock.renderSensor = t
+        clock.renderHost = now
+        clocks[tag] = clock
+        return t
     }
 
     private static func interpolate<T>(_ history: [Sample<T>], at t: TimeInterval,
@@ -221,12 +240,12 @@ final class SensorStream {
     private func noteArrivalLocked(tag: UInt32, arrival: TimeInterval, stamp: TimeInterval) {
         var clock = clocks[tag] ?? Clock()
         let d = arrival - stamp
-        if arrival - clock.windowStart > Self.offsetWindow {
-            clock.previous = clock.current
-            clock.current = nil
-            clock.windowStart = arrival
+        if let o = clock.offset {
+            clock.offset = min(o + (arrival - clock.lastArrival) * Self.offsetDrift, d)
+        } else {
+            clock.offset = d
         }
-        clock.current = min(clock.current ?? d, d)
+        clock.lastArrival = arrival
         clock.delays.append(d)
         clocks[tag] = clock
 
@@ -238,10 +257,12 @@ final class SensorStream {
                 guard var c = clocks[t], c.delays.count >= 5, let offset = c.offset else { continue }
                 let sorted = c.delays.map { $0 - offset }.sorted()
                 c.recentP95 = sorted[Int(Double(sorted.count) * 0.95)]
-                parts.append(String(format: "%@ p50 %.0f p95 %.0f max %.0f ms (%d)", name,
+                // "buf": how far behind live the render clock actually sits right now.
+                let buf = c.renderSensor.map { (arrival - offset - $0) * 1000 } ?? -1
+                parts.append(String(format: "%@ p50 %.0f p95 %.0f max %.0f ms (%d) buf %.0f", name,
                                     sorted[sorted.count / 2] * 1000,
                                     sorted[Int(Double(sorted.count) * 0.95)] * 1000,
-                                    sorted.last! * 1000, sorted.count))
+                                    sorted.last! * 1000, sorted.count, buf))
                 c.delays.removeAll(keepingCapacity: true)
                 clocks[t] = c
             }
