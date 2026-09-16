@@ -1862,7 +1862,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         tv.activate(displaySize: video.lastHeader?.displaySize ?? CGSize(width: 1080, height: 2400),
                     foldable: foldable)
         if let header = video.lastHeader { tv.apply(header: header) }
-        tv.hingeSource = { [weak self] in self?.session?.sensor?.latestHinge }
+        // 80 ms behind the sensor, interpolated on its own clock: smooth over Wi-Fi jitter.
+        tv.hingeSource = { [weak self] in self?.session?.sensor?.hinge(delay: 0.08) }
         tv.gyroSource = { [weak self] which in self?.session?.sensor?.latestGyro(which) }
         // Name the device and the reason: a log line that says only "fold model" cannot be
         // attributed to a run, which made a two-device check unfalsifiable.
@@ -1887,7 +1888,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             tv.recenter()
             AppBuild.log("twin: using the fake gyro\(axis.isEmpty ? " (scripted)" : " (sweep:\(axis))")")
         } else {
-            tv.orientationSource = { [weak self] in self?.session?.sensor?.latest }
+            tv.orientationSource = { [weak self] in self?.session?.sensor?.orientation(delay: 0.08) }
         }
         twinActive = true
         mirror.setTwinActive(true)

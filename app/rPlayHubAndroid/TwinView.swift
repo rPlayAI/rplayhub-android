@@ -936,16 +936,18 @@ final class TwinView: NSView, SCNSceneRendererDelegate {
         } else if let h = hingeSource?() {
             hingeTarget = min(max(h, 0), 180)
             haveHinge = true
-            if abs(hingeTarget - lastLoggedHinge) >= 1 {
+            // The source is interpolated now, so log every 5° of travel rather than every change.
+            if abs(hingeTarget - lastLoggedHinge) >= 5 {
                 lastLoggedHinge = hingeTarget
                 AppBuild.log(String(format: "fold: hinge %.0f° (shown %.0f°) %@", hingeTarget, hingeShown, renderMode.title))
             }
         } else {
             haveHinge = false
         }
-        // The sensor reports in 5° steps ~20 ms apart: ease toward it so the motion reads as one
-        // sweep. Without a sensor the same ease is the whole animation, slower.
-        let rate: Float = haveHinge ? 30 : 9
+        // The source is already interpolated on the sensor's clock (SensorStream.hinge); a light
+        // ease rounds the corners of its 5° ramps. Without a sensor the ease is the whole
+        // animation, slower.
+        let rate: Float = haveHinge ? 45 : 9
         hingeShown += (hingeTarget - hingeShown) * min(1, Float(dt) * rate)
         if abs(hingeTarget - hingeShown) < 0.05 { hingeShown = hingeTarget }
         let phi = (180 - hingeShown) * .pi / 180          // 0 flat, π shut
