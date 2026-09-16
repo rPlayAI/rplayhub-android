@@ -91,7 +91,7 @@ private:
   void CreateCodec();
   // Deletes the codec if it was created. The codec should not be running when this method is called. Safe to call multiple times.
   void DeleteCodec();
-  void StartCodecUnlocked();  // GUARDED_BY(mutex_)
+  bool StartCodecUnlocked();  // GUARDED_BY(mutex_); false when the encoder is momentarily unavailable (rPlayHub)
   // Stops the codec before deleting if it is running. Safe to call multiple times.
   void StopCodec();
   void StopCodecUnlocked();  // GUARDED_BY(mutex_)
@@ -130,6 +130,7 @@ private:
   Size max_video_resolution_;  // GUARDED_BY(mutex_)
   int32_t video_orientation_;  // GUARDED_BY(mutex_)
   bool codec_running_ = false;  // GUARDED_BY(mutex_)
+  int32_t start_retries_ = 0;  // rPlayHub: consecutive encoder starts refused for resources
   bool codec_stop_pending_ = false;  // GUARDED_BY(mutex_)
   ThreadHandle thread_handle_;
 
