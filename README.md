@@ -223,10 +223,15 @@ Mac's screen and press it — that pose becomes face-on, and every motion after 
 delta from it, heading-corrected so directions stay true. `RPLAYHUB_FAKE_GYRO=1` replaces the
 sensor with scripted poses for verifying exactly that without a hand on the phone.
 
-Gated off by default: enable with **View ▸ 3D Device Twin (Experimental)** (persisted), or
-`RPLAYHUB_TWIN=1` for one launch. The gate also controls the extra agent channel — our agent
-build streams 50 Hz quaternions on a fourth socket only when asked (flag `0x100`; see
-`refs/studio/PROVENANCE.md`).
+On by default (**View ▸ View Screen in 3D**, ⌘3); `RPLAYHUB_TWIN=0` turns it off for one
+launch. The switch also controls the extra agent channel — our agent build streams 50 Hz
+quaternions (and, on a foldable, the hinge angle and both gyroscopes) on a fourth socket only
+when asked (flag `0x100`; see `refs/studio/PROVENANCE.md`).
+
+A foldable gets two hinged halves that follow the real hinge, **View ▸ Fold View** (⇧⌘D) shows
+the fold face-on without the gyroscope, and **View ▸ Fold Look** picks how the moving half is
+drawn: hard cut (as Android does), locked (content fixed in space), or stylized — the iPhone
+Duo look, with the moving half turning to frosted glass as it moves.
 
 ## Platforms
 

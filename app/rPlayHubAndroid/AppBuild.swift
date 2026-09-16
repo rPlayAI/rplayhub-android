@@ -43,12 +43,16 @@ enum AppBuild {
     /// never shows the entry. DMG-only by construction.
     static var emulatorLaunchEnabled: Bool { emulatorHostEnabled && !isSandboxed }
 
+    /// The 3D view. On by default since 2026-09-15 (it was "experimental" behind a menu toggle
+    /// before): `RPLAYHUB_TWIN=0` turns it off for one launch, which also drops the agent's
+    /// sensor channel. The old persisted opt-in is honoured only as an opt-OUT if someone had
+    /// explicitly set it to false.
     static var twinEnabled: Bool {
         get {
             if let env = ProcessInfo.processInfo.environment["RPLAYHUB_TWIN"] {
                 return env == "1" || env.lowercased() == "true"
             }
-            return UserDefaults.standard.bool(forKey: "TwinEnabled")
+            return UserDefaults.standard.object(forKey: "TwinEnabled") as? Bool ?? true
         }
         set { UserDefaults.standard.set(newValue, forKey: "TwinEnabled") }
     }
