@@ -91,6 +91,10 @@ code{background:var(--surface-2); border:1px solid var(--line); border-radius:5p
 .callout.warn .lbl{color:var(--warn)}
 .callout p{margin:5px 0 0}
 .callout p:first-of-type{margin-top:0}
+.shot{margin:18px 0; max-width:74ch}
+.shot img{display:block; width:100%; height:auto; border-radius:11px; border:1px solid var(--line); background:#1b1b1b}
+.shot.narrow{max-width:340px}
+.shot figcaption{color:var(--muted); font-size:13px; margin-top:7px}
 .kv{border:1px solid var(--line); border-radius:11px; overflow:hidden; margin:18px 0; background:var(--surface); max-width:74ch}
 .kv .row{display:grid; grid-template-columns:200px minmax(0,1fr); gap:16px;
   padding:11px 16px; border-top:1px solid var(--line); align-items:baseline}
@@ -275,6 +279,10 @@ your hand and the model turns with it.</p>
 <p>A foldable — Pixel Fold, Galaxy Z Fold and the like — gets <b>two hinged halves that follow
 the real hinge</b>: open the phone and the model opens, shut it and the cover display lights up
 on the outside. Two views and three looks:</p>
+<figure class="shot">
+  <img src="img/fold-steps.png" alt="A Pixel 11 Pro Fold on the Mac in three steps: the cover half lifting, half open with the moving half turned to frosted glass, and flat" loading="lazy">
+  <figcaption>A real Pixel 11 Pro Fold opened in the hand, the Mac following its hinge — Fold View, Stylized look.</figcaption>
+</figure>
 <div class="kv">
   <div class="row"><div class="k">View Screen in 3D</div><div class="v">The gyroscope-tracked twin,
     folding as you fold (<kbd>⌘3</kbd>).</div></div>
@@ -292,9 +300,32 @@ on the outside. Two views and three looks:</p>
 <p>The looks also switch with <kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> while the 3D view has the
 focus. The readout at the top-left (look and hinge angle) fades a few seconds after a change so a
 recording stays clean.</p>
+<p><b>Locked and Stylized draw the fold the way the iPhone Duo does:</b> the picture holds still
+and the glass moves through it, where a Pixel Fold today paints the picture on the glass and lets
+it fold with the panel (that is Hard Cut). Seen straight on, the moving half keeps showing the part
+of the flat screen behind it; the blur toward its edge is what tells the eye the panel is moving.</p>
+<figure class="shot narrow">
+  <img src="img/fold.gif" alt="The fold in motion: the phone opens from shut to flat and closes again, the moving half blurring and turning to glass as it swings" loading="lazy">
+  <figcaption>Open, then close.</figcaption>
+</figure>
 <div class="callout note"><span class="lbl">Tip</span>
 <p>Over Wi-Fi the phone’s sensors arrive in bursts; the twin smooths them with a short buffer, but
 a USB cable gives the steadiest fold and the fastest picture handover between the two displays.</p></div>
+
+<h3>Recording the fold</h3>
+<ol>
+  <li><b>On the phone:</b> Settings ▸ Display ▸ <b>Continue using apps on fold ▸ Always</b>, so shutting
+      the phone does not put it to sleep and bring up the lock screen on the cover. Unlock it before
+      you start.</li>
+  <li><b>On the Mac:</b> View ▸ <b>Fold View</b>, then View ▸ Fold Look ▸ <b>Stylized</b>, and wait for the
+      readout at the top-left to fade.</li>
+  <li>Record with <kbd>⇧⌘5</kbd> ▸ <i>Record Selected Portion</i> over the dark stage only, or the
+      window if you want the app in shot. Move the pointer out of the way.</li>
+  <li><b>Click the app’s title bar once after recording starts.</b> The recording toolbar takes the focus,
+      and macOS draws an inactive window’s switches and tabs grey.</li>
+  <li>Open the phone slowly — about three seconds to flat — hold a moment, and close it just as slowly.
+      The effect is strongest between 90° and 135°.</li>
+</ol>
 </section>
 
 <section id="panels">
@@ -344,6 +375,16 @@ stale connection.</p>
 <p>The stream competes for airtime with everything else on the network. Moving closer to the
 router, using 5&nbsp;GHz, or plugging in USB gives the smoothest picture. A dropped session
 reconnects automatically.</p>
+<h3>Mirroring a foldable drops every time the phone folds</h3>
+<p>Update to rPlayHub Android 1.1.1 or later. On 1.1.0 the on-device agent gave up when the phone’s
+video encoder was still busy from the previous panel, which happens at almost every fold once the
+phone is warm; the app then reported “Mirroring keeps failing.”</p>
+<h3>The picture flashes dark just before a foldable shuts</h3>
+<p>That is the phone’s inner display switching itself off on the way to the cover, shown faithfully. It
+is not the app, and it is the same on the phone itself.</p>
+<h3>Switches and tabs look grey in a screen recording</h3>
+<p>The window was not in front while recording — macOS draws controls without their colour in an
+inactive window. Click the app’s title bar once after starting the recording.</p>
 <h3>The phone’s auto-rotate tile turned itself off</h3>
 <p>The toolbar’s Rotate button did that — a forced orientation requires it. Device ▸
 <b>Follow Device Rotation</b> restores it, and so does ending the session.</p>
