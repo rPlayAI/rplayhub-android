@@ -47,7 +47,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var twin: TwinView?
     private var twinActive = false
     private var twinDemo = false
-    private var twinGateItem: NSMenuItem?
     private var foldViewItem: NSMenuItem?
     private var foldLookItems: [NSMenuItem] = []
     /// Set by View ▸ Show Fold in 3D: build the hinged model even if the device never said it
@@ -1775,22 +1774,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         for item in foldLookItems { item.state = item.tag == mode.rawValue ? .on : .off }
     }
 
-    @objc private func toggleTwinGate() {
-        AppBuild.twinEnabled.toggle()
-        let enabled = AppBuild.twinEnabled
-        twinGateItem?.state = enabled ? .on : .off
-        twinOpenItem?.isHidden = !enabled
-        twinDemoItem?.isHidden = !enabled
-        twinFacingMeItem?.isHidden = !enabled
-        twinBackImageItem?.isHidden = !enabled
-        mirror.setTwinVisible(enabled)
-        if !enabled, twinActive { exitTwin() }
-        AppBuild.log("3D device twin \(enabled ? "enabled" : "disabled")")
-        if enabled, session != nil, session?.sensor == nil {
-            window.subtitle = "reconnect to feed the 3D twin orientation"
-        }
-    }
-
     /// One-click demo: enter 3D, drive the orientation through all poses on a loop, and walk the
     /// device through some nice live content (a website, then a video) so the rotating twin shows
     /// a real screen. For recording a demo reel.
@@ -2397,11 +2380,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         backImage.target = self
         backImage.isHidden = !AppBuild.twinEnabled
         twinBackImageItem = backImage
-        let twinToggle = viewMenu.addItem(withTitle: "3D Device Twin (Experimental)",
-                                          action: #selector(toggleTwinGate), keyEquivalent: "")
-        twinToggle.target = self
-        twinToggle.state = AppBuild.twinEnabled ? .on : .off
-        twinGateItem = twinToggle
         viewMenu.addItem(.separator())
         // The fold in 3D, on demand. The twin picks the fold model up on its own for a device
         // that reports its postures, but this asks for it outright — which is how you see the
