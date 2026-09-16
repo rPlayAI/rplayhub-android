@@ -36,7 +36,7 @@ ends. Here Google's device agent is **Apache 2.0 and published**, so only the ho
 
 | | |
 |---|---|
-| **macOS 13+** | [rPlayHub Android 1.0](https://github.com/rPlayAI/rplayhub-android/releases/tag/v1.0) — notarized DMG, adb and the agents bundled |
+| **macOS 13+** | [rPlayHub Android 1.1.2](https://github.com/rPlayAI/rplayhub-android/releases/tag/v1.1.2) — notarized DMG, adb and the agents bundled |
 | **Linux x86_64** (Ubuntu 22.04+, Debian 12+) | [rPlayHub Android for Linux 1.0.1](https://github.com/rPlayAI/rplayhub-android/releases/tag/linux-v1.0.1) — `.deb`; `sudo apt install ./rplayhub-android_1.0.1-1_amd64.deb` |
 | **Raspberry Pi** (arm64) | next — the Linux client builds on the Pi today, see [`doc/LINUX-AND-RPI.md`](doc/LINUX-AND-RPI.md); a package follows |
 
@@ -113,9 +113,9 @@ draggable thumbnail.
 agent cannot reach because it needs API 26 — mirror through a small agent of our own (one Java
 file, `legacy-agent/`), verified on an API 22 car unit.
 
-**The 3D device twin** (experimental, gated). A 3D phone that turns as the real one turns,
-driven by the device's rotation sensor, with the mirror texture-mapped onto its glass. See
-below.
+**The 3D device twin, and foldables.** A 3D phone that turns as the real one turns, driven by
+the device's rotation sensor, with the mirror texture-mapped onto its glass. A foldable opens
+and shuts with its real hinge — and can draw the fold the iPhone Duo way. See below.
 
 ## Emulators and Android VMs
 
@@ -205,7 +205,7 @@ Fixed in two layers: our agent build ends the stream on a video write timeout (s
 `refs/studio/PROVENANCE.md`), and the host validates every packet header and auto-reconnects on
 desync or mid-stream agent exit.
 
-## The 3D device twin (experimental)
+## The 3D device twin and foldables
 
 ![The 3D device twin: the phone as a 3D model, the live mirror mapped onto its glass](doc/rPlayHub-android-3d.png)
 
@@ -228,10 +228,30 @@ launch. The switch also controls the extra agent channel — our agent build str
 quaternions (and, on a foldable, the hinge angle and both gyroscopes) on a fourth socket only
 when asked (flag `0x100`; see `refs/studio/PROVENANCE.md`).
 
-A foldable gets two hinged halves that follow the real hinge, **View ▸ Fold View** (⇧⌘D) shows
-the fold face-on without the gyroscope, and **View ▸ Fold Look** picks how the moving half is
-drawn: hard cut (as Android does), locked (content fixed in space), or stylized — the iPhone
-Duo look, with the moving half turning to frosted glass as it moves.
+### Foldables: the fold, drawn the iPhone Duo way
+
+![A Pixel 11 Pro Fold on the Mac in three steps: the cover half lifting, half open with the moving half turned to frosted glass, and flat](doc/rPlayHub-android-fold-steps.png)
+
+*A real Pixel 11 Pro Fold, opened in the hand; the Mac follows its hinge sensor. Stylized look, Fold View.*
+
+![The fold in motion: the phone opens from shut to flat and closes again, the moving half blurring and turning to glass as it swings](doc/rPlayHub-android-fold.gif)
+
+*Open, then close. (Full-quality clip: [download the mp4](doc/rPlayHub-android-fold.mp4).)*
+
+A foldable gets two hinged halves that follow the real hinge: open the phone and the model
+opens, shut it and the cover display lights up on the outside. **View ▸ Fold View** (⇧⌘D)
+shows the fold face-on without the gyroscope, nothing to calibrate — the view for a recording.
+**View ▸ Fold Look** (or keys 1/2/3) picks how the moving half is drawn:
+
+- **Hard Cut** — what a Pixel Fold does today: the picture is painted on the glass and folds
+  with it, and jumps from cover to inner screen at a set angle.
+- **Locked** — the picture stays still in space and the glass moves through it.
+- **Stylized** — the iPhone Duo look: locked, plus a blur and darkening that grow toward the
+  moving edge, and the moving half turning to frosted glass while it swings.
+
+Tested on a Pixel 11 Pro Fold; any foldable that reports a hinge angle or its postures gets the
+same treatment. Over Wi‑Fi the sensors arrive in bursts and are smoothed with a short buffer; a
+USB cable gives the steadiest fold.
 
 ## Platforms
 
