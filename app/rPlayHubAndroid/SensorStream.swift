@@ -52,13 +52,29 @@ final class SensorStream {
     private var packets = 0
     private var quatHistory: [Sample<simd_quatf>] = []
     private var hingeHistory: [Sample<Float>] = []
-    // Clock offset: host uptime − sensor stamp, as small as any packet has shown it lately.
-    private var offsetCurrent: TimeInterval?
-    private var offsetPrevious: TimeInterval?
-    private var offsetWindowStart: TimeInterval = 0
-    // Jitter: each packet's delay beyond the offset, for the periodic log line.
-    private var delays: [TimeInterval] = []
-    private var delaysSince: TimeInterval = 0
+    // Clock offset per sensor tag: host uptime − sensor stamp, as small as any packet of that
+    // tag has shown it lately. Per tag, because the sensors need not share a time base — a
+    // fused rotation vector can stamp differently from a raw gyro — and one offset for all of
+    // them would put the hinge's samples in the wrong place on the render clock.
+    private struct Clock {
+        var current: TimeInterval?
+        var previous: TimeInterval?
+        var windowStart: TimeInterval = 0
+        var delays: [TimeInterval] = []
+        /// The 95th-percentile delay beyond the offset over the last logged window — what the
+        /// jitter buffer must cover to stay smooth on this link.
+        var recentP95: TimeInterval = 0
+        var offset: TimeInterval? {
+            switch (current, previous) {
+            case let (c?, p?): return min(c, p)
+            case let (c?, nil): return c
+            case let (nil, p?): return p
+            default: return nil
+            }
+        }
+    }
+    private var clocks: [UInt32: Clock] = [:]
+    private var jitterLoggedAt: TimeInterval = 0
 
     /// The newest device orientation, or nil before the first packet (or on a device with no
     /// rotation vector sensor — the channel simply stays silent). Any thread.
@@ -91,38 +107,35 @@ final class SensorStream {
     /// between the readings on either side. The sensor reports on change only, so a long gap
     /// before a reading means the angle held until just before it: the ramp into a reading is
     /// capped at 100 ms rather than stretched across the gap. Any thread.
-    func hinge(delay: TimeInterval) -> Float? {
+    func hinge(delay: TimeInterval? = nil) -> Float? {
         lock.lock(); defer { lock.unlock() }
-        guard let t = renderTimeLocked(delay: delay) else { return latestHingeDegrees }
+        guard let t = renderTimeLocked(tag: Self.tagHinge, delay: delay) else { return latestHingeDegrees }
         return Self.interpolate(hingeHistory, at: t) { a, b, f in a + (b - a) * f }
     }
 
     /// The orientation `delay` seconds ago in sensor time, slerped between neighbours. Any thread.
-    func orientation(delay: TimeInterval) -> simd_quatf? {
+    func orientation(delay: TimeInterval? = nil) -> simd_quatf? {
         lock.lock(); defer { lock.unlock() }
-        guard let t = renderTimeLocked(delay: delay) else { return latestQuat }
+        guard let t = renderTimeLocked(tag: Self.tagRotation, delay: delay) else { return latestQuat }
         return Self.interpolate(quatHistory, at: t) { a, b, f in simd_slerp(a, b, f) }
     }
 
-    private func renderTimeLocked(delay: TimeInterval) -> TimeInterval? {
-        guard let offset = clockOffsetLocked() else { return nil }
-        return ProcessInfo.processInfo.systemUptime - offset - delay
-    }
-
-    private func clockOffsetLocked() -> TimeInterval? {
-        switch (offsetCurrent, offsetPrevious) {
-        case let (c?, p?): return min(c, p)
-        case let (c?, nil): return c
-        case let (nil, p?): return p
-        default: return nil
-        }
+    /// `delay` nil means adaptive: the measured p95 jitter plus a margin, between 60 and 250 ms,
+    /// so a quiet USB link renders close to live and a bursty Wi-Fi link trades a little latency
+    /// for no freezes.
+    private func renderTimeLocked(tag: UInt32, delay: TimeInterval?) -> TimeInterval? {
+        guard let clock = clocks[tag], let offset = clock.offset else { return nil }
+        let d = delay ?? min(0.25, max(0.06, clock.recentP95 + 0.03))
+        return ProcessInfo.processInfo.systemUptime - offset - d
     }
 
     private static func interpolate<T>(_ history: [Sample<T>], at t: TimeInterval,
                                        _ mix: (T, T, Float) -> T) -> T? {
-        guard let last = history.last else { return nil }
-        if t >= last.stamp { return last.value }
-        guard let first = history.first, t > first.stamp else { return history.first?.value }
+        guard let last = history.last, let first = history.first else { return nil }
+        // Beyond the newest sample: hold it. BEFORE the oldest: the render clock and this
+        // sensor's stamps disagree (or the history is one packet old) — the newest value is the
+        // honest fallback, never the oldest, which would freeze the model in the past.
+        if t >= last.stamp || t <= first.stamp { return last.value }
         // The neighbours: the last sample at or before t, and the one after it.
         var lo = 0, hi = history.count - 1
         while hi - lo > 1 {
@@ -170,7 +183,7 @@ final class SensorStream {
             }
             let stamp = TimeInterval(stampNs) / 1e9
             lock.lock()
-            noteArrivalLocked(arrival: arrival, stamp: stamp)
+            noteArrivalLocked(tag: tag, arrival: arrival, stamp: stamp)
             switch tag {
             case Self.tagRotation:
                 let q = simd_quatf(vector: v)
@@ -201,26 +214,38 @@ final class SensorStream {
         if history.count > historyLimit { history.removeFirst(history.count - historyLimit) }
     }
 
-    /// Every packet refines the clock offset and feeds the jitter figure. The log line reads
-    /// "sensor: jitter p50 12 ms p95 41 ms max 90 ms over 250 pkts": what the link adds on top
-    /// of its best case. A quiet link shows single digits; Wi-Fi power save shows bursts.
-    private func noteArrivalLocked(arrival: TimeInterval, stamp: TimeInterval) {
+    /// Every packet refines its sensor's clock offset and feeds the jitter figure. The log line
+    /// reads "sensor: jitter rot p50 12 p95 41 max 90 ms · hinge p50 …": what the link adds on
+    /// top of its best case, per sensor. A quiet link shows single digits; Wi-Fi power save shows
+    /// bursts; a sensor whose numbers look nothing like the others' has its own time base.
+    private func noteArrivalLocked(tag: UInt32, arrival: TimeInterval, stamp: TimeInterval) {
+        var clock = clocks[tag] ?? Clock()
         let d = arrival - stamp
-        if arrival - offsetWindowStart > Self.offsetWindow {
-            offsetPrevious = offsetCurrent
-            offsetCurrent = nil
-            offsetWindowStart = arrival
+        if arrival - clock.windowStart > Self.offsetWindow {
+            clock.previous = clock.current
+            clock.current = nil
+            clock.windowStart = arrival
         }
-        offsetCurrent = min(offsetCurrent ?? d, d)
-        delays.append(d)
-        if delaysSince == 0 { delaysSince = arrival }
-        if arrival - delaysSince > 5, delays.count >= 20, let offset = clockOffsetLocked() {
-            let sorted = delays.map { $0 - offset }.sorted()
-            let p50 = sorted[sorted.count / 2], p95 = sorted[Int(Double(sorted.count) * 0.95)]
-            AppBuild.log(String(format: "sensor: jitter p50 %.0f ms  p95 %.0f ms  max %.0f ms  over %d pkts",
-                                p50 * 1000, p95 * 1000, sorted.last! * 1000, sorted.count))
-            delays.removeAll(keepingCapacity: true)
-            delaysSince = arrival
+        clock.current = min(clock.current ?? d, d)
+        clock.delays.append(d)
+        clocks[tag] = clock
+
+        if jitterLoggedAt == 0 { jitterLoggedAt = arrival }
+        if arrival - jitterLoggedAt > 5 {
+            jitterLoggedAt = arrival
+            var parts: [String] = []
+            for (t, name) in [(Self.tagRotation, "rot"), (Self.tagHinge, "hinge"), (Self.tagGyroA, "gyroA"), (Self.tagGyroB, "gyroB")] {
+                guard var c = clocks[t], c.delays.count >= 5, let offset = c.offset else { continue }
+                let sorted = c.delays.map { $0 - offset }.sorted()
+                c.recentP95 = sorted[Int(Double(sorted.count) * 0.95)]
+                parts.append(String(format: "%@ p50 %.0f p95 %.0f max %.0f ms (%d)", name,
+                                    sorted[sorted.count / 2] * 1000,
+                                    sorted[Int(Double(sorted.count) * 0.95)] * 1000,
+                                    sorted.last! * 1000, sorted.count))
+                c.delays.removeAll(keepingCapacity: true)
+                clocks[t] = c
+            }
+            if !parts.isEmpty { AppBuild.log("sensor: jitter " + parts.joined(separator: " · ")) }
         }
     }
 }
