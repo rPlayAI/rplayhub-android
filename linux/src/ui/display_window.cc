@@ -11,6 +11,12 @@
 
 #include "window_effects.h"
 
+#ifdef _WIN32
+#include <windows.h>
+#include <dwmapi.h>
+#include <SDL2/SDL_syswm.h>
+#endif
+
 #ifdef RPLAYHUB_HAVE_X11
 #include <SDL2/SDL_syswm.h>
 #include <X11/Xlib.h>
@@ -33,7 +39,10 @@ DisplayWindow::DisplayWindow(int32_t display_id, const std::string& title, int w
     // "Naked" like the Mac's pop-out: no frame, rounded corners where the platform allows,
     // dragged by its top strip.
     // Hidden until setChrome() has sized it with its margins, so it never shows twice.
-    const Uint32 flags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_BORDERLESS | SDL_WINDOW_OPENGL | SDL_WINDOW_HIDDEN;
+    Uint32 flags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_BORDERLESS | SDL_WINDOW_HIDDEN;
+#ifdef RPLAYHUB_HAVE_X11
+    flags |= SDL_WINDOW_OPENGL;
+#endif
     const std::string argb_visual = argbVisualId();
     // First with the ARGB visual, then, if the driver will not render to it, a plain window.
     for (int attempt = 0; attempt < 2 && !renderer_; ++attempt) {
@@ -55,6 +64,19 @@ DisplayWindow::DisplayWindow(int32_t display_id, const std::string& title, int w
         }
         argb_ = argb;
     }
+#ifdef _WIN32
+    if (window_) {
+        SDL_SysWMinfo wmInfo;
+        SDL_VERSION(&wmInfo.version);
+        if (SDL_GetWindowWMInfo(window_, &wmInfo) && wmInfo.subsystem == SDL_SYSWM_WINDOWS) {
+            HWND hwnd = wmInfo.info.win.window;
+            MARGINS margins = { -1, -1, -1, -1 };
+            if (SUCCEEDED(DwmExtendFrameIntoClientArea(hwnd, &margins))) {
+                argb_ = true;
+            }
+        }
+    }
+#endif
     if (!window_) return;
     SDL_SetWindowHitTest(window_, &DisplayWindow::hitTest, this);
 
@@ -124,8 +146,11 @@ SDL_HitTestResult DisplayWindow::hitTest(SDL_Window* win, const SDL_Point* pt, v
     if (b) return SDL_HITTEST_RESIZE_BOTTOM;
     if (l) return SDL_HITTEST_RESIZE_LEFT;
     if (r) return SDL_HITTEST_RESIZE_RIGHT;
-    // The traffic lights at the top-left take the click; the rest of the title strip drags.
-    if (pt->y < self->titleBarHeight()) return pt->x < 90.0f * s ? SDL_HITTEST_NORMAL : SDL_HITTEST_DRAGGABLE;
+    // The traffic lights at the top-left and pin button at top-right take the click; the rest of the title strip drags.
+    if (pt->y < self->titleBarHeight()) {
+        if (pt->x < 90.0f * s || pt->x >= w - 44.0f * s) return SDL_HITTEST_NORMAL;
+        return SDL_HITTEST_DRAGGABLE;
+    }
     return SDL_HITTEST_NORMAL;
 }
 
@@ -627,15 +652,15 @@ float DisplayWindow::updateChromeAlpha(int win_w, int win_h) {
     // Near the phone itself, not the window (whose margins are invisible while bare)
     const int bx = wx + (framed_ ? grow_dx_ : 0), by = wy + (framed_ ? grow_dy_ : 0);
     const int bw = framed_ ? bare_w_ : win_w, bh = framed_ ? bare_h_ : win_h;
-    const bool near = gx >= bx - reach && gx < bx + bw + reach && gy >= by - reach && gy < by + bh + reach;
+    const bool pointer_near = gx >= bx - reach && gx < bx + bw + reach && gy >= by - reach && gy < by + bh + reach;
     // A touch in progress keeps the view where it is.
-    const float target = (near || touch_down_) ? 1.0f : 0.0f;
+    const float target = (pointer_near || touch_down_) ? 1.0f : 0.0f;
     if (std::getenv("RPLAYHUB_INPUT_DEBUG")) {
         static int last_near = -1;
-        if (static_cast<int>(near) != last_near) {
-            last_near = near;
+        if (static_cast<int>(pointer_near) != last_near) {
+            last_near = pointer_near;
             std::cerr << "display window " << display_id_ << ": pointer " << gx << "," << gy << " phone box " << bx << "," << by
-                      << " " << bw << "x" << bh << " -> " << (near ? "near" : "away") << "\n";
+                      << " " << bw << "x" << bh << " -> " << (pointer_near ? "near" : "away") << "\n";
         }
     }
     // The bars take input as soon as they start coming in, and give it back once gone.
@@ -732,6 +757,18 @@ void DisplayWindow::renderChrome(int win_w, int win_h, int out_w, int out_h) {
         ImVec2 sz = ui_font_bold_->CalcTextSizeA(title_px, FLT_MAX, 0.0f, full.c_str());
         dl->AddText(ui_font_bold_, title_px, ImVec2(84.0f * s, (top_h - sz.y) * 0.5f),
                     alpha(50, 50, 54, 255), full.c_str());
+
+        // Pin on Top icon button at the top-right
+        const float pin_sz = 26.0f * s;
+        const ImVec2 pin_pos(W - pin_sz - 12.0f * s, (top_h - pin_sz) * 0.5f);
+        ImGui::SetCursorScreenPos(pin_pos);
+        if (ImGui::InvisibleButton("##PopoutPin", ImVec2(pin_sz, pin_sz))) {
+            setPinned(!pinned());
+        }
+        const bool pin_hover = ImGui::IsItemHovered();
+        if (pin_hover) ImGui::SetTooltip("%s", pinned() ? "Unpin Window" : "Pin Window on Top");
+        ImU32 pin_col = pinned() ? alpha(0, 122, 255, 255) : pin_hover ? alpha(28, 28, 30, 255) : alpha(142, 142, 147, 255);
+        Icons::drawPin(dl, ImVec2(pin_pos.x + 4.0f * s, pin_pos.y + 4.0f * s), 18.0f * s, pin_col);
     }
 
     // ---- stage: the picture, easing from the whole window into the chassis ----

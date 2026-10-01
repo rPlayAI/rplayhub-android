@@ -9,7 +9,10 @@ extern "C" {
 #include <cstring>
 #include <cstdlib>
 #include <iostream>
+#include <cstdio>
+#ifndef _WIN32
 #include <unistd.h>
+#endif
 
 namespace rplayhub {
 
@@ -174,7 +177,7 @@ void StreamRecorder::closeFile(bool keep) {
     fmt_ = nullptr;
     stream_ = nullptr;
     header_written_ = false;
-    if (!keep && !path_.empty()) unlink(path_.c_str());
+    if (!keep && !path_.empty()) std::remove(path_.c_str());
 }
 
 bool StreamRecorder::isRecording() const { std::lock_guard<std::mutex> lock(mutex_); return fmt_ != nullptr; }

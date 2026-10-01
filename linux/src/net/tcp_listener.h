@@ -23,13 +23,13 @@ public:
     void close();
 
     uint16_t getPort() const { return port_; }
-    int getFd() const { return fd_; }
+    intptr_t getFd() const { return fd_; }
 
     // Accept an incoming connection with timeout in milliseconds
     bool accept(TCPSocket& out_socket, int timeout_ms = 20000);
 
 private:
-    int fd_ = -1;
+    intptr_t fd_ = -1;
     uint16_t port_ = 0;
 };
 

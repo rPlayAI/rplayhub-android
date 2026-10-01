@@ -7,6 +7,9 @@ linux/build/
 linux/build-*/
 linux/third_party/
 imgui.ini
+*.exe
+*.dll
+/fonts/
 
 # Xcode
 *.xcuserdatad/

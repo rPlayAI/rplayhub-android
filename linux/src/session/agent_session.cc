@@ -8,7 +8,11 @@
 #include <chrono>
 #include <cstdlib>
 #include <sys/stat.h>
+#ifndef _WIN32
 #include <unistd.h>
+#else
+#include <windows.h>
+#endif
 
 namespace rplayhub {
 
@@ -24,13 +28,28 @@ std::string AgentSession::findAgentDirectory() {
     }
 
     std::vector<std::string> candidates = {
+        "agent",
         "build/agent",
         "../build/agent",
         "../../build/agent"
     };
-    // Installed (the .deb): next to the binary under share/, so no working directory is assumed.
+    // Installed (the .deb or Windows layout): next to the binary or under build/agent
     {
         char buf[4096];
+#ifdef _WIN32
+        DWORD n = GetModuleFileNameA(NULL, buf, sizeof(buf));
+        if (n > 0 && n < sizeof(buf)) {
+            std::string exe(buf);
+            for (char& ch : exe) if (ch == '\\') ch = '/';
+            size_t slash = exe.rfind('/');
+            if (slash != std::string::npos) {
+                std::string dir = exe.substr(0, slash);
+                candidates.push_back(dir + "/agent");
+                candidates.push_back(dir + "/build/agent");
+                candidates.push_back(dir + "/../build/agent");
+            }
+        }
+#else
         ssize_t n = ::readlink("/proc/self/exe", buf, sizeof(buf) - 1);
         if (n > 0) {
             buf[n] = '\0';
@@ -42,6 +61,7 @@ std::string AgentSession::findAgentDirectory() {
                 candidates.push_back(dir + "/../build/agent");
             }
         }
+#endif
     }
 
     for (const auto& c : candidates) {

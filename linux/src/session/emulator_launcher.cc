@@ -6,24 +6,56 @@
 #include <csignal>
 #include <cstdlib>
 #include <cstring>
-#include <dirent.h>
 #include <fcntl.h>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <sstream>
+
+#ifdef _WIN32
+#include <windows.h>
+#include <direct.h>
+#include <io.h>
+#define access _access
+#define X_OK 0
+#else
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
+#endif
+
+namespace fs = std::filesystem;
 
 namespace rplayhub {
 
 namespace {
 std::string homeDir() {
+#ifdef _WIN32
+    const char* h = std::getenv("USERPROFILE");
+    if (h && *h) return h;
+    const char* drive = std::getenv("HOMEDRIVE");
+    const char* path = std::getenv("HOMEPATH");
+    if (drive && path) return std::string(drive) + path;
+    return ".";
+#else
     const char* h = std::getenv("HOME");
     return h ? h : ".";
+#endif
 }
-bool isExecutable(const std::string& p) { return ::access(p.c_str(), X_OK) == 0; }
-bool isDir(const std::string& p) { struct stat st{}; return stat(p.c_str(), &st) == 0 && S_ISDIR(st.st_mode); }
+
+bool isExecutable(const std::string& p) {
+#ifdef _WIN32
+    return fs::is_regular_file(p) || fs::is_regular_file(p + ".exe");
+#else
+    return ::access(p.c_str(), X_OK) == 0;
+#endif
+}
+
+bool isDir(const std::string& p) {
+    std::error_code ec;
+    return fs::is_directory(p, ec);
+}
+
 std::string trim(std::string s) {
     while (!s.empty() && (s.back() == '\n' || s.back() == '\r' || s.back() == ' ' || s.back() == '\t')) s.pop_back();
     size_t i = 0;
@@ -49,7 +81,13 @@ std::string EmulatorLauncher::sdkRoot() {
         const char* v = std::getenv(var);
         if (v && *v && isDir(v)) return v;
     }
-    for (const std::string& cand : {homeDir() + "/Android/Sdk", homeDir() + "/android-sdk", std::string("/opt/android-sdk")}) {
+#ifdef _WIN32
+    const char* localapp = std::getenv("LOCALAPPDATA");
+    if (localapp && *localapp && isDir(std::string(localapp) + "/Android/Sdk")) {
+        return std::string(localapp) + "/Android/Sdk";
+    }
+#endif
+    for (const std::string& cand : {homeDir() + "/Android/Sdk", homeDir() + "/android-sdk", std::string("/opt/android-sdk"), homeDir() + "/AppData/Local/Android/Sdk"}) {
         if (isDir(cand)) return cand;
     }
     return "";
@@ -58,6 +96,10 @@ std::string EmulatorLauncher::sdkRoot() {
 std::string EmulatorLauncher::emulatorBinary() {
     std::string root = sdkRoot();
     if (root.empty()) return "";
+#ifdef _WIN32
+    std::string bin_exe = root + "/emulator/emulator.exe";
+    if (fs::is_regular_file(bin_exe)) return bin_exe;
+#endif
     std::string bin = root + "/emulator/emulator";
     return isExecutable(bin) ? bin : "";
 }
@@ -71,10 +113,11 @@ std::string EmulatorLauncher::avdHome() {
 std::vector<Avd> EmulatorLauncher::list() {
     std::vector<Avd> avds;
     std::string home = avdHome();
-    DIR* dir = opendir(home.c_str());
-    if (!dir) return avds;
-    while (dirent* e = readdir(dir)) {
-        std::string file = e->d_name;
+    std::error_code ec;
+    if (!fs::is_directory(home, ec)) return avds;
+    for (const auto& entry : fs::directory_iterator(home, ec)) {
+        if (ec) break;
+        std::string file = entry.path().filename().string();
         if (file.size() < 5 || file.compare(file.size() - 4, 4, ".ini") != 0) continue;
         std::string name = file.substr(0, file.size() - 4);
         auto pointer = iniValues(home + "/" + file);
@@ -97,7 +140,6 @@ std::vector<Avd> EmulatorLauncher::list() {
         }
         avds.push_back(a);
     }
-    closedir(dir);
     std::sort(avds.begin(), avds.end(), [](const Avd& x, const Avd& y) {
         std::string a = x.display_name, b = y.display_name;
         std::transform(a.begin(), a.end(), a.begin(), ::tolower);
@@ -114,20 +156,27 @@ std::map<std::string, std::string> EmulatorLauncher::running() {
     if (const char* rt = std::getenv("XDG_RUNTIME_DIR")) if (*rt) dirs.push_back(std::string(rt) + "/avd/running");
     dirs.push_back(homeDir() + "/.android/avd/running");
     for (const auto& d : dirs) {
-        DIR* dir = opendir(d.c_str());
-        if (!dir) continue;
-        while (dirent* e = readdir(dir)) {
-            std::string file = e->d_name;
+        std::error_code ec;
+        if (!fs::is_directory(d, ec)) continue;
+        for (const auto& entry : fs::directory_iterator(d, ec)) {
+            if (ec) break;
+            std::string file = entry.path().filename().string();
             if (file.rfind("pid_", 0) != 0 || file.size() < 9 || file.compare(file.size() - 4, 4, ".ini") != 0) continue;
             int pid = std::atoi(file.substr(4, file.size() - 8).c_str());
-            if (pid <= 0 || (kill(pid, 0) != 0 && errno != EPERM)) continue;   // stale file
+            if (pid <= 0) continue;
+#ifdef _WIN32
+            HANDLE hProc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, (DWORD)pid);
+            if (!hProc) continue;
+            CloseHandle(hProc);
+#else
+            if (kill(pid, 0) != 0 && errno != EPERM) continue;   // stale file
+#endif
             auto v = iniValues(d + "/" + file);
             // avd.id is the launch name; avd.name is the display name.
             std::string name = v.count("avd.id") ? v["avd.id"] : v["avd.name"];
             if (name.empty() || !v.count("port.serial")) continue;
             result[name] = "emulator-" + v["port.serial"];
         }
-        closedir(dir);
     }
     return result;
 }
@@ -142,8 +191,8 @@ int EmulatorLauncher::freeConsolePort() {
 
 std::string EmulatorLauncher::logPath(const std::string& avd_name) {
     std::string dir = homeDir() + "/.cache/rplayhub-android";
-    ::mkdir((homeDir() + "/.cache").c_str(), 0755);
-    ::mkdir(dir.c_str(), 0755);
+    std::error_code ec;
+    fs::create_directories(dir, ec);
     return dir + "/emulator-" + avd_name + ".log";
 }
 
@@ -183,6 +232,19 @@ std::string EmulatorLauncher::launch(const Avd& avd, std::string* out_err) {
     std::vector<std::string> args = {binary, "-avd", avd.name, "-port", port_s, "-no-window", "-no-snapshot"};
     if (avd.gpu_mode == "auto") { args.push_back("-gpu"); args.push_back("swiftshader_indirect"); }   // headless: software GL
 
+#ifdef _WIN32
+    std::string cmd = "\"" + binary + "\" -avd " + avd.name + " -port " + port_s + " -no-window -no-snapshot";
+    if (avd.gpu_mode == "auto") cmd += " -gpu swiftshader_indirect";
+    STARTUPINFOA si{};
+    si.cb = sizeof(si);
+    PROCESS_INFORMATION pi{};
+    if (!CreateProcessA(NULL, cmd.data(), NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi)) {
+        if (out_err) *out_err = "CreateProcess failed to launch emulator";
+        return "";
+    }
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+#else
     pid_t pid = fork();
     if (pid < 0) {
         if (out_err) *out_err = std::string("fork: ") + strerror(errno);
@@ -202,6 +264,7 @@ std::string EmulatorLauncher::launch(const Avd& avd, std::string* out_err) {
         execv(binary.c_str(), argv.data());
         _exit(127);
     }
+#endif
     std::cerr << "emulator: started " << avd.name << " as emulator-" << port << " (log: " << log << ")\n";
     return "emulator-" + port_s;
 }
@@ -264,8 +327,8 @@ std::string EmulatorLauncher::avdNameOf(const std::string& serial) {
 bool EmulatorLauncher::shutdown(const std::string& serial, std::string* out_err) {
     TCPSocket sock;
     if (!openConsole(serial, sock, out_err)) return false;
-    const char* kill = "kill\n";
-    sock.writeAll(kill, strlen(kill));
+    const char* kill_cmd = "kill\n";
+    sock.writeAll(kill_cmd, strlen(kill_cmd));
     consoleReply(sock);
     return true;
 }

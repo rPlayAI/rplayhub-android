@@ -24,12 +24,56 @@
 #include <ctime>
 #include <sys/stat.h>
 #include <atomic>
+
+#ifdef _WIN32
+#include <windows.h>
+#include <dwmapi.h>
+#include <SDL2/SDL_syswm.h>
+#include <direct.h>
+#include <io.h>
+#define access _access
+#define mkdir(d, m) _mkdir(d)
+#define R_OK 4
+#define W_OK 2
+#define popen _popen
+#define pclose _pclose
+#ifndef WIFEXITED
+#define WIFEXITED(x) 1
+#endif
+#ifndef WEXITSTATUS
+#define WEXITSTATUS(x) (x)
+#endif
+#else
 #include <unistd.h>
 #include <sys/wait.h>
+#endif
 
 namespace {
 std::atomic<bool> g_quit_requested{false};
 void onQuitSignal(int) { g_quit_requested.store(true); }
+
+static std::string getExeDir() {
+    char buf[4096];
+#ifdef _WIN32
+    DWORD n = GetModuleFileNameA(NULL, buf, sizeof(buf));
+    if (n > 0 && n < sizeof(buf)) {
+        std::string exe(buf);
+        for (char& ch : exe) if (ch == '\\') ch = '/';
+        size_t slash = exe.rfind('/');
+        if (slash != std::string::npos) return exe.substr(0, slash);
+    }
+    return "";
+#else
+    ssize_t n = ::readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+    if (n > 0) {
+        buf[n] = '\0';
+        std::string exe(buf);
+        size_t slash = exe.rfind('/');
+        if (slash != std::string::npos) return exe.substr(0, slash);
+    }
+    return "";
+#endif
+}
 } // namespace
 
 namespace rplayhub {
@@ -97,8 +141,13 @@ bool GuiApp::init() {
         if (argb) SDL_SetHint(SDL_HINT_VIDEO_X11_WINDOW_VISUALID, argb_visual.c_str());
 
         SDL_WindowFlags window_flags = (SDL_WindowFlags)(
+#ifdef _WIN32
+            SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI |
+            (system_titlebar_ ? 0 : SDL_WINDOW_BORDERLESS)
+#else
             SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI |
             (system_titlebar_ ? 0 : (SDL_WINDOW_BORDERLESS | (argb ? SDL_WINDOW_OPENGL : 0)))
+#endif
         );
 
         window_ = SDL_CreateWindow(
@@ -120,6 +169,18 @@ bool GuiApp::init() {
         }
         argb_ = argb;
     }
+
+#ifdef _WIN32
+    if (window_) {
+        SDL_SysWMinfo wmInfo;
+        SDL_VERSION(&wmInfo.version);
+        if (SDL_GetWindowWMInfo(window_, &wmInfo) && wmInfo.subsystem == SDL_SYSWM_WINDOWS) {
+            HWND hwnd = wmInfo.info.win.window;
+            MARGINS margins = { -1, -1, -1, -1 };
+            DwmExtendFrameIntoClientArea(hwnd, &margins);
+        }
+    }
+#endif
 
     if (!window_ || !renderer_) {
         std::cerr << "Error: Window/Renderer creation failed: " << SDL_GetError() << "\n";
@@ -191,23 +252,14 @@ void GuiApp::buildFonts() {
     // particular working directory, then the usual cwd-relative spots, then
     // system fonts. Falling back to ImGui's built-in 13 px bitmap font gives
     // blurry, upscaled text, so say so on stderr.
-    std::string exe_dir;
-    {
-        char buf[4096];
-        ssize_t n = ::readlink("/proc/self/exe", buf, sizeof(buf) - 1);
-        if (n > 0) {
-            buf[n] = '\0';
-            std::string exe(buf);
-            size_t slash = exe.rfind('/');
-            if (slash != std::string::npos) exe_dir = exe.substr(0, slash);
-        }
-    }
+    std::string exe_dir = getExeDir();
     auto find_font = [&exe_dir](const std::string& font_name,
                                 const std::vector<std::string>& system_fallbacks) -> std::string {
         std::vector<std::string> candidates;
         if (!exe_dir.empty()) {
             candidates.push_back(exe_dir + "/../fonts/" + font_name);
             candidates.push_back(exe_dir + "/fonts/" + font_name);
+            candidates.push_back(exe_dir + "/linux/fonts/" + font_name);
             candidates.push_back(exe_dir + "/../share/rplayhub-android/fonts/" + font_name);
         }
         candidates.push_back("fonts/" + font_name);
@@ -222,14 +274,19 @@ void GuiApp::buildFonts() {
     };
 
     std::string regular_path = find_font("Inter-Regular.ttf", {
+        "C:/Windows/Fonts/segoeui.ttf",
+        "C:/Windows/Fonts/arial.ttf",
         "/usr/share/fonts/truetype/roboto/unhinted/RobotoTTF/Roboto-Regular.ttf",
         "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"});
     std::string medium_path = find_font("Inter-Medium.ttf", {
+        "C:/Windows/Fonts/segoeuib.ttf",
+        "C:/Windows/Fonts/segoeui.ttf",
         "/usr/share/fonts/truetype/roboto/unhinted/RobotoTTF/Roboto-Medium.ttf",
         "/usr/share/fonts/truetype/noto/NotoSans-Medium.ttf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"});
     std::string bold_path = find_font("Inter-SemiBold.ttf", {
+        "C:/Windows/Fonts/segoeuib.ttf",
         "/usr/share/fonts/truetype/roboto/unhinted/RobotoTTF/Roboto-Bold.ttf",
         "/usr/share/fonts/truetype/noto/NotoSans-SemiBold.ttf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"});
@@ -651,7 +708,11 @@ void GuiApp::runShellAsync(const std::string& serial, const std::string& command
 }
 
 std::string GuiApp::downloadsDir() {
+#ifdef _WIN32
+    const char* home = std::getenv("USERPROFILE");
+#else
     const char* home = std::getenv("HOME");
+#endif
     std::string dir = std::string(home ? home : ".") + "/Downloads";
     if (::access(dir.c_str(), W_OK) != 0) dir = home ? home : ".";
     return dir;
@@ -846,7 +907,11 @@ void GuiApp::restartSession() {
 }
 
 std::string GuiApp::mediaDir(const char* subdir) {
+#ifdef _WIN32
+    const char* home = std::getenv("USERPROFILE");
+#else
     const char* home = std::getenv("HOME");
+#endif
     std::string base = home ? home : ".";
     std::string dir = base + "/" + subdir;
     if (::access(dir.c_str(), W_OK) == 0) return dir;
@@ -2661,12 +2726,7 @@ void GuiApp::renderLiveMirror(ImVec2 origin, ImVec2 size, const DecodedFrame& fr
 void GuiApp::loadBackTexture() {
     if (back_texture_tried_) return;
     back_texture_tried_ = true;
-    std::string exe_dir;
-    {
-        char buf[4096];
-        ssize_t n = ::readlink("/proc/self/exe", buf, sizeof(buf) - 1);
-        if (n > 0) { buf[n] = '\0'; std::string e(buf); exe_dir = e.substr(0, e.rfind('/')); }
-    }
+    std::string exe_dir = getExeDir();
     std::vector<std::string> candidates = {
         exe_dir + "/../../doc/pixel-backside-transparent.png", exe_dir + "/../doc/pixel-backside-transparent.png",
         exe_dir + "/../share/rplayhub-android/pixel-backside-transparent.png",
