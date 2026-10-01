@@ -5,7 +5,11 @@
 #include <vector>
 #include <memory>
 #include <functional>
+#ifdef _WIN32
+typedef unsigned short mode_t;
+#else
 #include <sys/types.h>
+#endif
 
 namespace rplayhub {
 

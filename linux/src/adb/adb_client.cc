@@ -9,8 +9,15 @@
 #include <iomanip>
 #include <array>
 #include <algorithm>
+#ifdef _WIN32
+#include <process.h>
+#include <io.h>
+#define getpid _getpid
+#define unlink _unlink
+#else
 #include <unistd.h>
 #include <sys/wait.h>
+#endif
 
 namespace rplayhub {
 

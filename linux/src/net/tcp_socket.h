@@ -3,14 +3,19 @@
 #include <string>
 #include <vector>
 #include <cstdint>
+#ifdef _WIN32
+#include <BaseTsd.h>
+typedef SSIZE_T ssize_t;
+#else
 #include <sys/types.h>
+#endif
 
 namespace rplayhub {
 
 class TCPSocket {
 public:
     TCPSocket();
-    explicit TCPSocket(int fd);
+    explicit TCPSocket(intptr_t fd);
     ~TCPSocket();
 
     // Movable
@@ -25,7 +30,7 @@ public:
     void close();
 
     bool isValid() const { return fd_ >= 0; }
-    int getFd() const { return fd_; }
+    intptr_t getFd() const { return fd_; }
 
     bool setNoDelay(bool enable = true);
     bool setReadTimeout(int seconds);
@@ -44,7 +49,7 @@ public:
     void shutdownAndClose();
 
 private:
-    int fd_ = -1;
+    intptr_t fd_ = -1;
 };
 
 } // namespace rplayhub

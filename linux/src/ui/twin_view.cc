@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <fstream>
+#include <filesystem>
 #include <sys/stat.h>
 
 namespace rplayhub {
@@ -65,10 +66,16 @@ void TwinView::recenter() {
 }
 
 std::string TwinView::referencePath() {
+#ifdef _WIN32
+    const char* home = std::getenv("USERPROFILE");
+    if (!home || !*home) home = std::getenv("APPDATA");
+#else
     const char* home = std::getenv("HOME");
-    std::string dir = std::string(home ? home : ".") + "/.config/rplayhub-android";
-    ::mkdir((std::string(home ? home : ".") + "/.config").c_str(), 0755);
-    ::mkdir(dir.c_str(), 0755);
+#endif
+    std::string base = std::string(home ? home : ".");
+    std::string dir = base + "/.config/rplayhub-android";
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
     return dir + "/twin-facing-me";
 }
 

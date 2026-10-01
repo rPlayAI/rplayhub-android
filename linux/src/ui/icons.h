@@ -607,17 +607,17 @@ inline void drawSettingGlyph(ImDrawList* dl, int which, ImVec2 pos, float size, 
 // Helper to render flat, transparent navigation icon button matching macOS bottom bar
 inline bool FlatNavButton(const char* str_id,
                           std::function<void(ImDrawList*, ImVec2, float, ImU32)> draw_icon,
-                          ImVec2 size, const char* tooltip = nullptr, float scale = 1.0f) {
+                          ImVec2 size, const char* tooltip = nullptr, float scale = 1.0f, bool is_active = false) {
     ImVec2 p = ImGui::GetCursorScreenPos();
     ImDrawList* dl = ImGui::GetWindowDrawList();
 
     bool clicked = ImGui::InvisibleButton(str_id, size);
     bool hovered = ImGui::IsItemHovered();
-    bool active = ImGui::IsItemActive();
+    bool active = ImGui::IsItemActive() || is_active;
 
     // Subtle soft gray pill hover background (transparent by default!)
     if (active) {
-        dl->AddRectFilled(p, ImVec2(p.x + size.x, p.y + size.y), IM_COL32(220, 220, 225, 255), 7.0f * scale);
+        dl->AddRectFilled(p, ImVec2(p.x + size.x, p.y + size.y), IM_COL32(215, 225, 248, 255), 7.0f * scale);
     } else if (hovered) {
         dl->AddRectFilled(p, ImVec2(p.x + size.x, p.y + size.y), IM_COL32(236, 236, 240, 230), 7.0f * scale);
     }
