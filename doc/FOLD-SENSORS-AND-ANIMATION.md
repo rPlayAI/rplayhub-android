@@ -95,6 +95,16 @@ well after the posture says HALF_OPENED; closing, it hands back at 0–30° afte
 inner frame stays on the inner glass while the cover goes live, and the last cover frame is kept so
 the next fold lights the cover before Android hands that stream over.
 
+**One stream, two faces.** Worth being exact, because it is the obvious question: there is a single
+stream, not one per panel. The agent creates one virtual display (`studio.screen.sharing:0`) that
+follows Android's logical display 0, and the phone tears it down and remakes it at the new size when
+you fold — which is why one session's coded frame changes between 1856×1924 and 888×1926. While the
+phone was open it reported one display to us, so the cover was not separately mirrorable even by
+choice. Both faces of the model show something because the Mac keeps the last frame of the panel
+that went away; only one of them is live. Streaming both at once would need a second agent instance
+on the cover's display id, or one agent serving two encoders, and it is what would close the gap at
+the swap. It is the one item in the brief still pending on both clients.
+
 The hinge reading is eased on top of the jitter buffer, because 5° steps would otherwise read as
 stair-steps rather than one sweep. A `fold:` line in the log records every reading and every
 handover, which is how the numbers above were measured rather than guessed.
@@ -131,6 +141,90 @@ and carried by the glass (0).
 One honest note: Apple has published no details. The reference is the community Three.js recreation
 built on Apple's own model, read shader by shader, and it matches Apple's one-line description —
 content stays locked in space while the phone reorients around it.
+
+## The transformation, exactly
+
+In Fold View the camera is face-on and the fold turns about one axis, so the whole thing collapses
+to a single 3×3 matrix per hinge angle — one you can hardcode.
+
+**In plain terms: a sticker, or a window.** A phone today treats the picture as a *sticker on the
+glass*. Bend the glass and the sticker bends with it, which is why a folding Pixel's content creases
+and then jumps to the other screen. The Duo treats the glass as a *window onto a picture hanging in
+the air behind it*. Swing the window and the picture does not move; you simply see it through the
+glass at an angle. Every bit of the effect follows from that one swap.
+
+The rest is what anyone who has swung a door knows. Tilt a pane away from your eye and its far edge
+is further from you, so it covers more of whatever is behind it — a door opening reveals more of the
+room near its far edge than its near edge. That uneven coverage is the perspective part, and it is
+the part a simple squeeze cannot fake.
+
+Three ways to say it to an audience, in rising order of nerdiness:
+
+- **The window.** "The screen stops being a sticker on the glass and becomes a window onto something
+  that stays put."
+- **The prop.** Hold a sheet of acetate over a printed photo and tilt the sheet: the photo stays
+  where it is, the sheet just passes over it. That is Locked. Draw on the acetate instead and tilt
+  it, and the drawing tilts away with it. That is what phones do today.
+- **The one-liner for engineers.** "Both surfaces are flat, so the map between them is a homography
+  — and we solve it per pixel rather than approximating it."
+
+Put the crease at the origin with the open display lying in the plane *z* = 0, and the eye on the
+axis at distance *e* in front of it. The held half occupies *x* > 0 and never moves. The moving half
+turns about the crease by φ = 180° − hinge, so a point of its glass *s* away from the crease, at
+height *y*, sits at (−s·cosφ, y, s·sinφ) — flat when φ = 0, edge-on at φ = 90°.
+
+Locked asks what that fragment of glass would show if the picture stayed where it was. Shoot the ray
+from the eye through the glass point and intersect it with *z* = 0. The ray reaches the plane at
+*t* = e / (e − s·sinφ), which gives
+
+```latex
+\begin{bmatrix} X \\ Y \\ W \end{bmatrix}
+=
+\begin{bmatrix} -e\cos\varphi & 0 & 0 \\ 0 & e & 0 \\ -\sin\varphi & 0 & e \end{bmatrix}
+\begin{bmatrix} s \\ y \\ 1 \end{bmatrix}
+\qquad
+X_{\text{plane}} = X/W,\quad Y_{\text{plane}} = Y/W
+```
+
+That is the homography. Read the rows:
+
+- **The first two rows are affine.** A cosine squeeze across the half, no change in height. This
+  part any compositor can do.
+- **The third row is the perspective divide**, and it is the whole difference. Because *W* depends
+  on *s*, the far edge of the half is magnified more than the near edge — the glass is leaning away
+  from you, so equal steps across it cover unequal steps of the picture behind.
+
+Two checks worth doing on a slide. At φ = 0 the matrix is diag(−e, e, e): *X* = −s, the picture sits
+where the glass sits, nothing happens. At φ = 90°, cosφ = 0 and every *s* maps to *X* = 0: the whole
+half collapses onto the crease line, which is exactly the sliver you see when the phone is edge-on.
+
+**How wrong is the affine version?** Drop the third row and you keep the cosine squeeze — that is
+what a compositor limited to affine layers can carry. The error is the magnification at the free
+edge, *e* / (*e* − *w*·sinφ), where *w* is a half's width.
+
+| Hinge angle | φ | Our rig (w/e = 0.29) | At arm's length (w/e = 0.19) |
+| --- | --- | --- | --- |
+| 180° flat | 0° | 1.00 | 1.00 |
+| 150° | 30° | 1.17 | 1.10 |
+| 135° | 45° | 1.25 | 1.15 |
+| 120° | 60° | 1.33 | 1.19 |
+| 90° | 90° | 1.40 | 1.23 |
+
+So an affine approximation is out by about a tenth near flat and a quarter at a right angle, and it
+is worse the closer the viewer sits. Our rig's camera is closer than a hand would be, which is why
+its column is the harsher one. That residual is what the Stylized look's blur is covering: by the
+angles where the error grows, the free edge is already blurred and darkened, and the eye stops
+measuring it.
+
+**In texture coordinates**, which is what the shader actually wants, the hit point becomes
+*u* = 0.5 + X/panelWidth and *v* = 0.5 − Y/panelHeight for the inner display, the 0.5 being the
+crease. The cover uses the same form with its origin at the hinge-side edge rather than the middle,
+which is why its content stays pinned at the hinge while the free edge swings away.
+
+The shader does this per fragment rather than per vertex, so there is no grid to betray it: a circle
+across the crease stays round and a diagonal stays straight at any angle. A per-vertex version —
+what our Linux client does — interpolates *after* the divide and bows straight lines between its
+grid points.
 
 ## Could this run on the phone?
 
