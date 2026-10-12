@@ -109,6 +109,44 @@ The hinge reading is eased on top of the jitter buffer, because 5° steps would 
 stair-steps rather than one sweep. A `fold:` line in the log records every reading and every
 handover, which is how the numbers above were measured rather than guessed.
 
+## How the phone itself is drawn
+
+There are no 3D models in the repository — not one `.usdz`, `.obj` or `.scn`. The phone is built in
+code at runtime, in SceneKit, by `HeroComposer.swift` (1,143 lines).
+
+- **The body.** A rounded-rectangle path extruded to the phone's depth, chamfered on both faces,
+  with physically based materials: polished metal on the rails, a softer finish on the back panel, a
+  bright chamfer between them. A foldable is the same path cut in half and built twice — square at
+  the crease, rounded on the outer corners.
+- **The camera block**, which is what makes it read as a Pixel. A bar phone gets the wide visor: a
+  pill raised off the back, near-black glass a hair proud of it, and three lenses, each a metal
+  ring, a shallow dark dome and one small bright dot for the coating — that dot is what stops a lens
+  looking like a flat black circle. The Fold gets two stacked pills in the corner away from the
+  hinge, flash and telephoto window above, two lenses and a sensor dot below, proportioned from the
+  Pixel 11 Pro Fold press render.
+- **The G** is drawn as a Core Graphics image and laid on a plane low on the back, monochrome and a
+  shade darker than the panel, so it catches the light as the phone turns instead of reading as a
+  sticker.
+- **Or your own photo.** View ▸ Set 3D Back Image… replaces the whole back. A picture with
+  transparency is used as authored; one without has its light background cut away, so a press shot
+  off the web works.
+
+Procedural rather than modelled, because it has to fit *any* device: the proportions come from the
+display size the phone reports, so a Pixel 9a, a Fold and an Android TV box all get a correctly
+shaped body with no asset per device, and nothing to license, ship or keep in the repository.
+
+**The Linux client gets there by a different road.** There is no SceneKit and no 3D engine at all:
+`twin_view.cc` (483 lines) is a small software renderer drawing into ImGui's 2D list. A pinhole
+projection, *x·f / (camZ − z)*; the body as a rounded outline turned into a front face, a back face
+and a strip of quads for the side wall between them, each wall quad flat-shaded from its own normal
+so the rim lights up as the phone turns; every face sorted far-to-near and drawn with the painter's
+algorithm, back faces culled. Two differences follow from the toolkit. ImGui can only draw an
+**affine** textured quad, so the screen and the back artwork are laid down as a grid of small quads
+— perspective approximated per vertex, where the Mac solves it per fragment. And the back is a
+**photograph** (`pixel-backside-transparent.png`, its light background removed at load, its u
+mirrored because you are seeing it from behind) rather than geometry. The fold is the same
+machinery with two half-bodies: `fold_view.cc` plus `renderFold`, 160 and about 200 lines.
+
 ## The three looks
 
 All three draw the same hinge; they differ only in what the moving half's glass shows.
