@@ -135,17 +135,27 @@ Procedural rather than modelled, because it has to fit *any* device: the proport
 display size the phone reports, so a Pixel 9a, a Fold and an Android TV box all get a correctly
 shaped body with no asset per device, and nothing to license, ship or keep in the repository.
 
-**The Linux client gets there by a different road.** There is no SceneKit and no 3D engine at all:
-`twin_view.cc` (483 lines) is a small software renderer drawing into ImGui's 2D list. A pinhole
-projection, *x·f / (camZ − z)*; the body as a rounded outline turned into a front face, a back face
-and a strip of quads for the side wall between them, each wall quad flat-shaded from its own normal
-so the rim lights up as the phone turns; every face sorted far-to-near and drawn with the painter's
-algorithm, back faces culled. Two differences follow from the toolkit. ImGui can only draw an
-**affine** textured quad, so the screen and the back artwork are laid down as a grid of small quads
-— perspective approximated per vertex, where the Mac solves it per fragment. And the back is a
-**photograph** (`pixel-backside-transparent.png`, its light background removed at load, its u
-mirrored because you are seeing it from behind) rather than geometry. The fold is the same
-machinery with two half-bodies: `fold_view.cc` plus `renderFold`, 160 and about 200 lines.
+### The Linux client gets there by a different road
+
+No SceneKit, no 3D engine at all. `twin_view.cc` (483 lines) is a small software renderer drawing
+into ImGui's 2D list.
+
+- **Projection.** A pinhole: *x·f / (camZ − z)*, camera on +z looking at the origin.
+- **The body and its back edge.** A rounded outline becomes three things — a front face, a back
+  face, and the side wall as a strip of quads joining them, one quad per outline segment. Each wall
+  quad is flat-shaded from its own normal against a fixed light, which is what makes the rim
+  brighten as the phone turns. No bevel or chamfer geometry as the Mac has; just the wall.
+- **Hidden surfaces.** No depth buffer. Faces are sorted far-to-near, back faces culled, each drawn
+  as a filled polygon — the painter's algorithm.
+- **Textures.** ImGui can only draw an *affine* textured quad, so the screen and the back artwork go
+  down as a grid of small quads, approximating perspective per vertex where the Mac solves it per
+  fragment in Metal. That is the one real quality gap: a straight line can bow slightly at steep
+  angles.
+- **The back.** A photograph (`pixel-backside-transparent.png`, light background removed at load,
+  its u mirrored because you are seeing it from behind) rather than geometry. No procedural camera
+  island there.
+- **The fold.** The same machinery with two half-bodies: `fold_view.cc` plus `renderFold`, about 360
+  lines together.
 
 ## The three looks
 
