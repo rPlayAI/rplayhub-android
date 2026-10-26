@@ -135,6 +135,32 @@ Procedural rather than modelled, because it has to fit *any* device: the proport
 display size the phone reports, so a Pixel 9a, a Fold and an Android TV box all get a correctly
 shaped body with no asset per device, and nothing to license, ship or keep in the repository.
 
+### The fold, built the same way
+
+`makeFoldPhone` is the bar-phone path cut in half, and everything about the hinge is geometry we
+construct rather than a rig we loaded.
+
+- **Proportions from the device, not a model.** The open display's aspect comes from the stream; if
+  the cover is the panel streaming (aspect below 0.7) it is doubled to recover the open shape. Panel
+  height is the unit, the bezel is 2.2% of panel width, the corners 6%.
+- **One measured constant.** Half-thickness is 3.4% of the open width — about 5.1 mm per half
+  against roughly 150 mm open, off a real Pixel Fold. The first version measured that 5.1 mm against
+  the *folded* width and drew rails twice as deep as the real phone; the ratio carries that note in
+  the code so it does not happen again.
+- **Each half is built once by a function**, mirrored by a sign argument: the body shape rounded on
+  the outer corners and square at the crease, black glass inset from the outer three edges only so
+  the two panes meet at the crease as one sheet, and the screen quad with its own corner mask. Each
+  half gets *its own copies* of the materials — that is what lets the moving half turn to frosted
+  glass without the held half following.
+- **The hinge** is an empty pivot node on the crease, in the plane of the inner glass. Half B hangs
+  from it, so turning the pivot folds the phone. The cover display is a plane on B's outer face,
+  masked like a right half because turning it to face backwards flips its u.
+- **Two invisible marker nodes** — the inner content plane and the cover's — are what the Locked and
+  Stylized shaders project onto, plus two seam planes at the crease for the stylized band.
+
+Fold View is not a second model: it is this one with the camera held face-on and the rotation vector
+ignored.
+
 ### The Linux client gets there by a different road
 
 No SceneKit, no 3D engine at all. `twin_view.cc` (483 lines) is a small software renderer drawing
@@ -155,7 +181,11 @@ into ImGui's 2D list.
   its u mirrored because you are seeing it from behind) rather than geometry. No procedural camera
   island there.
 - **The fold.** The same machinery with two half-bodies: `fold_view.cc` plus `renderFold`, about 360
-  lines together.
+  lines together. The halves are placed either side of the crease and sorted into one depth-ordered
+  list, so they occlude each other correctly without a depth buffer; the glass vertices take the UV
+  where the camera ray through them meets the content plane, which is the per-vertex form of the
+  Mac's per-fragment shader. Where no hinge sensor exists, `fold_view.cc` falls back to the posture:
+  CLOSED 0°, HALF_OPENED 100°, OPENED 180°, eased between.
 
 ## The three looks
 
