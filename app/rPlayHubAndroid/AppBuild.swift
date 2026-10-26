@@ -8,6 +8,14 @@ import Foundation
 enum AppBuild {
     static let version = "0.1.0"
 
+    /// The product name as the user sees it: the window title, the app menu, the About box and
+    /// the Help entries. One place, so a rebrand is a one-line change and a demo can record
+    /// under a different name without touching the code — `RPLAYHUB_BRAND=rPlayHub` for a
+    /// launch under the old name.
+    static var brandName: String {
+        ProcessInfo.processInfo.environment["RPLAYHUB_BRAND"] ?? "ACast"
+    }
+
     /// Feature gate for the 3D device twin (experimental). Off by default. Toggled from the
     /// View menu (persisted as the "TwinEnabled" default); `RPLAYHUB_TWIN=1`/`=0` overrides it
     /// for a launch. Gates the menu entry and, at session start, the sensor channel we ask the

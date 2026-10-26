@@ -158,7 +158,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                           // title bar, which hid the top of the mirrored screen behind it.
                           styleMask: [.titled, .closable, .miniaturizable, .resizable],
                           backing: .buffered, defer: false)
-        window.title = "rPlayHub — Android"
+        window.title = "\(AppBuild.brandName) — Android"
         window.setFrameAutosaveName("MainWindow")
         window.center()
 
@@ -431,7 +431,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         let name = sidebar.friendlyName(for: device)     // "Emulator · <avd>" once known
-        window.title = "rPlayHub — \(name)"
+        window.title = "\(AppBuild.brandName) — \(name)"
         // The current tab follows the selection; the others keep the device they were opened on.
         let tab = ScreenTabBar.Tab(serial: device.serial, title: name)
         if screenTabs.indices.contains(currentTab) { screenTabs[currentTab] = tab } else { screenTabs = [tab]; currentTab = 0 }
@@ -2252,7 +2252,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let appItem = NSMenuItem()
         let appMenu = NSMenu()
-        appMenu.addItem(withTitle: "About rPlayHub Android",
+        appMenu.addItem(withTitle: "About \(AppBuild.brandName)",
                         action: #selector(showAbout), keyEquivalent: "").target = self
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Quit", action: #selector(NSApplication.terminate(_:)),
@@ -2432,14 +2432,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let helpItem = NSMenuItem()
         main.addItem(helpItem)
         let helpMenu = NSMenu(title: "Help")
-        let help = helpMenu.addItem(withTitle: "rPlayHub Android Help", action: #selector(openHelp),
+        let help = helpMenu.addItem(withTitle: "\(AppBuild.brandName) Help", action: #selector(openHelp),
                                     keyEquivalent: "?")   // ⌘? is the standard Help shortcut
         help.target = self
         helpMenu.addItem(.separator())
-        let gh = helpMenu.addItem(withTitle: "rPlayHub Android on GitHub",
+        let gh = helpMenu.addItem(withTitle: "\(AppBuild.brandName) on GitHub",
                                   action: #selector(openGitHub), keyEquivalent: "")
         gh.target = self
-        let sdk = helpMenu.addItem(withTitle: "rPlayHub Android SDK on GitHub",
+        let sdk = helpMenu.addItem(withTitle: "\(AppBuild.brandName) SDK on GitHub",
                                    action: #selector(openSDK), keyEquivalent: "")
         sdk.target = self
         helpItem.submenu = helpMenu
@@ -2449,7 +2449,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func showAbout() {
-        present(message: "rPlayHub Android \(AppBuild.version)",
+        present(message: "\(AppBuild.brandName) \(AppBuild.version)",
                 detail: "Mirror and control an Android device through Google's screen-sharing "
                       + "agent, over adb. No Android Studio in the runtime path.")
     }
