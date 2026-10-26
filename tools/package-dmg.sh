@@ -14,6 +14,14 @@
 # for App Store validation; the Finder mount runs without it), so it is stripped here and raw
 # codesign signs the rest, which needs no profile. tools/archive-appstore.sh keeps the group.
 #
+# XCODE 27: the App Group is a RESTRICTED entitlement, and Xcode 27 demands a provisioning profile
+# for it even on an ad-hoc build ("requires a provisioning profile"), which Xcode cannot create for
+# Developer ID. The DMG strips the group a few lines below regardless, so this script strips it from
+# the two entitlement files for the duration of the BUILD and puts them back immediately after.
+# It has to be the files themselves: a CODE_SIGN_ENTITLEMENTS override on the command line would
+# apply to the extension as well as the app, and they need different entitlements. The files are
+# restored on any exit; a leftover .entitlements.prepkg from a killed run is restored on the next.
+#
 # NOTARY_PROFILE is a notarytool keychain profile (AC_PASSWORD is the team's, shared with ~/rplay):
 #   xcrun notarytool store-credentials AC_PASSWORD \
 #       --apple-id "you@example.com" --team-id NL28FE3UZ7 --password "app-specific-password"
@@ -44,6 +52,39 @@ DMG_SANDBOX="${DMG_SANDBOX:-0}"
 AGENT_DIR="${RPLAYHUB_AGENT_DIR:-$ROOT/build/agent}"
 
 say() { printf '\033[1m==>\033[0m %s\n' "$*"; }
+
+# ---------------------------------------------------------------- the App Group, for the build
+# See the header: Xcode 27 will not sign the restricted App Group ad-hoc. Strip it while the
+# build runs, restore it the moment the build is done, and never leave the tree modified.
+GROUP_FILES=("$ROOT/app/rPlayHubAndroid/rPlayHubAndroid.entitlements"
+             "$ROOT/app/FinderMount/FinderMount.entitlements")
+
+restore_app_group() {
+    local f
+    for f in "${GROUP_FILES[@]}"; do
+        [[ -f "$f.prepkg" ]] && mv -f "$f.prepkg" "$f"
+    done
+    return 0
+}
+
+strip_app_group() {
+    local f
+    for f in "${GROUP_FILES[@]}"; do
+        [[ -f "$f" ]] || continue
+        # A killed run left the original here; that is the one to keep.
+        if [[ -f "$f.prepkg" ]]; then
+            say "restoring $(basename "$f") from an interrupted run"
+            mv -f "$f.prepkg" "$f"
+        fi
+        cp "$f" "$f.prepkg"
+        /usr/libexec/PlistBuddy -c "Delete :com.apple.security.application-groups" "$f" \
+            2>/dev/null || true
+    done
+}
+
+# Restore on every exit, including a failed build or a ^C. Two runs at once would fight over
+# these files; do not package twice in parallel.
+trap restore_app_group EXIT INT TERM
 
 # ---------------------------------------------------------------- runtime pieces
 # The build phase bundles these; warn now if they are missing rather than after a long build.
@@ -89,12 +130,21 @@ python3 "$ROOT/tools/gen-xcodeproj.py" >/dev/null
 # fresh bundle: xcodebuild never removes files it did not put there, and a stale copy from an
 # older layout (an unsigned Resources/adb/adb) once failed notarization.
 rm -rf "$DD/Build/Products/Release/$APP_NAME.app"
+strip_app_group
 xcodebuild -project "$PROJECT" -scheme "$APP_NAME" -configuration Release \
     -derivedDataPath "$DD" \
     CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY="-" DEVELOPMENT_TEAM="" \
     PROVISIONING_PROFILE_SPECIFIER="" RPLAYHUB_AGENT_DIR="$AGENT_DIR" build
+# Back to the store shape before anything reads these files: the ENT_DIR copies below start
+# from the full entitlements and do their own stripping.
+restore_app_group
 APP="$DD/Build/Products/Release/$APP_NAME.app"
 APPEX="$APP/Contents/PlugIns/FinderMount.appex"
+# No App Group in any DMG build (see the header), so the extension must not advertise one: a
+# File Provider naming a document group it has no entitlement for does not load. Both the
+# Developer ID and the ad-hoc path want this, so it happens here rather than in one branch.
+/usr/libexec/PlistBuddy -c "Delete :NSExtension:NSExtensionFileProviderDocumentGroup" \
+    "$APPEX/Contents/Info.plist" 2>/dev/null || true
 # The legacy adb location; never ship an unsigned copy from it.
 rm -rf "$APP/Contents/Resources/adb"
 
@@ -126,8 +176,6 @@ if [[ -n "$SIGN_ID" ]]; then
     for f in "$ENT_DIR/app.entitlements" "$ENT_DIR/appex.entitlements"; do
         /usr/libexec/PlistBuddy -c "Delete :com.apple.security.application-groups" "$f" 2>/dev/null || true
     done
-    /usr/libexec/PlistBuddy -c "Delete :NSExtension:NSExtensionFileProviderDocumentGroup" \
-        "$APPEX/Contents/Info.plist" 2>/dev/null || true
 
     for helper in adb emulator-bridge; do
         [[ -f "$APP/Contents/MacOS/$helper" ]] && \
